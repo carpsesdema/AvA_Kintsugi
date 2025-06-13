@@ -29,7 +29,7 @@ class ArchitectService:
         rag_context = self.rag_service.query(prompt)
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
 
-        provider, model = self.llm_client.get_model_for_role("coder")  # Use coder for planning
+        provider, model = self.llm_client.get_model_for_role("coder")
         if not provider or not model:
             self.handle_error("architect", "No model configured.")
             return {}
@@ -52,18 +52,19 @@ class ArchitectService:
         files_to_generate = plan.get("files", [])
         dependencies = plan.get("dependencies", [])
 
-        # Automatically create requirements.txt if dependencies are listed
+        # Handle requirements.txt separately and first
         if dependencies:
-            req_content = "\n".join(dependencies)
-            # Add requirements.txt to the list of files to be created if it's not already there for some reason
-            if not any(f['filename'] == 'requirements.txt' for f in files_to_generate):
-                files_to_generate.append({"filename": "requirements.txt", "purpose": "Project dependencies"})
+            req_content = "\n".join(dependencies) + "\n"
             self.project_manager.save_and_commit_files({"requirements.txt": req_content}, "feat: Add requirements.txt")
+            # Add to the UI file tree, but don't try to generate it with the Coder
+            self.event_bus.emit("prepare_for_generation", ["requirements.txt"])
+            await asyncio.sleep(0.1)
 
-        # Prepare UI and gather generation tasks
-        filenames = [f['filename'] for f in files_to_generate]
+        # Prepare UI for all code files and gather generation tasks
+        code_files_to_generate = [f for f in files_to_generate if f['filename'] != 'requirements.txt']
+        filenames = [f['filename'] for f in code_files_to_generate]
         self.event_bus.emit("prepare_for_generation", filenames)
-        await asyncio.sleep(0.1)  # Give UI time to create tabs
+        await asyncio.sleep(0.1)
 
         generation_tasks = [
             self._generate_new_file(
@@ -71,7 +72,7 @@ class ArchitectService:
                 file_info['purpose'],
                 plan,
                 user_prompt_summary
-            ) for file_info in files_to_generate if file_info['filename'] != 'requirements.txt'
+            ) for file_info in code_files_to_generate
         ]
 
         # Run all generation tasks in parallel
@@ -91,18 +92,14 @@ class ArchitectService:
         self.log("info", f"Task received: '{prompt}'")
         user_prompt_summary = f'AI generation for: "{prompt[:50]}..."'
 
-        # This is a new project, use the hierarchical planner.
         if not existing_files:
             plan = await self._generate_hierarchical_plan(prompt)
-            if not plan:
-                return  # Stop if planning fails
+            if not plan: return
 
             generation_succeeded = await self._execute_concurrent_generation(plan, user_prompt_summary)
-            if not generation_succeeded:
-                return  # Stop if any file generation fails
+            if not generation_succeeded: return
 
-        # This is a modification of an existing project. Use the old patch-based flow.
-        else:
+        else:  # Modification of existing project
             self.update_status("architect", "working", "Creating modification plan...")
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt,
                                                              existing_files_json=json.dumps(existing_files, indent=2))
@@ -134,11 +131,7 @@ class ArchitectService:
                 if original_code is None:
                     self.log("warning",
                              f"File '{filename}' planned for modification does not exist. Creating it as a new file.")
-                    # Create a minimal plan for the single new file
-                    single_file_plan = {
-                        "files": [{"filename": filename, "purpose": purpose}],
-                        "dependencies": []
-                    }
+                    single_file_plan = {"files": [{"filename": filename, "purpose": purpose}], "dependencies": []}
                     success = await self._generate_new_file(filename, purpose, single_file_plan, user_prompt_summary)
                 else:
                     success = await self._generate_and_apply_patch(filename, purpose, original_code,
@@ -149,8 +142,7 @@ class ArchitectService:
                     self.handle_error("coder", f"Failed to process file: {filename}")
                     break
 
-            if not all_steps_succeeded:
-                return
+            if not all_steps_succeeded: return
 
         self.update_status("coder", "success", "Code generation/modification complete.")
         await self._validate_and_refine_loop()
@@ -159,7 +151,8 @@ class ArchitectService:
         """Generates a single new file and commits it."""
         self.update_status("coder", "working", f"Writing {filename}...")
         provider, model = self.llm_client.get_model_for_role("coder")
-        code_prompt = CODER_PROMPT.format(file_plan_json=json.dumps(file_plan, indent=2), filename=filename)
+        code_prompt = CODER_PROMPT.format(file_plan_json=json.dumps(file_plan, indent=2), filename=filename,
+                                          purpose=purpose)
 
         file_content = ""
         async for chunk in self.llm_client.stream_chat(provider, model, code_prompt):

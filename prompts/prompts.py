@@ -1,4 +1,3 @@
-
 PLANNER_PROMPT = """
 You are an expert software architect who specializes in creating plans for Python applications.
 
@@ -85,21 +84,24 @@ For NEW files, the purpose should describe the file's role.
 }}
 """
 CODER_PROMPT = """
-You are an expert Python developer. Your task is to write the code for a single Python file based on the provided plan.
+You are an expert Python developer. Your task is to write the code for a single file within a larger project.
 
-**FULL PROJECT PLAN:**
+**CONTEXT: FULL PROJECT PLAN**
+This is the complete plan for the application you are helping to build. Use it to understand the relationships between files.
 ```json
 {file_plan_json}
 ```
 
-**FILE TO GENERATE:**
-{filename}
+**YOUR ASSIGNED TASK**
+- **File to Write:** `{filename}`
+- **Purpose of this File:** `{purpose}`
 
 **CRITICAL INSTRUCTIONS:**
-- You are responsible for writing the code for **{filename} ONLY**.
-- Use the full project plan to understand how this file interacts with others and to write correct import statements.
-- Generate the complete, runnable Python code.
-- Your response **MUST BE ONLY THE RAW PYTHON CODE**. Do not include any explanations, comments about the code, or markdown code fences.
+1.  Your response **MUST ONLY** contain the complete, raw code for the single file you were assigned: `{filename}`.
+2.  **DO NOT** include code from other files.
+3.  **DO NOT** include any explanations, comments, or markdown formatting like ```python.
+4.  Ensure the code is robust, clean, and professional.
+5.  Use the "FULL PROJECT PLAN" to write correct import statements (e.g., `from models import User`).
 """
 
 CODE_MODIFIER_PROMPT = """
