@@ -48,42 +48,52 @@ class ArchitectService:
             return {}
 
     async def _execute_concurrent_generation(self, plan: dict, user_prompt_summary: str):
-        """Generates all files in a plan concurrently."""
+        """Generates all files in a plan concurrently and commits them in one go."""
         files_to_generate = plan.get("files", [])
         dependencies = plan.get("dependencies", [])
+        generated_code_map = {}
 
-        # Handle requirements.txt separately and first
+        # Handle requirements.txt separately
         if dependencies:
             req_content = "\n".join(dependencies) + "\n"
-            self.project_manager.save_and_commit_files({"requirements.txt": req_content}, "feat: Add requirements.txt")
-            # Add to the UI file tree, but don't try to generate it with the Coder
-            self.event_bus.emit("prepare_for_generation", ["requirements.txt"])
-            await asyncio.sleep(0.1)
+            generated_code_map["requirements.txt"] = req_content
 
-        # Prepare UI for all code files and gather generation tasks
+        # Prepare UI for all code files
         code_files_to_generate = [f for f in files_to_generate if f['filename'] != 'requirements.txt']
         filenames = [f['filename'] for f in code_files_to_generate]
         self.event_bus.emit("prepare_for_generation", filenames)
         await asyncio.sleep(0.1)
 
+        # Create concurrent generation tasks
         generation_tasks = [
             self._generate_new_file(
                 file_info['filename'],
                 file_info['purpose'],
-                plan,
-                user_prompt_summary
+                plan
             ) for file_info in code_files_to_generate
         ]
 
         # Run all generation tasks in parallel
         results = await asyncio.gather(*generation_tasks, return_exceptions=True)
 
-        all_successful = all(res is True for res in results)
+        # Process results and check for failures
+        all_successful = True
+        for res in results:
+            if isinstance(res, Exception):
+                self.handle_error("coder", f"A sub-task failed during concurrent generation: {res}")
+                all_successful = False
+            elif res:
+                filename, content = res
+                generated_code_map[filename] = content
+
         if not all_successful:
-            for res in results:
-                if isinstance(res, Exception):
-                    self.handle_error("coder", f"A sub-task failed during concurrent generation: {res}")
             return False
+
+        # --- THE FIX: Commit all generated files in a single transaction ---
+        self.log("info", "All files generated. Committing project foundation...")
+        self.project_manager.save_and_commit_files(generated_code_map, user_prompt_summary)
+        self.log("success", "Project foundation committed successfully.")
+        # --- END OF FIX ---
 
         return True
 
@@ -129,16 +139,18 @@ class ArchitectService:
                 purpose = file_info['purpose']
                 original_code = existing_files.get(filename)
                 if original_code is None:
-                    self.log("warning",
-                             f"File '{filename}' planned for modification does not exist. Creating it as a new file.")
                     single_file_plan = {"files": [{"filename": filename, "purpose": purpose}], "dependencies": []}
-                    success = await self._generate_new_file(filename, purpose, single_file_plan, user_prompt_summary)
+                    success = await self._generate_and_return_file(filename, purpose, single_file_plan)
+                    if success:
+                        self.project_manager.save_and_commit_files({success[0]: success[1]}, f"feat: Create {filename}")
+                    else:
+                        all_steps_succeeded = False
                 else:
                     success = await self._generate_and_apply_patch(filename, purpose, original_code,
                                                                    user_prompt_summary)
+                    if not success: all_steps_succeeded = False
 
-                if not success:
-                    all_steps_succeeded = False
+                if not all_steps_succeeded:
                     self.handle_error("coder", f"Failed to process file: {filename}")
                     break
 
@@ -147,8 +159,8 @@ class ArchitectService:
         self.update_status("coder", "success", "Code generation/modification complete.")
         await self._validate_and_refine_loop()
 
-    async def _generate_new_file(self, filename: str, purpose: str, file_plan: dict, commit_message: str) -> bool:
-        """Generates a single new file and commits it."""
+    async def _generate_and_return_file(self, filename: str, purpose: str, file_plan: dict) -> tuple[str, str] | None:
+        """Generates a single new file and returns its content, does not commit."""
         self.update_status("coder", "working", f"Writing {filename}...")
         provider, model = self.llm_client.get_model_for_role("coder")
         code_prompt = CODER_PROMPT.format(file_plan_json=json.dumps(file_plan, indent=2), filename=filename,
@@ -160,10 +172,16 @@ class ArchitectService:
             self.event_bus.emit("stream_code_chunk", filename, chunk)
 
         cleaned_code = self._clean_code_output(file_content)
-        self.project_manager.save_and_commit_files({filename: cleaned_code}, f"feat: Create {filename}")
         self.event_bus.emit("code_generation_complete", {filename: cleaned_code})
-        self.log("info", f"Successfully generated {filename}")
-        return True
+        self.log("info", f"Successfully generated content for {filename}")
+        return (filename, cleaned_code)
+
+    # This wrapper is needed for the modification flow to maintain the same return signature
+    async def _generate_new_file(self, filename: str, purpose: str, file_plan: dict, commit_message: str) -> bool:
+        result = await self._generate_and_return_file(filename, purpose, file_plan)
+        # This function is now only used in the concurrent flow where commit happens later.
+        # So we just check if it returned content.
+        return result is not None
 
     async def _generate_and_apply_patch(self, filename: str, purpose: str, original_code: str,
                                         commit_message: str) -> bool:
@@ -278,4 +296,3 @@ class ArchitectService:
     def log(self, message_type: str, content: str):
         """Emits a log message to the event bus."""
         self.event_bus.emit("log_message_received", "ArchitectService", message_type, content)
-
