@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/agent_node.py
-# The visual representation of a single AI agent in the workflow graph.
+# V2: Corrected Qt.TextFlag typo to Qt.AlignmentFlag.
 
 from PySide6.QtWidgets import QGraphicsObject, QGraphicsDropShadowEffect
 from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont
@@ -52,7 +52,7 @@ class AgentNode(QGraphicsObject):
 
         # Status Border
         border_color = {
-            "working": Colors.ACCENT_BLUE, "success": Colors.ACCENT_GREEN, "error": QColor(Colors.ACCENT_RED)
+            "working": Colors.ACCENT_BLUE, "success": Colors.ACCENT_GREEN, "error": Colors.ACCENT_RED
         }.get(self._status)
 
         if border_color:
@@ -73,7 +73,12 @@ class AgentNode(QGraphicsObject):
 
         painter.setPen(Colors.TEXT_SECONDARY)
         painter.setFont(Typography.body())
-        painter.drawText(QRectF(50, 40, 100, 30), Qt.TextFlag.AlignLeft | Qt.TextFlag.AlignTop, self._status_text)
+
+        # --- THE FIX IS HERE ---
+        # The correct enum is Qt.AlignmentFlag, not Qt.TextFlag
+        alignment_flags = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        painter.drawText(QRectF(50, 40, 100, 30), alignment_flags, self._status_text)
+        # --- END OF FIX ---
 
     def set_status(self, status: str, status_text: str):
         self._status = status
