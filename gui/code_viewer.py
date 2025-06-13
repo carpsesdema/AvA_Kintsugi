@@ -1,17 +1,22 @@
 # kintsugi_ava/gui/code_viewer.py
-# V2: Now can programmatically display generated code.
+# V3: Now supports real-time streaming of code into its editors.
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter,
     QTabWidget, QTextEdit, QTreeWidget, QTreeWidgetItem, QLabel
 )
 from PySide6.QtCore import Qt, Slot
+from PySide6.QtGui import QFont, QTextCursor
+
 from .components import Colors, Typography
-from .code_viewer_helpers import PythonHighlighter  # <-- Import from our new helper file
+from .code_viewer_helpers import PythonHighlighter
 
 
 class CodeViewerWindow(QMainWindow):
-    """A window for displaying a file tree and tabbed code editors."""
+    """
+    A window for displaying a file tree and tabbed code editors,
+    now with support for real-time streaming updates.
+    """
 
     def __init__(self):
         super().__init__()
@@ -19,10 +24,11 @@ class CodeViewerWindow(QMainWindow):
         self.setGeometry(150, 150, 1000, 700)
         self.setStyleSheet(f"background-color: {Colors.PRIMARY_BG.name()};")
 
+        self.editors = {}  # A dictionary to track open editors by filename
+
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(main_splitter)
 
-        # --- File Tree Panel (Left) ---
         file_tree_panel = QWidget()
         file_tree_layout = QVBoxLayout(file_tree_panel)
         self.file_tree = QTreeWidget()
@@ -30,11 +36,9 @@ class CodeViewerWindow(QMainWindow):
         file_tree_panel.setStyleSheet("background-color: transparent; border: none;")
         file_tree_layout.addWidget(self.file_tree)
 
-        # --- Editor Tabs (Right) ---
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.setMovable(True)
-        # Add a placeholder welcome tab
         welcome_label = QLabel("Code will appear here when generated.")
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_label.setFont(Typography.get_font(18))
@@ -43,42 +47,61 @@ class CodeViewerWindow(QMainWindow):
 
         main_splitter.addWidget(file_tree_panel)
         main_splitter.addWidget(self.tab_widget)
-        main_splitter.setSizes([250, 750])  # Initial size ratio
+        main_splitter.setSizes([250, 750])
+        self.tab_widget.tabCloseRequested.connect(self._close_tab)
 
     @Slot(dict)
     def display_code(self, files: dict):
-        """
-        Receives a dictionary of {filename: content} and displays each
-        file in its own tab, populating the file tree.
-        """
-        print(f"[CodeViewer] Received code to display: {list(files.keys())}")
-        self.file_tree.clear()
+        """(Legacy) Displays a completed dictionary of files."""
+        self._setup_new_project_view(list(files.keys()))
+        for filename, content in files.items():
+            if filename in self.editors:
+                self.editors[filename].setPlainText(content)
 
-        # Clear any existing file tabs
+    @Slot(list)
+    def prepare_for_generation(self, filenames: list):
+        """Prepares the viewer by creating empty tabs for upcoming files."""
+        self._setup_new_project_view(filenames)
+
+    @Slot(str, str)
+    def stream_code_chunk(self, filename: str, chunk: str):
+        """Streams a chunk of code into the correct editor tab."""
+        if filename in self.editors:
+            editor = self.editors[filename]
+            cursor = editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertText(chunk)
+            editor.ensureCursorVisible()
+
+    def _setup_new_project_view(self, filenames: list):
+        """Clears the old project and sets up tabs for the new one."""
+        self.file_tree.clear()
+        self.editors.clear()
         while self.tab_widget.count() > 0:
             self.tab_widget.removeTab(0)
 
-        for filename, content in files.items():
-            # Add to file tree
+        for filename in filenames:
             file_item = QTreeWidgetItem(self.file_tree, [filename])
 
-            # Add file to a new editor tab
             editor = QTextEdit()
             editor.setFont(Typography.get_font(11, family="JetBrains Mono"))
-            editor.setPlainText(content)
-
-            # This is the magic: apply syntax highlighting to the document
             highlighter = PythonHighlighter(editor.document())
 
-            self.tab_widget.addTab(editor, filename)
+            tab_index = self.tab_widget.addTab(editor, filename)
+            self.editors[filename] = editor
 
-        # Auto-show the window if it's hidden
         self.show_window()
 
+    def _close_tab(self, index):
+        widget = self.tab_widget.widget(index)
+        if widget and isinstance(widget, QTextEdit):
+            filename_to_remove = next((name for name, editor in self.editors.items() if editor == widget), None)
+            if filename_to_remove:
+                del self.editors[filename_to_remove]
+        self.tab_widget.removeTab(index)
+
     def show_window(self):
-        """Helper method to show and activate the window."""
         if not self.isVisible():
             self.show()
         else:
-            self.activateWindow()
-            self.raise_()  # Bring to the very front
+            self.activateWindow(); self.raise_()
