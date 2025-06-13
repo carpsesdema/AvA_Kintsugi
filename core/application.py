@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V20: Fixes typo in 'on_new_project' method name.
+# V21: Passes event bus to CodeViewerWindow for terminal integration.
 
 import asyncio
 from pathlib import Path
@@ -38,7 +38,9 @@ class Application:
 
         # --- Window Management ---
         self.main_window = MainWindow(self.event_bus)
-        self.code_viewer = CodeViewerWindow()
+        # --- THE CHANGE IS HERE ---
+        self.code_viewer = CodeViewerWindow(self.event_bus)
+        # --- END OF CHANGE ---
         self.workflow_monitor = WorkflowMonitorWindow()
         self.terminals_window = TerminalsWindow()
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client)
@@ -56,7 +58,7 @@ class Application:
         # Window Management Events
         self.event_bus.subscribe("show_code_viewer_requested", lambda: self.show_window(self.code_viewer))
         self.event_bus.subscribe("show_workflow_monitor_requested", lambda: self.show_window(self.workflow_monitor))
-        self.event_bus.subscribe("show_terminals_requested", lambda: self.show_window(self.terminals__window))
+        self.event_bus.subscribe("show_terminals_requested", lambda: self.show_window(self.terminals_window))
         self.event_bus.subscribe("configure_models_requested", self.model_config_dialog.exec)
 
         # AI Workflow & UI Update Events
@@ -101,13 +103,10 @@ class Application:
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
 
-    # --- THE FIX IS HERE ---
     def on_new_project(self):
         new_path_str = self.project_manager.new_project()
         self.event_bus.emit("project_loaded", new_path_str)
         self.event_bus.emit("ai_response_ready", "New empty project created. Ready for your instructions.")
-
-    # --- END OF FIX ---
 
     def on_load_project(self):
         directory = QFileDialog.getExistingDirectory(self.main_window, "Select Project Folder")
