@@ -1,13 +1,14 @@
 # kintsugi_ava/core/application.py
-# V6: Now async-aware to handle real AI service calls.
+# V7: Manages the model configuration dialog.
 
 import asyncio
 from .event_bus import EventBus
-from .llm_client import LLMClient  # <-- Import LLMClient
+from .llm_client import LLMClient
 from gui.main_window import MainWindow
 from gui.code_viewer import CodeViewerWindow
 from gui.workflow_monitor_window import WorkflowMonitorWindow
 from gui.terminals import TerminalsWindow
+from gui.model_config_dialog import ModelConfigurationDialog  # <-- Import dialog
 from services.coder_service import CoderService
 
 
@@ -21,40 +22,34 @@ class Application:
         self.event_bus = EventBus()
         self.conversation_history = []
 
-        # --- Service Management ---
-        # The application now creates and owns the LLMClient.
         self.llm_client = LLMClient()
-        # The CoderService gets the LLMClient passed to it.
         self.coder_service = CoderService(self.event_bus, self.llm_client)
 
-        # --- Window Management ---
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow()
         self.workflow_monitor = WorkflowMonitorWindow()
         self.terminals_window = TerminalsWindow()
+        # Create the dialog but don't show it yet
+        self.model_config_dialog = ModelConfigurationDialog(self.llm_client)
 
         self._connect_events()
 
     def _connect_events(self):
-        """Central place to connect application logic to events from the UI."""
         self.event_bus.subscribe("user_request_submitted", self.on_user_request)
         self.event_bus.subscribe("new_session_requested", self.clear_session)
 
         self.event_bus.subscribe("show_code_viewer_requested", self.show_code_viewer)
         self.event_bus.subscribe("show_workflow_monitor_requested", self.show_workflow_monitor)
         self.event_bus.subscribe("show_terminals_requested", self.show_terminals)
+        # New event for showing the config dialog
+        self.event_bus.subscribe("configure_models_requested", self.model_config_dialog.exec)
 
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
+        self.event_bus.subscribe("ai_response_ready", self.main_window.chat_interface._add_ai_response)
 
     def on_user_request(self, prompt: str, history: list):
-        """
-        This is the event handler for a user request. It creates a task
-        to run the AI workflow in the background, keeping the GUI responsive.
-        """
         print(f"[Application] Heard 'user_request_submitted'. Creating background task.")
         self.conversation_history = history
-
-        # --- Run the async workflow in the background ---
         asyncio.create_task(self.coder_service.generate_code(prompt))
 
     def show_window(self, window):

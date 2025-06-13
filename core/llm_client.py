@@ -1,15 +1,13 @@
 # kintsugi_ava/core/llm_client.py
-# The universal adapter for talking to various LLM providers.
+# V2: Now configurable, with savable role assignments.
 
 import os
 import json
 import aiohttp
 import asyncio
+from pathlib import Path
 from dotenv import load_dotenv
 
-# --- Third-party library imports ---
-# We use try/except blocks to make these optional.
-# If a user doesn't have a library installed, that provider will be disabled.
 try:
     import openai
 except ImportError:
@@ -23,114 +21,154 @@ except ImportError:
 
 class LLMClient:
     """
-    A unified, asynchronous client for interacting with multiple LLM providers.
-    It loads API keys from a .env file and can be configured to use different
-    models for different tasks.
+    A unified, asynchronous client that manages model configurations
+    and can interact with multiple LLM providers.
     """
 
     def __init__(self):
-        # Load API keys from the .env file in the project root
         load_dotenv()
+        self.config_dir = Path("config")
+        self.config_dir.mkdir(exist_ok=True)
+        self.assignments_file = self.config_dir / "role_assignments.json"
+
         self.clients = {}
         self._configure_clients()
+
+        self.role_assignments = {}
+        self.load_assignments()
 
     def _configure_clients(self):
         """Configures the API clients based on available keys."""
         if openai:
-            # OpenAI and DeepSeek use the same client library structure
-            openai_key = os.getenv("OPENAI_API_KEY")
-            if openai_key:
+            if openai_key := os.getenv("OPENAI_API_KEY"):
                 self.clients["openai"] = openai.AsyncOpenAI(api_key=openai_key)
                 print("[LLMClient] OpenAI client configured.")
-
-            deepseek_key = os.getenv("DEEPSEEK_API_KEY")
-            if deepseek_key:
-                self.clients["deepseek"] = openai.AsyncOpenAI(
-                    api_key=deepseek_key,
-                    base_url="https://api.deepseek.com/v1"
-                )
+            if deepseek_key := os.getenv("DEEPSEEK_API_KEY"):
+                self.clients["deepseek"] = openai.AsyncOpenAI(api_key=deepseek_key,
+                                                              base_url="https://api.deepseek.com/v1")
                 print("[LLMClient] DeepSeek client configured.")
-
         if genai:
-            gemini_key = os.getenv("GEMINI_API_KEY")
-            if gemini_key:
+            if gemini_key := os.getenv("GEMINI_API_KEY"):
                 genai.configure(api_key=gemini_key)
-                # We create the model object on-the-fly, so just confirm config
                 self.clients["google"] = "configured"
                 print("[LLMClient] Google Gemini client configured.")
-
-        # Ollama doesn't need a key, just a base URL.
         self.clients["ollama"] = "configured"
         print("[LLMClient] Ollama client configured.")
 
-    async def stream_chat(self, provider: str, model: str, prompt: str):
-        """
-        The main public method. It acts as a router to the correct
-        provider-specific streaming method.
-        """
+    def load_assignments(self):
+        """Loads model assignments from a JSON file, or sets smart defaults."""
+        if self.assignments_file.exists():
+            print(f"[LLMClient] Loading model assignments from {self.assignments_file}")
+            with open(self.assignments_file, 'r') as f:
+                self.role_assignments = json.load(f)
+        else:
+            print("[LLMClient] No assignments file found, setting smart defaults.")
+            # Smart defaults: prefer fast/cheap models
+            self.role_assignments = {
+                "coder": "ollama/llama3",
+                "chat": "ollama/llama3"
+            }
+        print(f"[LLMClient] Current assignments: {self.role_assignments}")
+
+    def save_assignments(self):
+        """Saves the current role assignments to the JSON file."""
+        print(f"[LLMClient] Saving model assignments to {self.assignments_file}")
+        with open(self.assignments_file, 'w') as f:
+            json.dump(self.role_assignments, f, indent=2)
+
+    def get_available_models(self) -> dict:
+        """Returns a dictionary of all available models for the UI."""
+        models = {}
+        if "openai" in self.clients:
+            models["openai/gpt-4o"] = "OpenAI: GPT-4o"
+        if "deepseek" in self.clients:
+            models["deepseek/deepseek-coder"] = "DeepSeek: Coder"
+        if "google" in self.clients:
+            models["google/gemini-1.5-flash-latest"] = "Google: Gemini 1.5 Flash"
+        if "ollama" in self.clients:
+            # In a real app, we'd query Ollama for its models. For now, hard-code common ones.
+            models["ollama/llama3"] = "Ollama: Llama3"
+            models["ollama/codellama"] = "Ollama: CodeLlama"
+            models["ollama/mistral"] = "Ollama: Mistral"
+        return models
+
+    def get_role_assignments(self) -> dict:
+        return self.role_assignments
+
+    def set_role_assignments(self, assignments: dict):
+        # Update only the roles we are configuring
+        self.role_assignments.update(assignments)
+
+    def get_model_for_role(self, role: str) -> tuple[str, str] | None:
+        """Gets the provider and model name for a given role."""
+        key = self.role_assignments.get(role)
+        if not key or "/" not in key:
+            print(f"[LLMClient] Warning: No valid model assigned to role '{role}'.")
+            return None, None
+        provider, model_name = key.split('/', 1)
         if provider not in self.clients:
-            print(f"[LLMClient] Error: Provider '{provider}' is not configured or available.")
+            print(f"[LLMClient] Error: Provider '{provider}' for role '{role}' is not configured.")
+            return None, None
+        return provider, model_name
+
+    async def stream_chat(self, provider: str, model: str, prompt: str):
+        if provider not in self.clients:
             yield f"Error: Provider {provider} not configured."
             return
 
         print(f"[LLMClient] Streaming from {provider}/{model}...")
 
-        # Router to the correct async generator
-        if provider == "openai" or provider == "deepseek":
-            stream = self._stream_openai_compatible(self.clients[provider], model, prompt)
-        elif provider == "google":
-            stream = self._stream_google(model, prompt)
-        elif provider == "ollama":
-            stream = self._stream_ollama(model, prompt)
-        else:
-            yield f"Error: Unknown provider {provider}"
+        router = {
+            "openai": self._stream_openai_compatible,
+            "deepseek": self._stream_openai_compatible,
+            "google": self._stream_google,
+            "ollama": self._stream_ollama
+        }
+        client = self.clients.get(provider)
+        stream_func = router.get(provider)
+
+        if not stream_func or (client is None and provider != 'google'):
+            yield f"Error: Streaming function for {provider} not found."
             return
+
+        # Adapt call signature for the router
+        if provider in ["openai", "deepseek"]:
+            stream = stream_func(client, model, prompt)
+        else:
+            stream = stream_func(model, prompt)
 
         async for chunk in stream:
             yield chunk
 
     async def _stream_openai_compatible(self, client, model: str, prompt: str):
-        """Handles streaming for OpenAI and DeepSeek."""
         try:
-            response_stream = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                stream=True
-            )
+            response_stream = await client.chat.completions.create(model=model,
+                                                                   messages=[{"role": "user", "content": prompt}],
+                                                                   stream=True)
             async for chunk in response_stream:
-                content = chunk.choices[0].delta.content
-                if content:
+                if content := chunk.choices[0].delta.content:
                     yield content
         except Exception as e:
-            yield f"\n\nError from OpenAI/DeepSeek: {e}"
+            yield f"\n\nError: {e}"
 
     async def _stream_google(self, model: str, prompt: str):
-        """Handles streaming for Google Gemini."""
         try:
             model_instance = genai.GenerativeModel(model)
             async for chunk in await model_instance.generate_content_async(prompt, stream=True):
-                if chunk.text:
-                    yield chunk.text
+                if chunk.text: yield chunk.text
         except Exception as e:
-            yield f"\n\nError from Google Gemini: {e}"
+            yield f"\n\nError: {e}"
 
     async def _stream_ollama(self, model: str, prompt: str):
-        """Handles streaming for a local Ollama instance."""
         ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/chat"
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": True
-        }
+        payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True}
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(ollama_url, json=payload) as response:
-                    response.raise_for_status()  # Raise an exception for bad status codes
+                    response.raise_for_status()
                     async for line in response.content:
                         if line:
-                            data = json.loads(line)
-                            content = data.get("message", {}).get("content")
-                            if content:
-                                yield content
+                            content = json.loads(line).get("message", {}).get("content")
+                            if content: yield content
         except Exception as e:
-            yield f"\n\nError from Ollama: {e}"
+            yield f"\n\nError: {e}"

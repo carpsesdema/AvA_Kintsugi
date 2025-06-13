@@ -1,59 +1,42 @@
 # kintsugi_ava/gui/enhanced_sidebar.py
-# The full sidebar component of our application, built to match the blueprint.
+# V3: Wires up the configure models button.
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
 from PySide6.QtCore import Qt
-import qtawesome as qta  # The icon library
+import qtawesome as qta
 
 from .components import Colors, Typography, ModernButton
-from core.event_bus import EventBus  # Import EventBus
-
+from core.event_bus import EventBus
 
 class EnhancedSidebar(QWidget):
-    """
-    The complete sidebar view. It holds all the necessary control panels
-    for the application, mirroring our target design.
-    """
-
     def __init__(self, event_bus: EventBus):
         super().__init__()
         self.event_bus = event_bus
-
         self.setFixedWidth(300)
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(self.backgroundRole(), Colors.SECONDARY_BG)
         self.setPalette(palette)
-
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(12)
-
         main_layout.addWidget(self._create_project_panel())
         main_layout.addWidget(self._create_model_panel())
         main_layout.addWidget(self._create_knowledge_panel())
         main_layout.addWidget(self._create_actions_panel())
-
         main_layout.addStretch()
 
     def _create_styled_panel(self, title: str) -> tuple[QFrame, QVBoxLayout]:
         panel = QFrame()
-        panel.setStyleSheet(f"""
-            QFrame {{
-                background-color: {Colors.PRIMARY_BG.name()};
-                border-radius: 8px;
-            }}
-        """)
+        panel.setStyleSheet(f"background-color: {Colors.PRIMARY_BG.name()}; border-radius: 8px;")
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(12, 8, 12, 12)
         panel_layout.setSpacing(8)
-
         header = QLabel(title)
         header.setFont(Typography.heading_small())
         header.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()}; padding: 5px 0px;")
         panel_layout.addWidget(header)
-
         return panel, panel_layout
 
     def _create_project_panel(self) -> QFrame:
@@ -74,6 +57,8 @@ class EnhancedSidebar(QWidget):
         panel, layout = self._create_styled_panel("AI Model Configuration")
         config_btn = ModernButton("Configure Models", "secondary")
         config_btn.setIcon(qta.icon("fa5s.cogs", color=Colors.TEXT_PRIMARY.name()))
+        # --- THIS IS THE CHANGE ---
+        config_btn.clicked.connect(lambda: self.event_bus.emit("configure_models_requested"))
         layout.addWidget(config_btn)
         return panel
 
@@ -89,41 +74,27 @@ class EnhancedSidebar(QWidget):
 
     def _create_actions_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Chat Actions")
-
-        # Session Actions
         layout.addWidget(self._create_action_header("SESSION"))
         new_session_btn = ModernButton("New Session", "secondary")
         new_session_btn.clicked.connect(lambda: self.event_bus.emit("new_session_requested"))
         layout.addWidget(new_session_btn)
-
-        # Tools Actions
         layout.addWidget(self._create_action_header("TOOLS"))
-
         log_btn = ModernButton("View LLM Log", "secondary")
         log_btn.setIcon(qta.icon("fa5s.terminal", color=Colors.TEXT_PRIMARY.name()))
         log_btn.clicked.connect(lambda: self.event_bus.emit("show_terminals_requested"))
         layout.addWidget(log_btn)
-
         monitor_btn = ModernButton("Workflow Monitor", "secondary")
         monitor_btn.setIcon(qta.icon("fa5s.project-diagram", color=Colors.TEXT_PRIMARY.name()))
         monitor_btn.clicked.connect(lambda: self.event_bus.emit("show_workflow_monitor_requested"))
         layout.addWidget(monitor_btn)
-
         code_viewer_btn = ModernButton("Open Code Viewer", "secondary")
         code_viewer_btn.setIcon(qta.icon("fa5s.code", color=Colors.TEXT_PRIMARY.name()))
         code_viewer_btn.clicked.connect(lambda: self.event_bus.emit("show_code_viewer_requested"))
         layout.addWidget(code_viewer_btn)
-
         return panel
 
     def _create_action_header(self, text: str) -> QLabel:
         header = QLabel(text)
         header.setFont(Typography.get_font(9, QFont.Weight.Bold))
-        header.setStyleSheet(f"""
-            color: {Colors.TEXT_SECONDARY.name()};
-            margin-top: 8px;
-            margin-bottom: 2px;
-            border: none;
-            background: transparent;
-        """)
+        header.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()}; margin-top: 8px; margin-bottom: 2px; border: none; background: transparent;")
         return header
