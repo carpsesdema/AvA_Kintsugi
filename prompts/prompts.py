@@ -1,6 +1,5 @@
 # kintsugi_ava/prompts/prompts.py
-# A centralized library for all AI prompt templates.
-# This makes them easy to find, modify, and manage.
+# V2: Enforcing 'main.py' as the entry point for better execution compatibility.
 
 # --- Architect Service Prompts ---
 
@@ -11,15 +10,16 @@ You are an expert software architect who specializes in creating plans for Pytho
 
 **INSTRUCTIONS:**
 1.  Your goal is to create a plan for a **Python application**.
-2.  For simple GUI applications, prefer using Python's built-in **Tkinter** library unless the user specifies another framework (like PySide6 or Pygame). This ensures the project runs without extra installations.
-3.  Determine the necessary files for the project. For simple apps, this will often be a single script.
-4.  Your response MUST be ONLY a valid JSON object with a single key "files".
+2.  The main executable script **MUST be named `main.py`**.
+3.  For simple GUI applications, prefer using Python's built-in **Tkinter** library.
+4.  Determine the necessary files for the project. For simple apps, this will often be just `main.py`.
+5.  Your response MUST be ONLY a valid JSON object with a single key "files".
 
 **EXAMPLE RESPONSE (for a simple app):**
 {{
   "files": [
     {{
-      "filename": "stopwatch_app.py",
+      "filename": "main.py",
       "purpose": "A single-file stopwatch application using Tkinter for the GUI."
     }}
   ]
