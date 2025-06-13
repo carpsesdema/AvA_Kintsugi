@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/workflow_monitor_scene.py
-# The QGraphicsScene that lays out and manages the agent nodes and connections.
+# V2: Adds the Reviewer node to the scene layout.
 
 from PySide6.QtWidgets import QGraphicsScene
 from PySide6.QtGui import QColor
@@ -16,15 +16,16 @@ class WorkflowMonitorScene(QGraphicsScene):
         self.setup_layout()
 
     def setup_layout(self):
-        """Creates and positions the nodes for our workflow."""
+        """Creates and positions the nodes for our self-correcting workflow."""
         self.clear()
         self._nodes.clear()
 
         # Define nodes and their positions
         node_definitions = {
             "architect": {"name": "Architect", "icon": "🏛️", "pos": (100, 50)},
-            "coder": {"name": "Coder", "icon": "⚙️", "pos": (100, 200)},
-            "executor": {"name": "Executor", "icon": "🚀", "pos": (100, 350)}
+            "coder": {"name": "Coder", "icon": "⚙️", "pos": (100, 150)},
+            "executor": {"name": "Executor", "icon": "🚀", "pos": (100, 250)},
+            "reviewer": {"name": "Reviewer", "icon": "🧐", "pos": (100, 350)},  # New node
         }
 
         for agent_id, details in node_definitions.items():

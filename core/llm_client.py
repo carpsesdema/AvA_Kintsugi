@@ -1,6 +1,3 @@
-# kintsugi_ava/core/llm_client.py
-# V3: Expanded with more powerful models as requested.
-
 import os
 import json
 import aiohttp
@@ -12,7 +9,6 @@ try:
     import openai
 except ImportError:
     openai = None
-
 try:
     import google.generativeai as genai
 except ImportError:
@@ -20,25 +16,17 @@ except ImportError:
 
 
 class LLMClient:
-    """
-    A unified, asynchronous client that manages model configurations
-    and can interact with multiple LLM providers.
-    """
-
     def __init__(self):
         load_dotenv()
         self.config_dir = Path("config")
         self.config_dir.mkdir(exist_ok=True)
         self.assignments_file = self.config_dir / "role_assignments.json"
-
         self.clients = {}
         self._configure_clients()
-
         self.role_assignments = {}
         self.load_assignments()
 
     def _configure_clients(self):
-        """Configures the API clients based on available keys."""
         if openai:
             if openai_key := os.getenv("OPENAI_API_KEY"):
                 self.clients["openai"] = openai.AsyncOpenAI(api_key=openai_key)
@@ -56,43 +44,37 @@ class LLMClient:
         print("[LLMClient] Ollama client configured.")
 
     def load_assignments(self):
-        """Loads model assignments from a JSON file, or sets smart defaults."""
         if self.assignments_file.exists():
             print(f"[LLMClient] Loading model assignments from {self.assignments_file}")
             with open(self.assignments_file, 'r') as f:
                 self.role_assignments = json.load(f)
         else:
             print("[LLMClient] No assignments file found, setting smart defaults.")
-            self.role_assignments = {"coder": "ollama/llama3", "chat": "ollama/llama3"}
+            self.role_assignments = {
+                "coder": "deepseek/deepseek-coder",
+                "chat": "google/gemini-1.5-flash-latest",
+                "reviewer": "deepseek/deepseek-reasoner"  # <-- Smart default for reviewer
+            }
         print(f"[LLMClient] Current assignments: {self.role_assignments}")
 
     def save_assignments(self):
-        """Saves the current role assignments to the JSON file."""
         print(f"[LLMClient] Saving model assignments to {self.assignments_file}")
         with open(self.assignments_file, 'w') as f:
             json.dump(self.role_assignments, f, indent=2)
 
     def get_available_models(self) -> dict:
-        """Returns a dictionary of all available models for the UI."""
         models = {}
-        if "openai" in self.clients:
-            models["openai/gpt-4o"] = "OpenAI: GPT-4o"
-
+        if "openai" in self.clients: models["openai/gpt-4o"] = "OpenAI: GPT-4o"
         if "deepseek" in self.clients:
             models["deepseek/deepseek-coder"] = "DeepSeek: Coder"
-            # --- NEW MODEL ADDED ---
             models["deepseek/deepseek-reasoner"] = "DeepSeek: Reasoner (R1-0528)"
-
         if "google" in self.clients:
-            # --- NEW MODELS ADDED ---
             models["google/gemini-2.5-pro-preview-06-05"] = "Google: Gemini 2.5 Pro"
             models["google/gemini-2.5-flash-preview-05-20"] = "Google: Gemini 2.5 Flash"
-
         if "ollama" in self.clients:
             models["ollama/llama3"] = "Ollama: Llama3"
             models["ollama/codellama"] = "Ollama: CodeLlama"
             models["ollama/mistral"] = "Ollama: Mistral"
-
         return models
 
     def get_role_assignments(self) -> dict:
@@ -102,11 +84,12 @@ class LLMClient:
         self.role_assignments.update(assignments)
 
     def get_model_for_role(self, role: str) -> tuple[str | None, str | None]:
-        """Gets the provider and model name for a given role."""
         key = self.role_assignments.get(role)
         if not key or "/" not in key:
             print(f"[LLMClient] Warning: No valid model assigned to role '{role}'.")
-            return None, None
+            # Fallback to coder model if reviewer is not set, etc.
+            key = self.role_assignments.get("coder")
+            if not key or "/" not in key: return None, None
         provider, model_name = key.split('/', 1)
         if provider not in self.clients:
             print(f"[LLMClient] Error: Provider '{provider}' for role '{role}' is not configured.")
@@ -115,31 +98,21 @@ class LLMClient:
 
     async def stream_chat(self, provider: str, model: str, prompt: str):
         if provider not in self.clients:
-            yield f"Error: Provider {provider} not configured."
+            yield f"Error: Provider {provider} not configured.";
             return
-
         print(f"[LLMClient] Streaming from {provider}/{model}...")
-
-        router = {
-            "openai": self._stream_openai_compatible,
-            "deepseek": self._stream_openai_compatible,
-            "google": self._stream_google,
-            "ollama": self._stream_ollama
-        }
+        router = {"openai": self._stream_openai_compatible, "deepseek": self._stream_openai_compatible,
+                  "google": self._stream_google, "ollama": self._stream_ollama}
         client = self.clients.get(provider)
         stream_func = router.get(provider)
-
         if not stream_func or (client is None and provider != 'google'):
-            yield f"Error: Streaming function for {provider} not found."
+            yield f"Error: Streaming function for {provider} not found.";
             return
-
         if provider in ["openai", "deepseek"]:
             stream = stream_func(client, model, prompt)
         else:
             stream = stream_func(model, prompt)
-
-        async for chunk in stream:
-            yield chunk
+        async for chunk in stream: yield chunk
 
     async def _stream_openai_compatible(self, client, model: str, prompt: str):
         try:
@@ -147,14 +120,12 @@ class LLMClient:
                                                                    messages=[{"role": "user", "content": prompt}],
                                                                    stream=True)
             async for chunk in response_stream:
-                if content := chunk.choices[0].delta.content:
-                    yield content
+                if content := chunk.choices[0].delta.content: yield content
         except Exception as e:
             yield f"\n\nError: {e}"
 
     async def _stream_google(self, model: str, prompt: str):
         try:
-            # For Gemini, the model name needs the 'models/' prefix for the API call
             api_model_name = f"models/{model}" if not model.startswith("models/") else model
             model_instance = genai.GenerativeModel(api_model_name)
             async for chunk in await model_instance.generate_content_async(prompt, stream=True):
