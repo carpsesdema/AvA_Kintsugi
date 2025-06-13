@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/code_viewer.py
-# V10: Makes generation prep context-aware and fixes diff highlighting bugs.
+# V11: Fixes regression where code streaming was not visible for new files.
 
 from pathlib import Path
 from unidiff import PatchSet
@@ -111,9 +111,20 @@ class CodeViewerWindow(QMainWindow):
 
     @Slot(dict)
     def display_code(self, files: dict):
-        self._setup_new_project_view(list(files.keys()))
+        """
+        Sets the final, cleaned content in the appropriate editor tab.
+        This no longer resets the entire view, thus preserving the streaming effect.
+        """
         for filename, content in files.items():
-            if filename in self.editors: self.editors[filename].setPlainText(content)
+            if filename in self.editors:
+                # Find the editor that was being streamed to and set its final content.
+                editor = self.editors[filename]
+                editor.setPlainText(content)
+            else:
+                # Fallback for safety, though this path is less likely now.
+                self._setup_new_project_view(list(files.keys()))
+                if filename in self.editors:
+                    self.editors[filename].setPlainText(content)
 
     def _prepare_tabs_for_modification(self, filenames: list):
         """Prepares editor tabs for files that will be modified by opening them if not already open."""

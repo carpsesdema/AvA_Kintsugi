@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V22: Correctly handles patch application failures to prevent false positives.
+# V24: Unifies the refinement loop to use patches from the ReviewerService.
 
 import asyncio
 import json
@@ -52,7 +52,7 @@ class ArchitectService:
             if not file_plan: raise ValueError("AI did not return a valid file plan.")
             self.update_status("architect", "success", f"Plan created: {len(file_plan)} file(s).")
         except (json.JSONDecodeError, ValueError) as e:
-            self.handle_error("architect", "Plan creation failed: {e}", raw_plan_response)
+            self.handle_error("architect", f"Plan creation failed: {e}", raw_plan_response)
             return
 
         # --- STEP 2: Execute Plan (Create, Modify, or Patch) ---
@@ -80,7 +80,7 @@ class ArchitectService:
                 break
 
         if not all_steps_succeeded:
-            return  # Stop execution if any file step failed
+            return
 
         self.update_status("coder", "success", "Code generation/modification complete.")
 
@@ -113,10 +113,8 @@ class ArchitectService:
 
         if not cleaned_patch:
             self.log("warning", f"AI did not return a patch for {filename}. Skipping modification.")
-            return True  # It didn't fail, it just did nothing.
+            return True
 
-        # --- THE FIX ---
-        # The success of this operation now determines the fate of the entire workflow.
         success = self.project_manager.patch_file(filename, cleaned_patch, commit_message)
 
         if success:
@@ -127,38 +125,54 @@ class ArchitectService:
                 self.log("warning", f"Patch applied to {filename}, but could not re-read the file.")
             return True
         else:
-            # The patch failed to apply. This is a critical failure of the Coder agent.
             self.log("error", f"A patch generated for {filename} was invalid and could not be applied.")
             return False
-        # --- END OF FIX ---
 
     async def _validate_and_refine_loop(self):
-        """The self-correction loop that runs and fixes the code."""
+        """The self-correction loop that runs and fixes the code using patches."""
         for attempt in range(self.MAX_REFINEMENT_ATTEMPTS):
             self.update_status("executor", "working", f"Validating... (Attempt {attempt + 1})")
             exec_result = self.execution_engine.run_main_in_project()
 
             if exec_result.success:
                 self.update_status("executor", "success", "Validation passed!")
-                self.event_bus.emit("ai_response_ready", "Modifications complete and successfully tested!")
+                success_message = "Modifications complete and successfully tested!" if self.project_manager.is_existing_project else "Application generated and successfully tested!"
+                self.event_bus.emit("ai_response_ready", success_message)
                 return
 
+            # --- THE FIX ---
+            # The refinement loop is now fully patch-based.
             self.update_status("executor", "error", "Validation failed.")
             all_project_files = self.project_manager.get_project_files()
-            if "main.py" not in all_project_files:
+            main_py_path = "main.py"
+            if main_py_path not in all_project_files:
                 self.handle_error("executor", "Could not find main.py to fix.")
                 return
 
             self.update_status("reviewer", "working", "Attempting to fix code...")
-            broken_code = all_project_files.get("main.py", "")
-            fixed_code_str = await self.reviewer_service.review_and_correct_code("main.py", broken_code,
-                                                                                 exec_result.error)
-            fixed_file_map = {"main.py": self._clean_code_output(fixed_code_str)}
+            broken_code = all_project_files.get(main_py_path, "")
 
-            fix_commit_message = f"AI fix after execution error: {exec_result.error.strip().splitlines()[-1]}"
-            self.project_manager.save_and_commit_files(fixed_file_map, commit_message=fix_commit_message)
-            self.event_bus.emit("code_generation_complete", fixed_file_map)
-            self.update_status("reviewer", "success", "Fix implemented. Re-validating...")
+            # The reviewer now returns a patch, not the full code.
+            fix_patch = await self.reviewer_service.review_and_correct_code(main_py_path, broken_code,
+                                                                            exec_result.error)
+
+            if not fix_patch:
+                self.handle_error("reviewer", f"Could not generate a fix for {main_py_path}.")
+                return
+
+            # Apply the reviewer's patch using the ProjectManager.
+            fix_commit_message = f"AI Reviewer fix after error: {exec_result.error.strip().splitlines()[-1]}"
+            patch_success = self.project_manager.patch_file(main_py_path, fix_patch, fix_commit_message)
+
+            if patch_success:
+                # Emit the patched event so the UI can highlight the reviewer's changes.
+                updated_files = self.project_manager.get_project_files()
+                self.event_bus.emit("code_patched", main_py_path, updated_files.get(main_py_path, ""), fix_patch)
+                self.update_status("reviewer", "success", "Fix implemented. Re-validating...")
+            else:
+                self.handle_error("reviewer", f"Generated fix for {main_py_path} was invalid and could not be applied.")
+                return
+            # --- END OF FIX ---
 
         self.handle_error("executor", "Could not fix the code after several attempts.")
 
@@ -183,12 +197,10 @@ class ArchitectService:
         code = self._clean_json_output(code, is_json=False)
         start_marker = "```diff" if is_diff else "```python"
 
-        # More robust cleaning
         if code.startswith(start_marker):
             code = code[len(start_marker):].lstrip()
         elif code.startswith("```"):
             code = code[3:].lstrip()
-            # Handle cases where just 'diff' is used without ```
             if is_diff and code.lstrip().startswith('diff'):
                 code = code.lstrip()[4:].lstrip()
 
