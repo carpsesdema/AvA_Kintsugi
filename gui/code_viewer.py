@@ -52,10 +52,16 @@ class CodeViewerWindow(QMainWindow):
 
     @Slot(dict)
     def display_code(self, files: dict):
-        """(Legacy) Displays a completed dictionary of files."""
-        self._setup_new_project_view(list(files.keys()))
+        """
+        A method to display completed files. This is useful for updates
+        after a review/fix cycle.
+        """
+        if not self.editors:  # If tabs aren't ready, prepare them
+            self._setup_new_project_view(list(files.keys()))
+
         for filename, content in files.items():
             if filename in self.editors:
+                # To ensure highlighting works on the full file, we clear and set.
                 self.editors[filename].setPlainText(content)
 
     @Slot(list)

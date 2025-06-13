@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V12: Wires up the new streaming events for the Code Viewer.
+# V13: Connects the new streaming events.
 
 import asyncio
 from .event_bus import EventBus
@@ -28,13 +28,12 @@ class Application:
     def _connect_events(self):
         self.event_bus.subscribe("user_request_submitted", self.on_user_request)
         self.event_bus.subscribe("new_session_requested", self.clear_session)
-
         self.event_bus.subscribe("show_code_viewer_requested", self.show_code_viewer)
         self.event_bus.subscribe("show_workflow_monitor_requested", self.show_workflow_monitor)
         self.event_bus.subscribe("show_terminals_requested", self.show_terminals)
         self.event_bus.subscribe("configure_models_requested", self.model_config_dialog.exec)
 
-        # --- Connect the new streaming events ---
+        # --- Wiring up the full streaming workflow ---
         self.event_bus.subscribe("prepare_for_generation", self.code_viewer.prepare_for_generation)
         self.event_bus.subscribe("stream_code_chunk", self.code_viewer.stream_code_chunk)
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)

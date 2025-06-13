@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V11: Adds robust JSON cleaning to prevent silent failures during planning.
+# V13: Upgrades the output cleaning logic to be more robust.
 
 import asyncio
 import json
@@ -32,12 +32,8 @@ class ArchitectService:
             [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt)])
 
         try:
-            # --- THIS IS THE FIX ---
-            # Clean the response before parsing to handle markdown fences.
             cleaned_plan_str = self._clean_json_output(raw_plan_response)
             plan_data = json.loads(cleaned_plan_str)
-            # --- END OF FIX ---
-
             file_plan = plan_data.get("files", [])
             if not file_plan: raise ValueError("AI did not return a valid file plan.")
             self.update_status("architect", "success", f"Plan created: {len(file_plan)} file(s).")
@@ -62,7 +58,7 @@ class ArchitectService:
                 self.event_bus.emit("stream_code_chunk", filename, chunk)
 
             generated_files[filename] = self._clean_code_output(file_content)
-            self.log("success", f"Finished generating {filename}.")
+            self.log("success", f"Finished streaming {filename}.")
 
         self.update_status("coder", "success", "Initial code generation complete.")
 
@@ -78,16 +74,14 @@ class ArchitectService:
                 return
 
             self.update_status("executor", "error", "Validation failed.")
-            main_filename = "main.py"
-            broken_code = current_code.get(main_filename, "")
-            if not broken_code:
+            if "main.py" not in current_code:
                 self.handle_error("executor", "Could not find main.py to fix.")
                 return
 
             self.update_status("reviewer", "working", "Attempting to fix code...")
-            fixed_code_str = await self.reviewer_service.review_and_correct_code(main_filename, broken_code,
+            fixed_code_str = await self.reviewer_service.review_and_correct_code("main.py", current_code["main.py"],
                                                                                  exec_result.error)
-            current_code[main_filename] = self._clean_code_output(fixed_code_str)
+            current_code["main.py"] = self._clean_code_output(fixed_code_str)
             self.event_bus.emit("code_generation_complete", current_code)
             self.update_status("reviewer", "success", "Fix implemented. Re-validating...")
 
@@ -104,15 +98,9 @@ class ArchitectService:
             yield chunk
 
     def _clean_json_output(self, response: str) -> str:
-        """Finds and extracts a JSON object from a string that might have markdown."""
-        # Find the first '{' and the last '}'
         json_start = response.find('{')
         json_end = response.rfind('}') + 1
-
-        if json_start != -1 and json_end != 0:
-            return response[json_start:json_end]
-
-        # If no object is found, raise an error to be caught upstream
+        if json_start != -1 and json_end != 0: return response[json_start:json_end]
         raise ValueError("No valid JSON object found in the AI's response.")
 
     def handle_error(self, agent: str, error_msg: str, response: str = ""):
@@ -128,7 +116,25 @@ class ArchitectService:
         self.event_bus.emit("log_message_received", "ArchitectService", message_type, content)
 
     def _clean_code_output(self, code: str) -> str:
-        if code.strip().startswith("```python"): code = code.strip()[9:]
-        if code.strip().startswith("```"): code = code.strip()[3:]
-        if code.strip().endswith("```"): code = code.strip()[:-3]
+        """
+        A more robust method to strip common markdown fences from AI-generated code.
+        Handles both triple-backticks and triple-single-quotes.
+        """
+        # Remove language specifier like ```python or '''python
+        if code.strip().startswith("```python"):
+            code = code[code.find('\n') + 1:]
+        elif code.strip().startswith("'''python"):
+            code = code[code.find('\n') + 1:]
+
+        # Remove the fences themselves
+        if code.strip().startswith("```"):
+            code = code.strip()[3:]
+        if code.strip().startswith("'''"):
+            code = code.strip()[3:]
+
+        if code.strip().endswith("```"):
+            code = code.strip()[:-3]
+        if code.strip().endswith("'''"):
+            code = code.strip()[:-3]
+
         return code.strip()
