@@ -38,7 +38,7 @@ MANIFEST
 # AvA generated workspace and logs
 workspace/
 logs/
-rag_data/
+rag_db/
 *.db
 *.db-journal
 
