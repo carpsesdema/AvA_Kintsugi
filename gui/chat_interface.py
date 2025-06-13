@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/chat_interface.py
-# V2: Now cleaner, with no placeholder logic.
+# V3: Removes direct subscription to AI events. Now a pure "View" component.
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLineEdit, QFrame, QScrollArea, QHBoxLayout
 from PySide6.QtCore import Qt, Slot
@@ -61,7 +61,11 @@ class ChatInterface(QWidget):
         main_layout.addWidget(self.input_widget)
         self._add_message("Hello! I'm Kintsugi AvA. Let's build something solid.", is_user=False)
         self.event_bus.subscribe("new_session_requested", self.clear_chat)
-        self.event_bus.subscribe("ai_response_ready", self._add_ai_response)
+        # --- THE FIX ---
+        # We remove this line. The Application class is now responsible
+        # for telling the chat interface when to add an AI response.
+        # self.event_bus.subscribe("ai_response_ready", self._add_ai_response)
+        # --- END OF FIX ---
 
     def _create_input_widget(self) -> QFrame:
         input_frame = QFrame()
@@ -92,17 +96,16 @@ class ChatInterface(QWidget):
         self.conversation_history.append({"role": role, "content": text})
 
     def _on_send_message(self):
-        """Handles sending the user's message. No longer fakes AI responses."""
+        """Handles sending the user's message."""
         user_text = self.input_box.text().strip()
         if user_text:
             self.input_box.clear()
             self._add_message(user_text, is_user=True)
-            # Its ONLY job is to emit the user's request.
             self.event_bus.emit("user_request_submitted", user_text, self.conversation_history)
 
     @Slot(str)
     def _add_ai_response(self, text: str):
-        """A dedicated slot to handle adding real AI responses."""
+        """A dedicated public slot to handle adding real AI responses."""
         self._add_message(text, is_user=False)
 
     def clear_chat(self):

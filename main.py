@@ -1,5 +1,5 @@
 # kintsugi_ava/main.py
-# V3: Now gracefully cancels background tasks on exit.
+# V4: A more robust shutdown sequence to prevent race conditions.
 
 import sys
 import asyncio
@@ -11,23 +11,44 @@ from utils.exception_handler import setup_exception_hook
 
 
 async def main_async_logic():
-    app_quit_future = asyncio.get_event_loop().create_future()
+    """
+    The main asynchronous coroutine for the application.
+    This version includes a more robust shutdown mechanism.
+    """
     app = QApplication.instance()
 
-    main_app = Application()  # Application is created here
+    # This will hold our main application logic instance
+    ava_app = None
 
-    def on_about_to_quit():
-        print("[main] Application is about to quit.")
-        # --- THIS IS THE FIX for the shutdown hang ---
-        # Before we stop the loop, we cancel any running AI tasks.
-        main_app.cancel_all_tasks()
-        app_quit_future.set_result(True)
+    # Create a Future to signal when it's safe to exit
+    shutdown_future = asyncio.get_event_loop().create_future()
 
-    app.aboutToQuit.connect(on_about_to_quit)
+    async def on_about_to_quit():
+        """
+        This function is called right before the app quits.
+        It now properly handles task cancellation.
+        """
+        if ava_app:
+            print("[main] Application is about to quit. Cancelling background tasks...")
+            # Cancel all running AI tasks
+            await ava_app.cancel_all_tasks()
 
-    main_app.show()
-    await app_quit_future
-    print("[main] Quit_future resolved. Exiting main_async_logic.")
+        # Now that tasks are cancelled, signal that it's safe to exit
+        if not shutdown_future.done():
+            shutdown_future.set_result(True)
+
+    app.aboutToQuit.connect(lambda: asyncio.create_task(on_about_to_quit()))
+
+    try:
+        # Create and show the application
+        ava_app = Application()
+        ava_app.show()
+
+        # Wait here until the shutdown_future is resolved
+        await shutdown_future
+
+    finally:
+        print("[main] Shutdown sequence complete. Exiting.")
 
 
 if __name__ == "__main__":
@@ -44,7 +65,11 @@ if __name__ == "__main__":
     Path("prompts").mkdir(exist_ok=True)
     Path("prompts/__init__.py").touch()
 
+    # Set up global error handling first
     setup_exception_hook()
 
+    # Use qasync.run to manage the lifecycle
+    # This will also ensure the loop is properly closed
     qasync.run(main_async_logic())
+
     print("[main] Application has exited cleanly.")
