@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V16: Integrates the RAGManager for knowledge base operations.
+# V17: Fixes a typo in the RAG service injection.
 
 import asyncio
 from pathlib import Path
@@ -34,8 +34,10 @@ class Application:
         self.llm_client = LLMClient()
         self.project_analyzer = ProjectAnalyzer()
         self.rag_manager = RAGManager(self.event_bus)
+        # --- THE FIX IS HERE ---
         self.architect_service = ArchitectService(self.event_bus, self.llm_client, self.project_manager,
-                                                  self.rag_manager.rag__service)
+                                                  self.rag_manager.rag_service)
+        # --- END OF FIX ---
 
         # --- Window Management ---
         self.main_window = MainWindow(self.event_bus)
