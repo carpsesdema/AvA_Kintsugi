@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/integrated_terminal.py
-# The command center widget for the Code Viewer.
+# V2: Refined styling for a seamless, "Aider-like" aesthetic.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QFrame
@@ -12,10 +12,9 @@ from .components import Colors, Typography, ModernButton
 
 class IntegratedTerminal(QWidget):
     """
-    A widget that provides an integrated terminal experience, including
-    an output view, command input, and action buttons.
+    A widget that provides an integrated terminal experience, with a refined
+    stylesheet for a seamless, professional look.
     """
-    # Signal emitted when a user enters a command
     command_entered = Signal(str)
 
     def __init__(self, event_bus):
@@ -30,11 +29,12 @@ class IntegratedTerminal(QWidget):
         """)
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
         # 1. Action Buttons
         button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)
         run_main_btn = ModernButton("Run main.py", "primary")
         run_main_btn.clicked.connect(lambda: self.command_entered.emit("run_main"))
 
@@ -53,14 +53,13 @@ class IntegratedTerminal(QWidget):
         self.output_view.setStyleSheet(f"""
             QTextEdit {{
                 color: {Colors.TEXT_SECONDARY.name()};
-                background-color: {Colors.SECONDARY_BG.name()};
-                border: 1px solid {Colors.BORDER_DEFAULT.name()};
-                border-radius: 4px;
+                background-color: transparent;
+                border: none;
                 padding: 5px;
             }}
         """)
         self.output_view.setPlaceholderText("Command output will appear here...")
-        main_layout.addWidget(self.output_view, 1)  # Make it stretch
+        main_layout.addWidget(self.output_view, 1)
 
         # 3. Command Input
         self.command_input = QLineEdit()
@@ -71,7 +70,7 @@ class IntegratedTerminal(QWidget):
                 color: {Colors.TEXT_PRIMARY.name()};
                 background-color: {Colors.SECONDARY_BG.name()};
                 border: 1px solid {Colors.BORDER_DEFAULT.name()};
-                border-radius: 4px;
+                border-radius: 6px;
                 padding: 8px;
             }}
             QLineEdit:focus {{
@@ -85,7 +84,7 @@ class IntegratedTerminal(QWidget):
         """Handle the returnPressed signal from the command input."""
         command_text = self.command_input.text().strip()
         if command_text:
-            self.append_output(f"$ {command_text}\n")
+            self.append_output(f"> {command_text}\n")
             self.command_entered.emit(command_text)
             self.command_input.clear()
 
