@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V14: Integrates the ProjectManager for full project lifecycle support.
+# V15: The complete orchestrator for project creation and modification.
 
 import asyncio
 from pathlib import Path
@@ -14,18 +14,27 @@ from gui.workflow_monitor_window import WorkflowMonitorWindow
 from gui.terminals import TerminalsWindow
 from gui.model_config_dialog import ModelConfigurationDialog
 from services.architect_service import ArchitectService
-from services.reviewer_service import ReviewerService
+from services.project_analyzer import ProjectAnalyzer
 
 
 class Application:
+    """
+    The main application object. It acts as the lead engineer, orchestrating
+    all components and services to fulfill user requests for creation or
+    modification of projects.
+    """
+
     def __init__(self):
         self.event_bus = EventBus()
         self.background_tasks = set()
 
-        self.llm_client = LLMClient()
+        # --- Initialize all components and services ---
         self.project_manager = ProjectManager()
+        self.llm_client = LLMClient()
+        self.project_analyzer = ProjectAnalyzer()
         self.architect_service = ArchitectService(self.event_bus, self.llm_client, self.project_manager)
 
+        # --- Window Management ---
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow()
         self.workflow_monitor = WorkflowMonitorWindow()
@@ -35,81 +44,90 @@ class Application:
         self._connect_events()
 
     def _connect_events(self):
-        # User Actions
+        # User Actions from the UI
         self.event_bus.subscribe("user_request_submitted", self.on_user_request)
-        self.event_bus.subscribe("new_session_requested", self.clear_session)
         self.event_bus.subscribe("new_project_requested", self.on_new_project)
         self.event_bus.subscribe("load_project_requested", self.on_load_project)
+        self.event_bus.subscribe("new_session_requested", self.clear_session)
 
-        # Window Management
-        self.event_bus.subscribe("show_code_viewer_requested", self.show_code_viewer)
-        self.event_bus.subscribe("show_workflow_monitor_requested", self.show_workflow_monitor)
-        self.event_bus.subscribe("show_terminals_requested", self.show_terminals)
+        # Window Management Events
+        self.event_bus.subscribe("show_code_viewer_requested", lambda: self.show_window(self.code_viewer))
+        self.event_bus.subscribe("show_workflow_monitor_requested", lambda: self.show_window(self.workflow_monitor))
+        self.event_bus.subscribe("show_terminals_requested", lambda: self.show_window(self.terminals_window))
         self.event_bus.subscribe("configure_models_requested", self.model_config_dialog.exec)
 
-        # AI Workflow
+        # AI Workflow & UI Update Events
         self.event_bus.subscribe("prepare_for_generation", self.code_viewer.prepare_for_generation)
         self.event_bus.subscribe("stream_code_chunk", self.code_viewer.stream_code_chunk)
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
         self.event_bus.subscribe("ai_response_ready", self.main_window.chat_interface._add_ai_response)
 
-        # Logging & Monitoring
+        # Project Lifecycle Events
+        self.event_bus.subscribe("project_loaded", self.on_project_loaded)
+
+        # Logging & Monitoring Events
         self.event_bus.subscribe("log_message_received", self.terminals_window.add_log_message)
         self.event_bus.subscribe("node_status_changed", self.workflow_monitor.update_node_status)
 
-        # Project Lifecycle
-        self.event_bus.subscribe("project_created", self.on_project_loaded)
-        self.event_bus.subscribe("project_loaded", self.on_project_loaded)
-
     def on_user_request(self, prompt: str, history: list):
+        """
+        The main router. It checks if a project is loaded and decides
+        whether to create a new one or modify the existing one.
+        """
         self.workflow_monitor.scene.setup_layout()
-        task = asyncio.create_task(self.architect_service.create_project(prompt))
+
+        existing_files_context = None
+        if self.project_manager.is_existing_project:
+            print("[Application] Active project is an existing one. Analyzing files for context...")
+            existing_files_context = self.project_analyzer.analyze(str(self.project_manager.active_project_path))
+
+        # Create a background task for the AI workflow
+        task = asyncio.create_task(self.architect_service.generate_or_modify(prompt, existing_files_context))
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
 
     def on_new_project(self):
-        # This will be triggered by the sidebar button
-        self.project_manager.create_new_project()
-        self.event_bus.emit("project_created", str(self.project_manager.current_project_path))
+        """Handles the 'New Project' button click."""
+        new_path_str = self.project_manager.new_project()
+        self.event_bus.emit("project_loaded", new_path_str)
+        self.event_bus.emit("ai_response_ready", f"New empty project created. Ready for your instructions.")
 
     def on_load_project(self):
-        # Uses a native file dialog to select a folder
+        """Handles the 'Load Project' button click, opening a file dialog."""
         directory = QFileDialog.getExistingDirectory(self.main_window, "Select Project Folder")
         if directory:
-            loaded_path = self.project_manager.load_project(directory)
-            if loaded_path:
-                self.event_bus.emit("project_loaded", str(loaded_path))
+            loaded_path_str = self.project_manager.load_project(directory)
+            if loaded_path_str:
+                self.event_bus.emit("project_loaded", loaded_path_str)
 
     def on_project_loaded(self, path_str: str):
-        """Updates the UI when a project is created or loaded."""
+        """Updates the UI after a project is created or loaded."""
         project_path = Path(path_str)
-        self.main_window.sidebar.update_project_display(project_path.name)
-        # We can also load the files into the code viewer automatically
-        self.code_viewer.load_project(str(project_path))
+        display_name = self.project_manager.active_project_name
+        self.main_window.sidebar.update_project_display(display_name)
+        self.code_viewer.load_project(path_str)
+        self.event_bus.emit("ai_response_ready", f"Project '{display_name}' is now active and ready for modifications.")
 
     async def cancel_all_tasks(self):
-        if not self.background_tasks: return
+        """Gracefully cancels all running background tasks on shutdown."""
+        if not self.background_tasks:
+            return
         tasks_to_cancel = list(self.background_tasks)
-        for task in tasks_to_cancel: task.cancel()
+        for task in tasks_to_cancel:
+            task.cancel()
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
     def show_window(self, window):
+        """Helper to show a window and bring it to the front."""
         if not window.isVisible():
             window.show()
         else:
             window.activateWindow()
 
-    def show_code_viewer(self):
-        self.show_window(self.code_viewer)
-
-    def show_workflow_monitor(self):
-        self.show_window(self.workflow_monitor)
-
-    def show_terminals(self):
-        self.show_window(self.terminals_window)
-
     def clear_session(self):
-        self.event_bus.emit("ai_response_ready", "New session started. How can I help?")
+        """Resets the chat interface for a new conversation."""
+        self.event_bus.emit("ai_response_ready", "New session started.")
 
     def show(self):
+        """Shows the main application window."""
         self.main_window.show()

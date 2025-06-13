@@ -5,11 +5,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from .project_manager import ProjectManager  # <-- Import it
+from .project_manager import ProjectManager
 
 
 class ExecutionResult:
-    # ... (class remains the same) ...
+    """A simple class to hold the results of a code execution attempt."""
+
     def __init__(self, success: bool, output: str, error: str):
         self.success = success
         self.output = output
@@ -22,52 +23,75 @@ class ExecutionEngine:
     """
 
     def __init__(self, project_manager: ProjectManager):
-        # It no longer creates its own workspace, it uses the shared one.
+        """
+        The engine is initialized with a reference to the central ProjectManager.
+        It no longer manages its own workspace.
+        """
         self.project_manager = project_manager
 
     def run_main_in_project(self) -> ExecutionResult:
         """
-        Attempts to run the main file within the currently active project.
+        Attempts to run the main file within the currently active project
+        as determined by the ProjectManager.
         """
-        project_dir = self.project_manager.current_project_path
+        project_dir = self.project_manager.active_project_path
         if not project_dir:
             return ExecutionResult(False, "", "Execution failed: No project is active.")
 
         main_file_path = project_dir / "main.py"
         if not main_file_path.exists():
-            return ExecutionResult(False, "", "Execution failed: No 'main.py' file found.")
+            return ExecutionResult(False, "", "Execution failed: No 'main.py' file found in the active project.")
 
-        with open(main_file_path, "r", encoding="utf-8") as f:
-            main_content = f.read()
+        try:
+            with open(main_file_path, "r", encoding="utf-8") as f:
+                main_content = f.read()
+        except Exception as e:
+            return ExecutionResult(False, "", f"Execution failed: Could not read main.py. Error: {e}")
 
         print(f"[ExecutionEngine] Running project in: {project_dir}")
         is_gui_app = "mainloop()" in main_content or "app.exec()" in main_content or "app.run()" in main_content
 
         try:
+            # Use Popen for non-blocking execution, running from within the project directory
             process = subprocess.Popen(
                 [sys.executable, str(main_file_path)],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding='utf-8', cwd=project_dir  # <-- Run from the project dir
+                text=True, encoding='utf-8',
+                cwd=project_dir
             )
 
             if is_gui_app:
-                time.sleep(3)
+                print("[ExecutionEngine] GUI application detected. Monitoring for stability...")
+                time.sleep(3)  # Wait for 3 seconds for the app to initialize
+
                 poll_result = process.poll()
                 if poll_result is not None and poll_result != 0:
                     stdout, stderr = process.communicate()
-                    return ExecutionResult(False, stdout, stderr or stdout)
+                    error_output = stderr or stdout
+                    print(f"[ExecutionEngine] GUI app crashed on launch. Error:\n{error_output}")
+                    return ExecutionResult(False, stdout, error_output)
+
+                print("[ExecutionEngine] GUI app is stable. Terminating process and reporting success.")
                 process.terminate()
                 return ExecutionResult(True, "GUI app launched successfully.", "")
 
             else:
+                # For command-line scripts, wait for them to finish.
+                print("[ExecutionEngine] Command-line script detected. Waiting for completion...")
                 stdout, stderr = process.communicate(timeout=15)
+
                 if process.returncode == 0:
+                    print("[ExecutionEngine] Execution successful.")
                     return ExecutionResult(True, stdout, stderr)
                 else:
-                    return ExecutionResult(False, stdout, stderr or stdout)
+                    print(f"[ExecutionEngine] Execution failed with code {process.returncode}.")
+                    error_output = stderr or stdout
+                    return ExecutionResult(False, stdout, error_output)
 
         except subprocess.TimeoutExpired:
+            print("[ExecutionEngine] Script execution timed out.")
             process.kill()
-            return ExecutionResult(False, "", "Execution failed: The script timed out.")
+            return ExecutionResult(False, "", "Execution failed: The script timed out after 15 seconds.")
         except Exception as e:
-            return ExecutionResult(False, "", f"An unexpected error occurred: {e}")
+            print(f"[ExecutionEngine] An unexpected error occurred during execution: {e}")
+            return ExecutionResult(False, "", f"An unexpected error occurred during execution: {e}")
