@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/enhanced_sidebar.py
-# V3: Wires up the configure models button.
+# V4: Wires up the project management buttons.
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
 from PySide6.QtCore import Qt
@@ -7,6 +7,7 @@ import qtawesome as qta
 
 from .components import Colors, Typography, ModernButton
 from core.event_bus import EventBus
+
 
 class EnhancedSidebar(QWidget):
     def __init__(self, event_bus: EventBus):
@@ -17,10 +18,12 @@ class EnhancedSidebar(QWidget):
         palette = self.palette()
         palette.setColor(self.backgroundRole(), Colors.SECONDARY_BG)
         self.setPalette(palette)
+
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(12)
+
         main_layout.addWidget(self._create_project_panel())
         main_layout.addWidget(self._create_model_panel())
         main_layout.addWidget(self._create_knowledge_panel())
@@ -41,13 +44,19 @@ class EnhancedSidebar(QWidget):
 
     def _create_project_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Project Management")
+
         new_project_btn = ModernButton("New Project", "primary")
         new_project_btn.setIcon(qta.icon("fa5s.plus-circle", color=Colors.TEXT_PRIMARY.name()))
+        new_project_btn.clicked.connect(lambda: self.event_bus.emit("new_project_requested"))
+
         load_project_btn = ModernButton("Load Project", "secondary")
         load_project_btn.setIcon(qta.icon("fa5s.folder-open", color=Colors.TEXT_PRIMARY.name()))
+        load_project_btn.clicked.connect(lambda: self.event_bus.emit("load_project_requested"))
+
         self.project_name_label = QLabel("Project: (none)")
         self.project_name_label.setFont(Typography.body())
         self.project_name_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()}; padding-top: 5px;")
+
         layout.addWidget(new_project_btn)
         layout.addWidget(load_project_btn)
         layout.addWidget(self.project_name_label)
@@ -57,7 +66,6 @@ class EnhancedSidebar(QWidget):
         panel, layout = self._create_styled_panel("AI Model Configuration")
         config_btn = ModernButton("Configure Models", "secondary")
         config_btn.setIcon(qta.icon("fa5s.cogs", color=Colors.TEXT_PRIMARY.name()))
-        # --- THIS IS THE CHANGE ---
         config_btn.clicked.connect(lambda: self.event_bus.emit("configure_models_requested"))
         layout.addWidget(config_btn)
         return panel
@@ -96,5 +104,10 @@ class EnhancedSidebar(QWidget):
     def _create_action_header(self, text: str) -> QLabel:
         header = QLabel(text)
         header.setFont(Typography.get_font(9, QFont.Weight.Bold))
-        header.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()}; margin-top: 8px; margin-bottom: 2px; border: none; background: transparent;")
+        header.setStyleSheet(
+            f"color: {Colors.TEXT_SECONDARY.name()}; margin-top: 8px; margin-bottom: 2px; border: none; background: transparent;")
         return header
+
+    def update_project_display(self, project_name: str):
+        """Public method to update the project name label."""
+        self.project_name_label.setText(f"Project: {project_name}")

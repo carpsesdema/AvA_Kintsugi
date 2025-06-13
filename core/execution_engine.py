@@ -1,14 +1,15 @@
 # kintsugi_ava/core/execution_engine.py
-# Safely executes and validates generated code.
+# V3: Now uses the ProjectManager to handle file operations.
 
 import subprocess
 import sys
+import time
 from pathlib import Path
+from .project_manager import ProjectManager  # <-- Import it
 
 
 class ExecutionResult:
-    """A simple class to hold the results of a code execution attempt."""
-
+    # ... (class remains the same) ...
     def __init__(self, success: bool, output: str, error: str):
         self.success = success
         self.output = output
@@ -17,60 +18,56 @@ class ExecutionResult:
 
 class ExecutionEngine:
     """
-    Safely executes generated Python code in a sandboxed environment
-    to validate its correctness.
+    Safely executes generated Python code from a managed project directory.
     """
 
-    def __init__(self, workspace_dir: str = "workspace"):
-        self.workspace_dir = Path(workspace_dir)
-        self.workspace_dir.mkdir(exist_ok=True)
+    def __init__(self, project_manager: ProjectManager):
+        # It no longer creates its own workspace, it uses the shared one.
+        self.project_manager = project_manager
 
-    def save_and_run(self, files: dict[str, str]) -> ExecutionResult:
+    def run_main_in_project(self) -> ExecutionResult:
         """
-        Saves the files to a temporary project folder and attempts to run the main file.
-
-        Args:
-            files: A dictionary of {filename: content}. It assumes a 'main.py' exists.
-
-        Returns:
-            An ExecutionResult object with the outcome.
+        Attempts to run the main file within the currently active project.
         """
-        if "main.py" not in files:
-            return ExecutionResult(False, "", "Execution failed: No 'main.py' file found in the generated project.")
-
-        # Create a unique, sandboxed directory for this run
-        project_dir = self.workspace_dir / f"run_{Path.cwd().name}_{len(list(self.workspace_dir.iterdir()))}"
-        project_dir.mkdir()
-
-        # Write all the files to this sandboxed directory
-        for filename, content in files.items():
-            (project_dir / filename).write_text(content, encoding='utf-8')
+        project_dir = self.project_manager.current_project_path
+        if not project_dir:
+            return ExecutionResult(False, "", "Execution failed: No project is active.")
 
         main_file_path = project_dir / "main.py"
+        if not main_file_path.exists():
+            return ExecutionResult(False, "", "Execution failed: No 'main.py' file found.")
 
-        print(f"[ExecutionEngine] Running project in sandbox: {project_dir}")
+        with open(main_file_path, "r", encoding="utf-8") as f:
+            main_content = f.read()
+
+        print(f"[ExecutionEngine] Running project in: {project_dir}")
+        is_gui_app = "mainloop()" in main_content or "app.exec()" in main_content or "app.run()" in main_content
 
         try:
-            # Execute the script using the same Python interpreter that is running this app
-            process = subprocess.run(
+            process = subprocess.Popen(
                 [sys.executable, str(main_file_path)],
-                capture_output=True,
-                text=True,
-                timeout=15,  # 15-second timeout to prevent infinite loops
-                check=False  # Don't raise an exception on non-zero exit codes
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding='utf-8', cwd=project_dir  # <-- Run from the project dir
             )
 
-            if process.returncode == 0:
-                print("[ExecutionEngine] Execution successful.")
-                return ExecutionResult(True, process.stdout, process.stderr)
+            if is_gui_app:
+                time.sleep(3)
+                poll_result = process.poll()
+                if poll_result is not None and poll_result != 0:
+                    stdout, stderr = process.communicate()
+                    return ExecutionResult(False, stdout, stderr or stdout)
+                process.terminate()
+                return ExecutionResult(True, "GUI app launched successfully.", "")
+
             else:
-                print(f"[ExecutionEngine] Execution failed with code {process.returncode}.")
-                error_output = process.stderr or process.stdout
-                return ExecutionResult(False, process.stdout, error_output)
+                stdout, stderr = process.communicate(timeout=15)
+                if process.returncode == 0:
+                    return ExecutionResult(True, stdout, stderr)
+                else:
+                    return ExecutionResult(False, stdout, stderr or stdout)
 
         except subprocess.TimeoutExpired:
-            print("[ExecutionEngine] Execution timed out.")
-            return ExecutionResult(False, "", "Execution failed: The process timed out after 15 seconds.")
+            process.kill()
+            return ExecutionResult(False, "", "Execution failed: The script timed out.")
         except Exception as e:
-            print(f"[ExecutionEngine] An unexpected error occurred during execution: {e}")
             return ExecutionResult(False, "", f"An unexpected error occurred: {e}")
