@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V15: The complete orchestrator for project creation and modification.
+# V16: Integrates the RAGManager for knowledge base operations.
 
 import asyncio
 from pathlib import Path
@@ -15,6 +15,7 @@ from gui.terminals import TerminalsWindow
 from gui.model_config_dialog import ModelConfigurationDialog
 from services.architect_service import ArchitectService
 from services.project_analyzer import ProjectAnalyzer
+from services.rag_manager import RAGManager
 
 
 class Application:
@@ -32,7 +33,9 @@ class Application:
         self.project_manager = ProjectManager()
         self.llm_client = LLMClient()
         self.project_analyzer = ProjectAnalyzer()
-        self.architect_service = ArchitectService(self.event_bus, self.llm_client, self.project_manager)
+        self.rag_manager = RAGManager(self.event_bus)
+        self.architect_service = ArchitectService(self.event_bus, self.llm_client, self.project_manager,
+                                                  self.rag_manager.rag__service)
 
         # --- Window Management ---
         self.main_window = MainWindow(self.event_bus)
@@ -42,6 +45,9 @@ class Application:
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client)
 
         self._connect_events()
+
+        # Start non-blocking initialization of services that need it
+        self.rag_manager.start_async_initialization()
 
     def _connect_events(self):
         # User Actions from the UI
@@ -64,6 +70,9 @@ class Application:
 
         # Project Lifecycle Events
         self.event_bus.subscribe("project_loaded", self.on_project_loaded)
+
+        # RAG Events
+        self.event_bus.subscribe("scan_directory_requested", self.on_scan_directory_requested)
 
         # Logging & Monitoring Events
         self.event_bus.subscribe("log_message_received", self.terminals_window.add_log_message)
@@ -107,6 +116,10 @@ class Application:
         self.main_window.sidebar.update_project_display(display_name)
         self.code_viewer.load_project(path_str)
         self.event_bus.emit("ai_response_ready", f"Project '{display_name}' is now active and ready for modifications.")
+
+    def on_scan_directory_requested(self):
+        """Handles the request to scan a directory for the RAG knowledge base."""
+        self.rag_manager.open_scan_directory_dialog(self.main_window)
 
     async def cancel_all_tasks(self):
         """Gracefully cancels all running background tasks on shutdown."""

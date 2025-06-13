@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V15: A lean service focused purely on AI-driven planning and generation.
+# V16: Injects RAGService for context-aware planning.
 
 import asyncio
 import json
@@ -13,13 +13,13 @@ from services.rag_service import RAGService
 
 
 class ArchitectService:
-    def __init__(self, event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager):
+    def __init__(self, event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager, rag_service: RAGService):
         self.event_bus = event_bus
         self.llm_client = llm_client
         self.project_manager = project_manager
         self.execution_engine = ExecutionEngine(self.project_manager)
         self.reviewer_service = ReviewerService(event_bus, llm_client)
-        self.rag_service = RAGService()
+        self.rag_service = rag_service # Use the injected service
         self.MAX_REFINEMENT_ATTEMPTS = 3
 
     async def generate_or_modify(self, prompt: str, existing_files: dict = None):
@@ -40,9 +40,9 @@ class ArchitectService:
                                                              existing_files_json=json.dumps(existing_files, indent=2))
         else:
             self.log("info", "No existing project. Planning from scratch.")
-            self.update_status("architect", "working", "Designing new project plan...")
-            # Use the standard planner prompt
-            rag_context = self.rag_service.query(prompt)  # Still query RAG for new projects
+            self.update_status("architect", "working", "Querying RAG & designing plan...")
+            # Use the standard planner prompt with RAG context
+            rag_context = self.rag_service.query(prompt)
             plan_prompt = PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
 
         provider, model = self.llm_client.get_model_for_role("coder")
