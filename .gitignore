@@ -82,3 +82,4 @@ yarn-error.log*
 # --- Other ---
 # ZIP files (often used for updates or temporary archives)
 *.zip
+/config/role_assignments.json
