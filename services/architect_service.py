@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V17: Passes commit messages for Git-tracked file saves.
+# V18: Aligns with new save_and_commit_files method in ProjectManager.
 
 import asyncio
 import json
@@ -13,8 +13,7 @@ from services.rag_service import RAGService
 
 
 class ArchitectService:
-    def __init__(self, event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager,
-                 rag_service: RAGService):
+    def __init__(self, event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager, rag_service: RAGService):
         self.event_bus = event_bus
         self.llm_client = llm_client
         self.project_manager = project_manager
@@ -24,19 +23,14 @@ class ArchitectService:
         self.MAX_REFINEMENT_ATTEMPTS = 3
 
     async def generate_or_modify(self, prompt: str, existing_files: dict = None):
-        """
-        The main entry point. Generates or modifies projects within a Git-managed workflow.
-        """
         self.log("info", f"Task received: '{prompt}'")
-        user_prompt_summary = f'AI generation based on user prompt: "{prompt[:50]}..."'
+        user_prompt_summary = f'AI generation for: "{prompt[:50]}..."'
 
-        # --- STEP 1: Plan the project ---
         plan_prompt = ""
         if existing_files:
-            self.log("info", f"Existing project context detected. Planning modifications.")
+            self.log("info", f"Existing project detected. Planning modifications.")
             self.update_status("architect", "working", "Planning modifications...")
-            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt,
-                                                             existing_files_json=json.dumps(existing_files, indent=2))
+            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt, existing_files_json=json.dumps(existing_files, indent=2))
         else:
             self.log("info", "No existing project. Planning from scratch.")
             self.update_status("architect", "working", "Querying RAG & designing plan...")
@@ -48,14 +42,13 @@ class ArchitectService:
             self.handle_error("architect", "No model configured.")
             return
 
-        raw_plan_response = "".join(
-            [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt)])
+        raw_plan_response = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt)])
 
         try:
             plan_data = self._parse_json_response(raw_plan_response)
             file_plan = plan_data.get("files", [])
             if not file_plan: raise ValueError("AI did not return a valid file plan.")
-            self.update_status("architect", "success", f"Plan created: {len(file_plan)} file(s) to generate/modify.")
+            self.update_status("architect", "success", f"Plan created: {len(file_plan)} file(s).")
         except (json.JSONDecodeError, ValueError) as e:
             self.handle_error("architect", f"Plan creation failed: {e}", raw_plan_response)
             return
@@ -66,7 +59,6 @@ class ArchitectService:
 
         self.update_status("coder", "working", "Generating code...")
         generated_code = {}
-
         for file_info in file_plan:
             filename = file_info['filename']
             file_content = ""
@@ -75,11 +67,9 @@ class ArchitectService:
                 self.event_bus.emit("stream_code_chunk", filename, chunk)
             generated_code[filename] = self._clean_code_output(file_content)
 
-        # --- MODIFIED SAVE CALL ---
-        self.project_manager.save_files_to_project(generated_code, commit_message=user_prompt_summary)
+        self.project_manager.save_and_commit_files(generated_code, commit_message=user_prompt_summary)
         self.update_status("coder", "success", "Code generation complete.")
 
-        # Self-correction loop
         for attempt in range(self.MAX_REFINEMENT_ATTEMPTS):
             self.update_status("executor", "working", f"Validating... (Attempt {attempt + 1})")
             exec_result = self.execution_engine.run_main_in_project()
@@ -98,14 +88,10 @@ class ArchitectService:
 
             self.update_status("reviewer", "working", "Attempting to fix code...")
             broken_code = all_project_files.get("main.py", "")
-            fixed_code_str = await self.reviewer_service.review_and_correct_code("main.py", broken_code,
-                                                                                 exec_result.error)
+            fixed_code_str = await self.reviewer_service.review_and_correct_code("main.py", broken_code, exec_result.error)
             fixed_file_map = {"main.py": self._clean_code_output(fixed_code_str)}
-
-            # --- MODIFIED SAVE CALL ---
             fix_commit_message = f"AI fix after execution error: {exec_result.error.strip().splitlines()[-1]}"
-            self.project_manager.save_files_to_project(fixed_file_map, commit_message=fix_commit_message)
-
+            self.project_manager.save_and_commit_files(fixed_file_map, commit_message=fix_commit_message)
             self.event_bus.emit("code_generation_complete", fixed_file_map)
             self.update_status("reviewer", "success", "Fix implemented. Re-validating...")
 
@@ -130,9 +116,8 @@ class ArchitectService:
         if is_json:
             json_start = response.find('{')
             json_end = response.rfind('}') + 1
-            if json_start != -1 and json_end != 0:
-                return response[json_start:json_end]
-            raise ValueError("No valid JSON object found in the AI's response.")
+            if json_start != -1 and json_end != 0: return response[json_start:json_end]
+            raise ValueError("No valid JSON object found in AI's response.")
         return response
 
     def _clean_code_output(self, code: str) -> str:

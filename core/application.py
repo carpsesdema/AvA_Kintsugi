@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V23: Emits branch status updates for the new StatusBar.
+# V24: Injects CodeViewer into TerminalService for context-aware commands.
 
 import asyncio
 from pathlib import Path
@@ -35,15 +35,19 @@ class Application:
         self.project_analyzer = ProjectAnalyzer()
         self.execution_engine = ExecutionEngine(self.project_manager)
         self.rag_manager = RAGManager(self.event_bus)
-        self.terminal_service = TerminalService(self.event_bus, self.project_manager, self.execution_engine)
-        self.architect_service = ArchitectService(self.event_bus, self.llm_client, self.project_manager,
-                                                  self.rag_manager.rag_service)
 
+        # GUI must be created before services that depend on it
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow(self.event_bus)
         self.workflow_monitor = WorkflowMonitorWindow()
         self.terminals_window = TerminalsWindow()
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client)
+
+        # Services that depend on other components
+        self.terminal_service = TerminalService(self.event_bus, self.project_manager, self.execution_engine,
+                                                self.code_viewer)
+        self.architect_service = ArchitectService(self.event_bus, self.llm_client, self.project_manager,
+                                                  self.rag_manager.rag_service)
 
         self._connect_events()
         self.rag_manager.start_async_initialization()
@@ -52,6 +56,7 @@ class Application:
         self.event_bus.subscribe("user_request_submitted", self.on_user_request)
         self.event_bus.subscribe("new_project_requested", self.on_new_project)
         self.event_bus.subscribe("load_project_requested", self.on_load_project)
+        # ... (rest of the connections are the same)
         self.event_bus.subscribe("new_session_requested", self.clear_session)
         self.event_bus.subscribe("show_code_viewer_requested", lambda: self.show_window(self.code_viewer))
         self.event_bus.subscribe("show_workflow_monitor_requested", lambda: self.show_window(self.workflow_monitor))
@@ -84,10 +89,12 @@ class Application:
                                     "Could not create a safe sandbox branch. Please check Git setup.")
                 return
             self.event_bus.emit("ai_response_ready", f"Working in sandbox branch: {branch_name}")
-            self.event_bus.emit("branch_updated", branch_name)  # Update status bar
+            self.event_bus.emit("branch_updated", branch_name)
             existing_files_context = self.project_manager.get_project_files()
         else:
             existing_files_context = None
+
+        # --- NOTE: save_and_commit_files is now used, so this needs to be updated in architect_service
         task = asyncio.create_task(self.architect_service.generate_or_modify(prompt, existing_files_context))
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
@@ -96,23 +103,22 @@ class Application:
         new_path_str = self.project_manager.new_project()
         self.event_bus.emit("project_loaded", new_path_str)
         self.event_bus.emit("ai_response_ready", "New empty project created. Ready for instructions.")
-        if self.project_manager.repo:
-            self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
+        if self.project_manager.repo: self.event_bus.emit("branch_updated",
+                                                          self.project_manager.repo.active_branch.name)
 
     def on_load_project(self):
         directory = QFileDialog.getExistingDirectory(self.main_window, "Select Project Folder")
         if directory:
             loaded_path_str = self.project_manager.load_project(directory)
-            if loaded_path_str:
-                self.event_bus.emit("project_loaded", loaded_path_str)
+            if loaded_path_str: self.event_bus.emit("project_loaded", loaded_path_str)
 
     def on_project_loaded(self, path_str: str):
         display_name = self.project_manager.active_project_name
         self.main_window.sidebar.update_project_display(display_name)
         self.code_viewer.load_project(path_str)
         self.event_bus.emit("ai_response_ready", f"Project '{display_name}' is now active. Changes will be sandboxed.")
-        if self.project_manager.repo:
-            self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
+        if self.project_manager.repo: self.event_bus.emit("branch_updated",
+                                                          self.project_manager.repo.active_branch.name)
 
     def on_scan_directory_requested(self):
         self.rag_manager.open_scan_directory_dialog(self.main_window)
