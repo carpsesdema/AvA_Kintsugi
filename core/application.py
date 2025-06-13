@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V17: Fixes a typo in the RAG service injection.
+# V18: Orchestrates Git sandboxing for project modifications.
 
 import asyncio
 from pathlib import Path
@@ -21,8 +21,7 @@ from services.rag_manager import RAGManager
 class Application:
     """
     The main application object. It acts as the lead engineer, orchestrating
-    all components and services to fulfill user requests for creation or
-    modification of projects.
+    all components and services, including the Git sandboxing workflow.
     """
 
     def __init__(self):
@@ -34,10 +33,8 @@ class Application:
         self.llm_client = LLMClient()
         self.project_analyzer = ProjectAnalyzer()
         self.rag_manager = RAGManager(self.event_bus)
-        # --- THE FIX IS HERE ---
         self.architect_service = ArchitectService(self.event_bus, self.llm_client, self.project_manager,
                                                   self.rag_manager.rag_service)
-        # --- END OF FIX ---
 
         # --- Window Management ---
         self.main_window = MainWindow(self.event_bus)
@@ -47,8 +44,6 @@ class Application:
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client)
 
         self._connect_events()
-
-        # Start non-blocking initialization of services that need it
         self.rag_manager.start_async_initialization()
 
     def _connect_events(self):
@@ -82,29 +77,42 @@ class Application:
 
     def on_user_request(self, prompt: str, history: list):
         """
-        The main router. It checks if a project is loaded and decides
-        whether to create a new one or modify the existing one.
+        The main router. It now initiates a Git sandbox session before modification.
         """
         self.workflow_monitor.scene.setup_layout()
-
         existing_files_context = None
-        if self.project_manager.is_existing_project:
-            print("[Application] Active project is an existing one. Analyzing files for context...")
-            existing_files_context = self.project_analyzer.analyze(str(self.project_manager.active_project_path))
 
-        # Create a background task for the AI workflow
+        if self.project_manager.is_existing_project:
+            self.event_bus.emit("log_message_received", "Application", "info",
+                                "Existing project detected. Beginning sandboxed modification session.")
+
+            # --- THIS IS THE KEY SANDBOXING STEP ---
+            branch_name = self.project_manager.begin_modification_session()
+            if not branch_name:
+                self.event_bus.emit("log_message_received", "Application", "error",
+                                    "Failed to create sandbox branch. Aborting modification.")
+                self.event_bus.emit("ai_response_ready",
+                                    "I couldn't create a safe sandbox branch to work in. Please check your Git installation and permissions.")
+                return
+
+            self.event_bus.emit("ai_response_ready", f"Working on your request in a safe sandbox branch: {branch_name}")
+            # --- END OF SANDBOXING STEP ---
+
+            existing_files_context = self.project_manager.get_project_files()
+        else:
+            # This is a new project, no sandbox needed yet
+            existing_files_context = None
+
         task = asyncio.create_task(self.architect_service.generate_or_modify(prompt, existing_files_context))
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
 
     def on_new_project(self):
-        """Handles the 'New Project' button click."""
         new_path_str = self.project_manager.new_project()
         self.event_bus.emit("project_loaded", new_path_str)
         self.event_bus.emit("ai_response_ready", f"New empty project created. Ready for your instructions.")
 
     def on_load_project(self):
-        """Handles the 'Load Project' button click, opening a file dialog."""
         directory = QFileDialog.getExistingDirectory(self.main_window, "Select Project Folder")
         if directory:
             loaded_path_str = self.project_manager.load_project(directory)
@@ -112,37 +120,30 @@ class Application:
                 self.event_bus.emit("project_loaded", loaded_path_str)
 
     def on_project_loaded(self, path_str: str):
-        """Updates the UI after a project is created or loaded."""
         project_path = Path(path_str)
         display_name = self.project_manager.active_project_name
         self.main_window.sidebar.update_project_display(display_name)
         self.code_viewer.load_project(path_str)
-        self.event_bus.emit("ai_response_ready", f"Project '{display_name}' is now active and ready for modifications.")
+        self.event_bus.emit("ai_response_ready",
+                            f"Project '{display_name}' is now active. Any changes will be made in a safe sandbox branch.")
 
     def on_scan_directory_requested(self):
-        """Handles the request to scan a directory for the RAG knowledge base."""
         self.rag_manager.open_scan_directory_dialog(self.main_window)
 
     async def cancel_all_tasks(self):
-        """Gracefully cancels all running background tasks on shutdown."""
-        if not self.background_tasks:
-            return
+        if not self.background_tasks: return
         tasks_to_cancel = list(self.background_tasks)
-        for task in tasks_to_cancel:
-            task.cancel()
+        for task in tasks_to_cancel: task.cancel()
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
     def show_window(self, window):
-        """Helper to show a window and bring it to the front."""
         if not window.isVisible():
             window.show()
         else:
             window.activateWindow()
 
     def clear_session(self):
-        """Resets the chat interface for a new conversation."""
         self.event_bus.emit("ai_response_ready", "New session started.")
 
     def show(self):
-        """Shows the main application window."""
         self.main_window.show()

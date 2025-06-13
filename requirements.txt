@@ -13,3 +13,6 @@ google-generativeai
 chromadb
 sentence-transformers
 langchain-community
+
+# --- Version Control ---
+GitPython

@@ -45,7 +45,7 @@ rag_db/
 # Secrets and local configurations
 .env
 secrets.json
-config.json
+config/
 
 # --- IDEs and Editors ---
 # VSCode
@@ -82,4 +82,3 @@ yarn-error.log*
 # --- Other ---
 # ZIP files (often used for updates or temporary archives)
 *.zip
-/config/role_assignments.json

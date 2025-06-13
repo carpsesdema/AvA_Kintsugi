@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V16: Injects RAGService for context-aware planning.
+# V17: Passes commit messages for Git-tracked file saves.
 
 import asyncio
 import json
@@ -13,35 +13,33 @@ from services.rag_service import RAGService
 
 
 class ArchitectService:
-    def __init__(self, event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager, rag_service: RAGService):
+    def __init__(self, event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager,
+                 rag_service: RAGService):
         self.event_bus = event_bus
         self.llm_client = llm_client
         self.project_manager = project_manager
         self.execution_engine = ExecutionEngine(self.project_manager)
         self.reviewer_service = ReviewerService(event_bus, llm_client)
-        self.rag_service = rag_service # Use the injected service
+        self.rag_service = rag_service
         self.MAX_REFINEMENT_ATTEMPTS = 3
 
     async def generate_or_modify(self, prompt: str, existing_files: dict = None):
         """
-        The main entry point for the service. It can either generate a new
-        project or modify an existing one based on the provided context.
+        The main entry point. Generates or modifies projects within a Git-managed workflow.
         """
         self.log("info", f"Task received: '{prompt}'")
+        user_prompt_summary = f'AI generation based on user prompt: "{prompt[:50]}..."'
 
         # --- STEP 1: Plan the project ---
         plan_prompt = ""
         if existing_files:
-            self.log("info",
-                     f"Existing project context detected ({len(existing_files)} files). Planning modifications.")
+            self.log("info", f"Existing project context detected. Planning modifications.")
             self.update_status("architect", "working", "Planning modifications...")
-            # Use the specialized modification prompt
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt,
                                                              existing_files_json=json.dumps(existing_files, indent=2))
         else:
             self.log("info", "No existing project. Planning from scratch.")
             self.update_status("architect", "working", "Querying RAG & designing plan...")
-            # Use the standard planner prompt with RAG context
             rag_context = self.rag_service.query(prompt)
             plan_prompt = PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
 
@@ -77,7 +75,8 @@ class ArchitectService:
                 self.event_bus.emit("stream_code_chunk", filename, chunk)
             generated_code[filename] = self._clean_code_output(file_content)
 
-        self.project_manager.save_files_to_project(generated_code)
+        # --- MODIFIED SAVE CALL ---
+        self.project_manager.save_files_to_project(generated_code, commit_message=user_prompt_summary)
         self.update_status("coder", "success", "Code generation complete.")
 
         # Self-correction loop
@@ -99,12 +98,13 @@ class ArchitectService:
 
             self.update_status("reviewer", "working", "Attempting to fix code...")
             broken_code = all_project_files.get("main.py", "")
-
             fixed_code_str = await self.reviewer_service.review_and_correct_code("main.py", broken_code,
                                                                                  exec_result.error)
-
             fixed_file_map = {"main.py": self._clean_code_output(fixed_code_str)}
-            self.project_manager.save_files_to_project(fixed_file_map)
+
+            # --- MODIFIED SAVE CALL ---
+            fix_commit_message = f"AI fix after execution error: {exec_result.error.strip().splitlines()[-1]}"
+            self.project_manager.save_files_to_project(fixed_file_map, commit_message=fix_commit_message)
 
             self.event_bus.emit("code_generation_complete", fixed_file_map)
             self.update_status("reviewer", "success", "Fix implemented. Re-validating...")
@@ -136,17 +136,9 @@ class ArchitectService:
         return response
 
     def _clean_code_output(self, code: str) -> str:
-        code = self._clean_json_output(code, is_json=False)  # Reuse for basic stripping
-        if code.startswith("```python"):
-            code = code[9:].lstrip()
-        elif code.startswith("'''python"):
-            code = code[9:].lstrip()
-        elif code.startswith("```"):
-            code = code[3:].lstrip()
-        elif code.startswith("'''"):
-            code = code[3:].lstrip()
+        code = self._clean_json_output(code, is_json=False)
+        if code.startswith("```python"): code = code[9:].lstrip()
         if code.endswith("```"): code = code[:-3].rstrip()
-        if code.endswith("'''"): code = code[:-3].rstrip()
         return code.strip()
 
     def handle_error(self, agent: str, error_msg: str, response: str = ""):
