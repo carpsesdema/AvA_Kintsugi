@@ -4,10 +4,9 @@
 
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout
 
-# We will create these two component files in the next steps.
-# By importing them here, we are defining a clear structure for our GUI.
 from .enhanced_sidebar import EnhancedSidebar
 from .chat_interface import ChatInterface
+from core.event_bus import EventBus # Import EventBus
 
 
 class MainWindow(QMainWindow):
@@ -16,7 +15,11 @@ class MainWindow(QMainWindow):
     UI components. It adheres to SRP by only managing the main window's
     layout and existence. It knows nothing about AI or business logic.
     """
-    def __init__(self):
+    def __init__(self, event_bus: EventBus):
+        """
+        The __init__ method now accepts the event_bus, which it will pass
+        down to its child components that need to communicate.
+        """
         super().__init__()
 
         # --- Basic Window Configuration ---
@@ -33,10 +36,10 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(0) # No space between sidebar and chat
 
         # --- Instantiate UI Components ---
-        # We create instances of our sidebar and chat interface.
-        # For now, these classes will be simple placeholders.
-        self.sidebar = EnhancedSidebar()
-        self.chat_interface = ChatInterface()
+        # We create instances of our sidebar and chat interface, passing the
+        # event bus to them so they can communicate with the rest of the app.
+        self.sidebar = EnhancedSidebar(event_bus)
+        self.chat_interface = ChatInterface(event_bus)
 
         # --- Add Components to the Layout ---
         # We add the sidebar and the chat interface to our horizontal layout.

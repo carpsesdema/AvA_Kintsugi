@@ -3,18 +3,27 @@
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
 from PySide6.QtCore import Qt
-import qtawesome as qta # The icon library
+import qtawesome as qta  # The icon library
 
 from .components import Colors, Typography, ModernButton
+from core.event_bus import EventBus  # Import EventBus
+
 
 class EnhancedSidebar(QWidget):
     """
     The complete sidebar view. It holds all the necessary control panels
     for the application, mirroring our target design.
     """
-    def __init__(self):
+
+    def __init__(self, event_bus: EventBus):
+        """
+        The __init__ method accepts the event_bus and stores it so that
+        its child components (like buttons) can emit events.
+        """
         super().__init__()
-        self.setFixedWidth(300) # Give it a fixed width
+        self.event_bus = event_bus  # Store the event bus
+
+        self.setFixedWidth(300)  # Give it a fixed width
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(self.backgroundRole(), Colors.SECONDARY_BG)
@@ -78,7 +87,6 @@ class EnhancedSidebar(QWidget):
     def _create_model_panel(self) -> QFrame:
         """Creates the AI Model Configuration panel."""
         panel, layout = self._create_styled_panel("AI Model Configuration")
-        # For now, just a placeholder button. We'll add the status list later.
         config_btn = ModernButton("Configure Models", "secondary")
         config_btn.setIcon(qta.icon("fa5s.cogs", color=Colors.TEXT_PRIMARY.name()))
         layout.addWidget(config_btn)
@@ -96,12 +104,19 @@ class EnhancedSidebar(QWidget):
         return panel
 
     def _create_actions_panel(self) -> QFrame:
-        """Creates the Chat Actions panel."""
+        """Creates the Chat Actions panel and wires up the New Session button."""
         panel, layout = self._create_styled_panel("Chat Actions")
 
         # Session Actions
         layout.addWidget(self._create_action_header("SESSION"))
-        layout.addWidget(ModernButton("New Session", "secondary"))
+
+        new_session_btn = ModernButton("New Session", "secondary")
+        # When clicked, this button emits a "new_session_requested" event on the bus.
+        # It doesn't know or care who is listening. This is decoupling.
+        new_session_btn.clicked.connect(
+            lambda: self.event_bus.emit("new_session_requested")
+        )
+        layout.addWidget(new_session_btn)
 
         # Tools Actions
         layout.addWidget(self._create_action_header("TOOLS"))

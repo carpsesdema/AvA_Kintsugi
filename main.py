@@ -1,48 +1,61 @@
 # kintsugi_ava/main.py
 # The clean, simple, and robust entry point for our application.
+# V2: Now with a graceful shutdown mechanism.
 
 import sys
 import asyncio
-import qasync  # For running asyncio code within a Qt application
+import qasync
 
 from PySide6.QtWidgets import QApplication
-# We will create this MainWindow class in the very next step.
-# By importing it, we establish a clean separation of concerns.
-from gui.main_window import MainWindow
+from core.application import Application
 
-def main():
+# --- NEW: Asynchronous Main Logic ---
+async def main_async_logic():
     """
-    Initializes and runs the Kintsugi-AvA application.
+    This coroutine contains the main asynchronous logic of the application.
+    It allows us to await a clean shutdown signal.
     """
-    # 1. Create the core application instance.
-    app = QApplication(sys.argv)
+    # Create a "Future". This is an object that represents a result that
+    # doesn't exist yet. We will wait for this Future to be resolved.
+    app_quit_future = asyncio.get_event_loop().create_future()
 
-    # 2. Set up the asynchronous event loop.
-    # This is the foundation for running our AI calls in the background later
-    # without freezing the user interface.
-    loop = qasync.QEventLoop(app)
-    asyncio.set_event_loop(loop)
+    # Define the function that will run when the app is about to quit.
+    def on_about_to_quit():
+        print("[main] Application is about to quit. Resolving quit_future.")
+        # When this function is called, it sets the result of our Future.
+        app_quit_future.set_result(True)
 
-    # 3. Create our main window instance.
-    # The 'MainWindow' class will be responsible for building the actual GUI.
-    # We will pass the event bus to it later. For now, it's simple.
-    main_window = MainWindow()
-    main_window.show()
+    # Get the currently running QApplication instance.
+    app = QApplication.instance()
+    # Connect the application's aboutToQuit signal to our function.
+    # Now, when the user closes the window, on_about_to_quit will be called.
+    app.aboutToQuit.connect(on_about_to_quit)
 
-    # 4. Run the application's event loop.
-    try:
-        loop.run_forever()
-    finally:
-        loop.close()
-        sys.exit(0)
+    # Create our Application instance as before.
+    main_app = Application()
+    main_app.show()
 
-# Standard Python entry point guard.
+    # --- THE KEY CHANGE ---
+    # Instead of running the loop forever and hoping it stops,
+    # we now explicitly 'await' our Future. This line will pause execution
+    # until app_quit_future.set_result() is called.
+    await app_quit_future
+    print("[main] Quit_future resolved. Exiting main_async_logic.")
+
+
+# --- Main Entry Point (now much cleaner) ---
 if __name__ == "__main__":
-    # Create the necessary folder for our GUI files.
-    # This ensures our import `from gui.main_window...` will work.
+    # Create necessary directories first.
     from pathlib import Path
     Path("gui").mkdir(exist_ok=True)
-    Path("gui/__init__.py").touch() # Makes 'gui' a package
-    Path("gui/main_window.py").touch() # Create the file we need next
+    Path("gui/__init__.py").touch()
+    Path("core").mkdir(exist_ok=True)
+    Path("core/__init__.py").touch()
 
-    main()
+    # qasync.run() handles the setup and teardown of the app and event loop.
+    # It's a cleaner way to run our async logic.
+    qasync.run(main_async_logic())
+
+    # When qasync.run() finishes (because main_async_logic returned),
+    # the application will exit cleanly. No need for try/finally or sys.exit.
+    print("[main] Application has exited cleanly.")

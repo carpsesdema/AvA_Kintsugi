@@ -1,0 +1,84 @@
+# --- Python ---
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+*.pyc
+
+# Caches
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Notebooks
+.ipynb_checkpoints
+
+# --- Application Specific ---
+# AvA generated workspace and logs
+workspace/
+logs/
+rag_data/
+*.db
+*.db-journal
+
+# Secrets and local configurations
+.env
+secrets.json
+config.json
+
+# --- IDEs and Editors ---
+# VSCode
+.vscode/
+# PyCharm
+.idea/
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+# Atom
+.atom/
+# Emacs
+*~
+# Vim
+*.swp
+*.swo
+
+# --- Operating System ---
+# macOS
+.DS_Store
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+# Linux
+.directory
+
+# --- Build and Dependency Management ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Other ---
+# ZIP files (often used for updates or temporary archives)
+*.zip
