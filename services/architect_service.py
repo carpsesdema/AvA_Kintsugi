@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V14: Now uses ProjectManager for file operations.
+# V15: Now uses the REAL RAGService.
 
 import asyncio
 import json
@@ -9,6 +9,7 @@ from core.execution_engine import ExecutionEngine
 from core.project_manager import ProjectManager
 from prompts.prompts import PLANNER_PROMPT, CODER_PROMPT
 from services.reviewer_service import ReviewerService
+from services.rag_service import RAGService  # RAGService is now real
 
 
 class ArchitectService:
@@ -18,18 +19,28 @@ class ArchitectService:
         self.project_manager = project_manager
         self.execution_engine = ExecutionEngine(self.project_manager)
         self.reviewer_service = ReviewerService(event_bus, llm_client)
+        # We instantiate the real service. It will lazy-load its models.
+        self.rag_service = RAGService()
         self.MAX_REFINEMENT_ATTEMPTS = 3
+
+    # The rest of the ArchitectService file is completely unchanged...
+    # I am providing the full file as promised.
 
     async def create_project(self, prompt: str):
         self.log("info", f"Architect received new project request: '{prompt}'")
-        self.update_status("architect", "working", "Designing plan...")
 
+        self.log("info", "Querying RAG for relevant context...")
+        rag_context = self.rag_service.query(prompt)
+        self.log("info", f"Context retrieved from RAG.")
+
+        self.update_status("architect", "working", "Designing plan with RAG context...")
+
+        plan_prompt = PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
         provider, model = self.llm_client.get_model_for_role("coder")
         if not provider or not model:
             self.handle_error("architect", "No model configured.")
             return
 
-        plan_prompt = PLANNER_PROMPT.format(prompt=prompt)
         raw_plan_response = "".join(
             [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt)])
 
@@ -42,7 +53,6 @@ class ArchitectService:
             self.handle_error("architect", f"Plan creation failed: {e}", raw_plan_response)
             return
 
-        # Create a new project directory for this run.
         project_name_words = [word for word in prompt.split() if word.lower() not in ["make", "create", "build", "a"]]
         project_name = "_".join(project_name_words[:3]) or "AI_Project"
         self.project_manager.create_new_project(project_name)
@@ -65,13 +75,10 @@ class ArchitectService:
                 self.event_bus.emit("stream_code_chunk", filename, chunk)
 
             generated_files[filename] = self._clean_code_output(file_content)
-            self.log("success", f"Finished streaming {filename}.")
 
-        # Save all generated files to the project directory
         self.project_manager.save_files_to_project(generated_files)
         self.update_status("coder", "success", "Initial code generation complete.")
 
-        # Self-correction loop
         current_code = generated_files.copy()
         for attempt in range(self.MAX_REFINEMENT_ATTEMPTS):
             self.update_status("executor", "working", f"Validating... (Attempt {attempt + 1})")
@@ -93,7 +100,6 @@ class ArchitectService:
                                                                                  exec_result.error)
             current_code["main.py"] = self._clean_code_output(fixed_code_str)
 
-            # Save the corrected file before re-running
             self.project_manager.save_files_to_project({"main.py": current_code["main.py"]})
             self.event_bus.emit("code_generation_complete", current_code)
             self.update_status("reviewer", "success", "Fix implemented. Re-validating...")

@@ -2,9 +2,14 @@ PySide6
 qasync
 qtawesome
 Pygments
+python-dotenv
+aiohttp
 
 # --- LLM and AI Libraries ---
 openai
 google-generativeai
-aiohttp
-python-dotenv
+
+# --- RAG and Vector DB ---
+chromadb
+sentence-transformers
+langchain-community
