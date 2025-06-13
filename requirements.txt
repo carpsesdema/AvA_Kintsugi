@@ -1,4 +1,10 @@
 PySide6
 qasync
 qtawesome
-pygments
+Pygments
+
+# --- LLM and AI Libraries ---
+openai
+google-generativeai
+aiohttp
+python-dotenv

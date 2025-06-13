@@ -1,12 +1,14 @@
 # kintsugi_ava/core/application.py
-# V5: Now integrates a placeholder AI service.
+# V6: Now async-aware to handle real AI service calls.
 
+import asyncio
 from .event_bus import EventBus
+from .llm_client import LLMClient  # <-- Import LLMClient
 from gui.main_window import MainWindow
 from gui.code_viewer import CodeViewerWindow
 from gui.workflow_monitor_window import WorkflowMonitorWindow
 from gui.terminals import TerminalsWindow
-from services.coder_service import CoderService  # <-- Import the service
+from services.coder_service import CoderService
 
 
 class Application:
@@ -20,8 +22,10 @@ class Application:
         self.conversation_history = []
 
         # --- Service Management ---
-        # The application creates and owns the services.
-        self.coder_service = CoderService(self.event_bus)
+        # The application now creates and owns the LLMClient.
+        self.llm_client = LLMClient()
+        # The CoderService gets the LLMClient passed to it.
+        self.coder_service = CoderService(self.event_bus, self.llm_client)
 
         # --- Window Management ---
         self.main_window = MainWindow(self.event_bus)
@@ -33,28 +37,25 @@ class Application:
 
     def _connect_events(self):
         """Central place to connect application logic to events from the UI."""
-        self.event_bus.subscribe("user_request_submitted", self.handle_user_request)
+        self.event_bus.subscribe("user_request_submitted", self.on_user_request)
         self.event_bus.subscribe("new_session_requested", self.clear_session)
 
-        # Connect UI components to events
         self.event_bus.subscribe("show_code_viewer_requested", self.show_code_viewer)
         self.event_bus.subscribe("show_workflow_monitor_requested", self.show_workflow_monitor)
         self.event_bus.subscribe("show_terminals_requested", self.show_terminals)
 
-        # The Code Viewer now listens for the result from the CoderService
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
 
-    def handle_user_request(self, prompt: str, history: list):
+    def on_user_request(self, prompt: str, history: list):
         """
-        This is the main entry point for the AI workflow.
-        It now calls our placeholder service.
+        This is the event handler for a user request. It creates a task
+        to run the AI workflow in the background, keeping the GUI responsive.
         """
-        print(f"[Application] Heard 'user_request_submitted'. Delegating to CoderService.")
+        print(f"[Application] Heard 'user_request_submitted'. Creating background task.")
         self.conversation_history = history
 
-        # --- This is the full workflow in action! ---
-        # Application tells the service to do its job.
-        self.coder_service.generate_code(prompt)
+        # --- Run the async workflow in the background ---
+        asyncio.create_task(self.coder_service.generate_code(prompt))
 
     def show_window(self, window):
         if not window.isVisible():
@@ -74,6 +75,7 @@ class Application:
     def clear_session(self):
         print("[Application] Heard 'new_session_requested', clearing internal state.")
         self.conversation_history = []
+        self.event_bus.emit("ai_response_ready", "New session started. How can I help?")
 
     def show(self):
         self.main_window.show()
