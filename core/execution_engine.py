@@ -1,5 +1,5 @@
 # kintsugi_ava/core/execution_engine.py
-# V3: Now uses the ProjectManager to handle file operations.
+# V4: Now venv-aware, using the project's own interpreter if available.
 
 import subprocess
 import sys
@@ -10,7 +10,6 @@ from .project_manager import ProjectManager
 
 class ExecutionResult:
     """A simple class to hold the results of a code execution attempt."""
-
     def __init__(self, success: bool, output: str, error: str):
         self.success = success
         self.output = output
@@ -19,20 +18,17 @@ class ExecutionResult:
 
 class ExecutionEngine:
     """
-    Safely executes generated Python code from a managed project directory.
+    Safely executes generated Python code from a managed project directory,
+    using the project's own virtual environment if it exists.
     """
 
     def __init__(self, project_manager: ProjectManager):
-        """
-        The engine is initialized with a reference to the central ProjectManager.
-        It no longer manages its own workspace.
-        """
+        """The engine is initialized with a reference to the central ProjectManager."""
         self.project_manager = project_manager
 
     def run_main_in_project(self) -> ExecutionResult:
         """
-        Attempts to run the main file within the currently active project
-        as determined by the ProjectManager.
+        Attempts to run the main file within the currently active project.
         """
         project_dir = self.project_manager.active_project_path
         if not project_dir:
@@ -40,7 +36,13 @@ class ExecutionEngine:
 
         main_file_path = project_dir / "main.py"
         if not main_file_path.exists():
-            return ExecutionResult(False, "", "Execution failed: No 'main.py' file found in the active project.")
+            return ExecutionResult(False, "", "Execution failed: No 'main.py' file found.")
+
+        # --- VENV-AWARE LOGIC ---
+        # Prefer the project's venv python, otherwise fall back to the host python
+        python_executable = self.project_manager.venv_python_path or sys.executable
+        print(f"[ExecutionEngine] Using interpreter: {python_executable}")
+        # --- END VENV-AWARE LOGIC ---
 
         try:
             with open(main_file_path, "r", encoding="utf-8") as f:
@@ -52,9 +54,8 @@ class ExecutionEngine:
         is_gui_app = "mainloop()" in main_content or "app.exec()" in main_content or "app.run()" in main_content
 
         try:
-            # Use Popen for non-blocking execution, running from within the project directory
             process = subprocess.Popen(
-                [sys.executable, str(main_file_path)],
+                [str(python_executable), str(main_file_path)],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding='utf-8',
                 cwd=project_dir
@@ -62,24 +63,20 @@ class ExecutionEngine:
 
             if is_gui_app:
                 print("[ExecutionEngine] GUI application detected. Monitoring for stability...")
-                time.sleep(3)  # Wait for 3 seconds for the app to initialize
-
+                time.sleep(3)
                 poll_result = process.poll()
                 if poll_result is not None and poll_result != 0:
                     stdout, stderr = process.communicate()
                     error_output = stderr or stdout
                     print(f"[ExecutionEngine] GUI app crashed on launch. Error:\n{error_output}")
                     return ExecutionResult(False, stdout, error_output)
-
                 print("[ExecutionEngine] GUI app is stable. Terminating process and reporting success.")
                 process.terminate()
                 return ExecutionResult(True, "GUI app launched successfully.", "")
 
             else:
-                # For command-line scripts, wait for them to finish.
                 print("[ExecutionEngine] Command-line script detected. Waiting for completion...")
                 stdout, stderr = process.communicate(timeout=15)
-
                 if process.returncode == 0:
                     print("[ExecutionEngine] Execution successful.")
                     return ExecutionResult(True, stdout, stderr)
@@ -89,9 +86,7 @@ class ExecutionEngine:
                     return ExecutionResult(False, stdout, error_output)
 
         except subprocess.TimeoutExpired:
-            print("[ExecutionEngine] Script execution timed out.")
             process.kill()
-            return ExecutionResult(False, "", "Execution failed: The script timed out after 15 seconds.")
+            return ExecutionResult(False, "", "Execution timed out after 15 seconds.")
         except Exception as e:
-            print(f"[ExecutionEngine] An unexpected error occurred during execution: {e}")
             return ExecutionResult(False, "", f"An unexpected error occurred during execution: {e}")

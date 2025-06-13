@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V21: Passes event bus to CodeViewerWindow for terminal integration.
+# V22: Integrates TerminalService to power the IDE's command center.
 
 import asyncio
 from pathlib import Path
@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QFileDialog
 from .event_bus import EventBus
 from .llm_client import LLMClient
 from .project_manager import ProjectManager
+from core.execution_engine import ExecutionEngine  # Import ExecutionEngine
 from gui.main_window import MainWindow
 from gui.code_viewer import CodeViewerWindow
 from gui.workflow_monitor_window import WorkflowMonitorWindow
@@ -16,12 +17,13 @@ from gui.model_config_dialog import ModelConfigurationDialog
 from services.architect_service import ArchitectService
 from services.project_analyzer import ProjectAnalyzer
 from services.rag_manager import RAGManager
+from services.terminal_service import TerminalService  # Import TerminalService
 
 
 class Application:
     """
     The main application object. It acts as the lead engineer, orchestrating
-    all components and services, including the Git sandboxing workflow.
+    all components and services, including the new integrated terminal.
     """
 
     def __init__(self):
@@ -32,15 +34,15 @@ class Application:
         self.project_manager = ProjectManager()
         self.llm_client = LLMClient()
         self.project_analyzer = ProjectAnalyzer()
+        self.execution_engine = ExecutionEngine(self.project_manager)
         self.rag_manager = RAGManager(self.event_bus)
+        self.terminal_service = TerminalService(self.event_bus, self.project_manager, self.execution_engine)
         self.architect_service = ArchitectService(self.event_bus, self.llm_client, self.project_manager,
                                                   self.rag_manager.rag_service)
 
         # --- Window Management ---
         self.main_window = MainWindow(self.event_bus)
-        # --- THE CHANGE IS HERE ---
         self.code_viewer = CodeViewerWindow(self.event_bus)
-        # --- END OF CHANGE ---
         self.workflow_monitor = WorkflowMonitorWindow()
         self.terminals_window = TerminalsWindow()
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client)
@@ -74,12 +76,20 @@ class Application:
         self.event_bus.subscribe("scan_directory_requested", self.on_scan_directory_requested)
         self.event_bus.subscribe("add_active_project_to_rag_requested", self.on_add_active_project_to_rag)
 
+        # Terminal Events
+        self.event_bus.subscribe("terminal_command_entered", self.on_terminal_command)
+
         # Logging & Monitoring Events
         self.event_bus.subscribe("log_message_received", self.terminals_window.add_log_message)
         self.event_bus.subscribe("node_status_changed", self.workflow_monitor.update_node_status)
 
+    def on_terminal_command(self, command: str):
+        """Handles commands from the integrated terminal and executes them."""
+        task = asyncio.create_task(self.terminal_service.execute_command(command))
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
+
     def on_user_request(self, prompt: str, history: list):
-        """The main router. It now initiates a Git sandbox session before modification."""
         self.workflow_monitor.scene.setup_layout()
         existing_files_context = None
 
@@ -88,10 +98,8 @@ class Application:
                                 "Existing project detected. Beginning sandboxed modification session.")
             branch_name = self.project_manager.begin_modification_session()
             if not branch_name:
-                self.event_bus.emit("log_message_received", "Application", "error",
-                                    "Failed to create sandbox branch. Aborting modification.")
-                self.event_bus.emit("ai_response_ready",
-                                    "I couldn't create a safe sandbox branch. Please check your Git setup.")
+                self.event_bus.emit("log_message_received", "Application", "error", "Failed to create sandbox branch.")
+                self.event_bus.emit("ai_response_ready", "I couldn't create a safe sandbox branch.")
                 return
 
             self.event_bus.emit("ai_response_ready", f"Working on your request in safe sandbox branch: {branch_name}")
@@ -116,18 +124,15 @@ class Application:
                 self.event_bus.emit("project_loaded", loaded_path_str)
 
     def on_project_loaded(self, path_str: str):
-        project_path = Path(path_str)
         display_name = self.project_manager.active_project_name
         self.main_window.sidebar.update_project_display(display_name)
         self.code_viewer.load_project(path_str)
         self.event_bus.emit("ai_response_ready", f"Project '{display_name}' is now active. Changes will be sandboxed.")
 
     def on_scan_directory_requested(self):
-        """Handles the request to scan an external directory for RAG."""
         self.rag_manager.open_scan_directory_dialog(self.main_window)
 
     def on_add_active_project_to_rag(self):
-        """Handles the request to ingest the active project files into RAG."""
         self.rag_manager.ingest_active_project(self.project_manager, self.main_window)
 
     async def cancel_all_tasks(self):

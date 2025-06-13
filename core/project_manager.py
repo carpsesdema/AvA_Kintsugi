@@ -1,7 +1,9 @@
 # kintsugi_ava/core/project_manager.py
-# V3: Git-powered sandboxing for safe project modifications.
+# V4: Now manages virtual environments for each project.
 
 import os
+import sys
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -16,9 +18,8 @@ except ImportError:
 
 class ProjectManager:
     """
-    Manages project lifecycles using Git for versioning and sandboxing.
-    Ensures that modifications to existing projects are done in isolated
-    development branches, protecting the user's main work.
+    Manages project lifecycles, including Git versioning, virtual environments,
+    and sandboxed modification branches.
     """
 
     def __init__(self, workspace_path: str = "workspace"):
@@ -36,8 +37,23 @@ class ProjectManager:
     def active_project_name(self) -> str:
         return self.active_project_path.name if self.active_project_path else "(none)"
 
+    @property
+    def venv_python_path(self) -> Path | None:
+        """Returns the path to the Python executable in the project's venv, if it exists."""
+        if not self.active_project_path:
+            return None
+
+        # Standard venv paths for Windows and Unix-like systems
+        venv_dir = self.active_project_path / ".venv"
+        if sys.platform == "win32":
+            python_exe = venv_dir / "Scripts" / "python.exe"
+        else:
+            python_exe = venv_dir / "bin" / "python"
+
+        return python_exe if python_exe.exists() else None
+
     def new_project(self, project_name: str = "New_Project") -> str:
-        """Creates a new project directory, initializes a Git repository, and sets it as active."""
+        """Creates a new project with a Git repo and a virtual environment."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         dir_name = f"{''.join(c for c in project_name if c.isalnum())}_{timestamp}"
         project_path = self.workspace_root / dir_name
@@ -48,19 +64,24 @@ class ProjectManager:
         self.active_dev_branch = None
 
         try:
+            # 1. Initialize Git
             self.repo = git.Repo.init(self.active_project_path)
             self._create_gitignore_if_needed()
             self.repo.index.add([".gitignore"])
             self.repo.index.commit("Initial commit by Kintsugi AvA")
             print(f"[ProjectManager] Created new Git-tracked project at: {self.active_project_path}")
-        except GitCommandError as e:
-            print(f"[ProjectManager] Git error during new project creation: {e}")
+
+            # 2. Create Virtual Environment
+            self._create_virtual_environment()
+
+        except (GitCommandError, subprocess.CalledProcessError) as e:
+            print(f"[ProjectManager] Error during new project creation: {e}")
             self.repo = None
 
         return str(self.active_project_path)
 
     def load_project(self, path: str) -> str | None:
-        """Loads an existing directory as the active project, ensuring it's a Git repository."""
+        """Loads an existing directory, ensuring it's a Git repo."""
         project_path = Path(path)
         if not project_path.is_dir():
             return None
@@ -73,57 +94,44 @@ class ProjectManager:
             self.repo = git.Repo(self.active_project_path)
             print(f"[ProjectManager] Loaded existing Git repository: {self.active_project_path}")
         except InvalidGitRepositoryError:
-            print(f"[ProjectManager] Directory is not a Git repository. Initializing one now.")
+            print(f"[ProjectManager] Directory not a Git repo. Initializing one.")
             self.repo = git.Repo.init(self.active_project_path)
             self._create_gitignore_if_needed()
             self.repo.index.add(all=True)
-            if self.repo.index.diff(None):  # Only commit if there are changes
+            if self.repo.index.diff(None):
                 self.repo.index.commit("Baseline commit by Kintsugi AvA")
         except GitCommandError as e:
-            print(f"[ProjectManager] Git error during project load: {e}")
+            print(f"[ProjectManager] Git error on project load: {e}")
             self.repo = None
             return None
 
         return str(self.active_project_path)
 
     def begin_modification_session(self) -> str | None:
-        """
-        Creates and checks out a new, timestamped development branch for sandboxed modifications.
-        This is the primary safety mechanism.
-        """
-        if not self.repo or not self.active_project_path:
-            print("[ProjectManager] Error: No active project to begin modification session on.")
-            return None
-
-        # Return to the main branch to ensure a clean start
+        """Creates and checks out a new development branch for sandboxed work."""
+        if not self.repo or not self.active_project_path: return None
         try:
-            # Find a common main branch name and check it out
             main_branch = next((b for b in self.repo.heads if b.name in ['main', 'master']), None)
-            if main_branch:
-                main_branch.checkout()
+            if main_branch: main_branch.checkout()
         except GitCommandError as e:
-            print(f"[ProjectManager] Could not switch to main/master branch. Sticking to current. Error: {e}")
+            print(f"[ProjectManager] Warning: Could not switch to main/master branch. Error: {e}")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         branch_name = f"kintsugi-ava/dev-session-{timestamp}"
-
         try:
             self.active_dev_branch = self.repo.create_head(branch_name)
             self.active_dev_branch.checkout()
-            print(f"[ProjectManager] Created and checked out sandbox branch: '{branch_name}'")
+            print(f"[ProjectManager] Created sandbox branch: '{branch_name}'")
             return branch_name
         except GitCommandError as e:
             print(f"[ProjectManager] Could not create sandbox branch. Error: {e}")
             return None
 
     def save_files_to_project(self, files: dict[str, str], commit_message: str):
-        """Saves generated files and commits them to the active (development) branch."""
-        if not self.repo or not self.active_project_path:
-            print("[ProjectManager] Error: Cannot save files, no repository is active.")
-            return
-
+        """Saves generated files and commits them to the active branch."""
+        if not self.repo or not self.active_project_path: return
         if not self.active_dev_branch:
-            print("[ProjectManager] Warning: Saving files outside of a sandboxed session. This is not recommended.")
+            print("[ProjectManager] Warning: Saving files outside a sandbox session.")
 
         file_paths_to_add = []
         for filename, content in files.items():
@@ -134,33 +142,26 @@ class ProjectManager:
 
         try:
             self.repo.index.add(file_paths_to_add)
-            if self.repo.index.diff("HEAD"):  # Only commit if there are staged changes
+            if self.repo.index.diff("HEAD"):
                 self.repo.index.commit(commit_message)
                 print(f"[ProjectManager] Committed {len(files)} files to branch '{self.repo.active_branch.name}'")
             else:
-                print(f"[ProjectManager] Saved {len(files)} files. No new changes to commit.")
-
+                print(f"[ProjectManager] Saved {len(files)} files. No changes to commit.")
         except GitCommandError as e:
             print(f"[ProjectManager] Failed to commit changes. Error: {e}")
 
     def get_project_files(self) -> dict[str, str]:
-        """Reads all text files in the active project directory that are tracked by Git."""
-        if not self.repo or not self.active_project_path:
-            return {}
-
+        """Reads all text files in the project tracked by Git."""
+        if not self.repo or not self.active_project_path: return {}
         project_files = {}
-        # List files tracked by git, this is more reliable than walking the dir
         tracked_files = self.repo.git.ls_files().split('\n')
-
         for file_str in tracked_files:
             if not file_str: continue
             try:
                 file_path = self.active_project_path / file_str
                 project_files[file_str] = file_path.read_text(encoding='utf-8')
-            except Exception as e:
-                print(f"[ProjectManager] Warning: Could not read git-tracked file {file_path}. Error: {e}")
+            except Exception:
                 pass
-
         print(f"[ProjectManager] Found {len(project_files)} git-tracked files.")
         return project_files
 
@@ -169,16 +170,24 @@ class ProjectManager:
         if not self.repo: return
         gitignore_path = Path(self.repo.working_dir) / ".gitignore"
         if not gitignore_path.exists():
-            gitignore_content = (
-                "# Kintsugi AvA Default Ignore\n"
-                ".venv/\n"
-                "venv/\n"
-                "__pycache__/\n"
-                ".idea/\n"
-                ".vscode/\n"
-                "*.pyc\n"
-                "rag_db/\n"
-                ".env\n"
+            gitignore_path.write_text(
+                "# Kintsugi AvA Default Ignore\n.venv/\nvenv/\n__pycache__/\n*.pyc\nrag_db/\n.env\n"
             )
-            gitignore_path.write_text(gitignore_content)
             print("[ProjectManager] Created default .gitignore file.")
+
+    def _create_virtual_environment(self):
+        """Creates a .venv folder in the active project."""
+        if not self.active_project_path:
+            print("[ProjectManager] Cannot create venv: No active project.")
+            return
+
+        venv_path = self.active_project_path / ".venv"
+        print(f"[ProjectManager] Creating virtual environment in {venv_path}...")
+        try:
+            # Use the same python that is running this app to create the venv
+            subprocess.run([sys.executable, "-m", "venv", str(venv_path)], check=True, capture_output=True)
+            print("[ProjectManager] Virtual environment created successfully.")
+        except subprocess.CalledProcessError as e:
+            print(f"[ProjectManager] Failed to create virtual environment. Stderr: {e.stderr.decode()}")
+        except Exception as e:
+            print(f"[ProjectManager] An unexpected error occurred creating venv: {e}")
