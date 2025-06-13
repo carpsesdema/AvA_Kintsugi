@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V8: Wires up the live log terminal.
+# V9: Now uses the powerful, multi-file ArchitectService.
 
 import asyncio
 from .event_bus import EventBus
@@ -9,7 +9,7 @@ from gui.code_viewer import CodeViewerWindow
 from gui.workflow_monitor_window import WorkflowMonitorWindow
 from gui.terminals import TerminalsWindow
 from gui.model_config_dialog import ModelConfigurationDialog
-from services.coder_service import CoderService
+from services.architect_service import ArchitectService  # <-- Import the new service
 
 
 class Application:
@@ -23,7 +23,8 @@ class Application:
         self.conversation_history = []
 
         self.llm_client = LLMClient()
-        self.coder_service = CoderService(self.event_bus, self.llm_client)
+        # --- Use the ArchitectService now ---
+        self.architect_service = ArchitectService(self.event_bus, self.llm_client)
 
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow()
@@ -34,27 +35,24 @@ class Application:
         self._connect_events()
 
     def _connect_events(self):
-        # User input events
         self.event_bus.subscribe("user_request_submitted", self.on_user_request)
         self.event_bus.subscribe("new_session_requested", self.clear_session)
 
-        # Window management events
         self.event_bus.subscribe("show_code_viewer_requested", self.show_code_viewer)
         self.event_bus.subscribe("show_workflow_monitor_requested", self.show_workflow_monitor)
         self.event_bus.subscribe("show_terminals_requested", self.show_terminals)
         self.event_bus.subscribe("configure_models_requested", self.model_config_dialog.exec)
 
-        # AI workflow events
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
         self.event_bus.subscribe("ai_response_ready", self.main_window.chat_interface._add_ai_response)
 
-        # --- NEW: Log streaming event ---
         self.event_bus.subscribe("log_message_received", self.terminals_window.add_log_message)
 
     def on_user_request(self, prompt: str, history: list):
         print(f"[Application] Heard 'user_request_submitted'. Creating background task.")
         self.conversation_history = history
-        asyncio.create_task(self.coder_service.generate_code(prompt))
+        # --- Call the new service's main method ---
+        asyncio.create_task(self.architect_service.create_project(prompt))
 
     def show_window(self, window):
         if not window.isVisible():
