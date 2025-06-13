@@ -16,3 +16,4 @@ langchain-community
 
 # --- Version Control ---
 GitPython
+unidiff

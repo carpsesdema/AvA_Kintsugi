@@ -1,5 +1,5 @@
 # kintsugi_ava/core/project_manager.py
-# V5: Enhanced with granular Git commands for staging and selective commits.
+# V8: Replaced patch-ng with the modern, compatible 'unidiff' library.
 
 import os
 import sys
@@ -15,16 +15,23 @@ try:
 except ImportError:
     GIT_AVAILABLE = False
 
+try:
+    from unidiff import PatchSet
+
+    UNIDIFF_AVAILABLE = True
+except ImportError:
+    UNIDIFF_AVAILABLE = False
+
 
 class ProjectManager:
     """
     Manages project lifecycles, including Git versioning, virtual environments,
-    and sandboxed modification branches.
+    and applying surgical patch files using the unidiff library.
     """
 
     def __init__(self, workspace_path: str = "workspace"):
-        if not GIT_AVAILABLE:
-            raise ImportError("GitPython is not installed. Please run 'pip install GitPython'.")
+        if not GIT_AVAILABLE: raise ImportError("GitPython not installed. Run 'pip install GitPython'.")
+        if not UNIDIFF_AVAILABLE: raise ImportError("unidiff not installed. Run 'pip install unidiff'.")
 
         self.workspace_root = Path(workspace_path)
         self.workspace_root.mkdir(exist_ok=True)
@@ -45,7 +52,7 @@ class ProjectManager:
         return python_exe if python_exe.exists() else None
 
     def new_project(self, project_name: str = "New_Project") -> str:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Ym%d_%H%M%S")
         dir_name = f"{''.join(c for c in project_name if c.isalnum())}_{timestamp}"
         project_path = self.workspace_root / dir_name
         project_path.mkdir()
@@ -89,7 +96,7 @@ class ProjectManager:
             if main_branch: main_branch.checkout()
         except GitCommandError as e:
             print(f"[ProjectManager] Warning: Could not switch to main/master. Error: {e}")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Ym%d_%H%M%S")
         branch_name = f"kintsugi-ava/dev-session-{timestamp}"
         try:
             self.active_dev_branch = self.repo.create_head(branch_name)
@@ -116,19 +123,61 @@ class ProjectManager:
         except GitCommandError as e:
             print(f"[ProjectManager] Failed to commit changes. Error: {e}")
 
-    def stage_file(self, file_path_str: str) -> str:
-        """Stages a single file for the next commit."""
-        if not self.repo or not self.active_project_path: return "Error: No active Git repository."
+    def patch_file(self, filename: str, patch_content: str, commit_message: str) -> bool:
+        """Applies a diff patch to a file using unidiff, then stages and commits it."""
+        if not self.repo or not self.active_project_path:
+            print("[ProjectManager] Error: No active project to patch.")
+            return False
 
-        # Ensure the file path is relative to the repo root
+        file_to_patch = self.active_project_path / filename
+        if not file_to_patch.exists():
+            print(f"[ProjectManager] Error: Cannot patch non-existent file: {filename}")
+            return False
+
+        # unidiff needs the original file content to apply the patch correctly.
+        original_content = file_to_patch.read_text(encoding='utf-8').splitlines(keepends=True)
+
+        # We must add the diff headers for unidiff to work
+        patch_str = f"--- a/{filename}\n+++ b/{filename}\n{patch_content}"
+
+        try:
+            patch_set = PatchSet(patch_str)
+            if not patch_set:
+                print(f"[ProjectManager] Warning: AI returned an empty or invalid patch for {filename}.")
+                return False
+
+            print(f"[ProjectManager] Applying patch to {filename}...")
+            # Apply the patch in memory
+            patched_file = next(patch_set.patch(original=original_content, target=None))
+
+            # Write the patched content back to the file
+            with open(file_to_patch, 'w', encoding='utf-8', newline='\n') as f:
+                f.writelines(str(line) for line in patched_file)
+
+            # Stage and commit the change
+            self.repo.index.add([filename])
+            if self.repo.index.diff("HEAD"):
+                self.repo.index.commit(commit_message)
+                print(f"[ProjectManager] Committed patch for {filename}.")
+            else:
+                print(f"[ProjectManager] Patch applied but resulted in no net change to {filename}.")
+            return True
+        except Exception as e:
+            print(f"[ProjectManager] Failed to apply or commit patch for {filename}. Error: {e}")
+            try:
+                self.repo.git.checkout('--', filename)
+            except GitCommandError:
+                pass
+            return False
+
+    def stage_file(self, file_path_str: str) -> str:
+        if not self.repo or not self.active_project_path: return "Error: No active Git repository."
         try:
             relative_path = Path(file_path_str).relative_to(self.active_project_path)
             full_path = self.active_project_path / relative_path
         except ValueError:
             return f"Error: File '{file_path_str}' is not within the project directory."
-
         if not full_path.exists(): return f"Error: File not found: {relative_path}"
-
         try:
             self.repo.index.add([str(relative_path)])
             return f"Staged '{relative_path}' for commit."
@@ -136,14 +185,11 @@ class ProjectManager:
             return f"Error staging file: {e}"
 
     def commit_staged_files(self, commit_message: str) -> str:
-        """Commits all currently staged files."""
         if not self.repo: return "Error: No active Git repository."
         if not self.repo.index.diff("HEAD"): return "No changes staged for commit."
-
         try:
             self.repo.index.commit(commit_message)
-            branch = self.repo.active_branch.name
-            return f"Committed staged changes to branch '{branch}'."
+            return f"Committed staged changes to branch '{self.repo.active_branch.name}'."
         except GitCommandError as e:
             return f"Error committing changes: {e}"
 
