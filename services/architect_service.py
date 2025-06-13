@@ -1,6 +1,3 @@
-# kintsugi_ava/services/architect_service.py
-# V24: Unifies the refinement loop to use patches from the ReviewerService.
-
 import asyncio
 import json
 from core.event_bus import EventBus
@@ -8,7 +5,8 @@ from core.llm_client import LLMClient
 from core.execution_engine import ExecutionEngine
 from core.project_manager import ProjectManager
 from prompts.prompts import (
-    PLANNER_PROMPT, MODIFICATION_PLANNER_PROMPT, CODER_PROMPT, CODE_MODIFIER_PROMPT
+    MODIFICATION_PLANNER_PROMPT, HIERARCHICAL_PLANNER_PROMPT,
+    CODER_PROMPT, CODE_MODIFIER_PROMPT, REFINEMENT_PROMPT
 )
 from services.reviewer_service import ReviewerService
 from services.rag_service import RAGService
@@ -25,72 +23,143 @@ class ArchitectService:
         self.rag_service = rag_service
         self.MAX_REFINEMENT_ATTEMPTS = 3
 
-    async def generate_or_modify(self, prompt: str, existing_files: dict = None):
-        self.log("info", f"Task received: '{prompt}'")
-        user_prompt_summary = f'AI generation for: "{prompt[:50]}..."'
+    async def _generate_hierarchical_plan(self, prompt: str) -> dict:
+        """Generates a structured, multi-file plan for a new project."""
+        self.update_status("architect", "working", "Designing project structure...")
+        rag_context = self.rag_service.query(prompt)
+        plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
 
-        # --- STEP 1: Plan ---
-        self.update_status("architect", "working", "Creating a plan...")
-        plan_prompt = ""
-        if existing_files:
-            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt,
-                                                             existing_files_json=json.dumps(existing_files, indent=2))
-        else:
-            rag_context = self.rag_service.query(prompt)
-            plan_prompt = PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
-
-        provider, model = self.llm_client.get_model_for_role("coder")
+        provider, model = self.llm_client.get_model_for_role("coder")  # Use coder for planning
         if not provider or not model:
             self.handle_error("architect", "No model configured.")
-            return
+            return {}
 
         raw_plan_response = "".join(
             [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt)])
 
         try:
-            file_plan = self._parse_json_response(raw_plan_response).get("files", [])
-            if not file_plan: raise ValueError("AI did not return a valid file plan.")
-            self.update_status("architect", "success", f"Plan created: {len(file_plan)} file(s).")
+            plan = self._parse_json_response(raw_plan_response)
+            if not plan.get("files"):
+                raise ValueError("AI did not return a valid file plan.")
+            self.update_status("architect", "success", f"Plan created: {len(plan['files'])} file(s).")
+            return plan
         except (json.JSONDecodeError, ValueError) as e:
-            self.handle_error("architect", f"Plan creation failed: {e}", raw_plan_response)
-            return
+            self.handle_error("architect", f"Hierarchical plan creation failed: {e}", raw_plan_response)
+            return {}
 
-        # --- STEP 2: Execute Plan (Create, Modify, or Patch) ---
-        files_for_viewer = [f['filename'] for f in file_plan]
-        self.event_bus.emit("prepare_for_generation", files_for_viewer)
-        await asyncio.sleep(0.1)
+    async def _execute_concurrent_generation(self, plan: dict, user_prompt_summary: str):
+        """Generates all files in a plan concurrently."""
+        files_to_generate = plan.get("files", [])
+        dependencies = plan.get("dependencies", [])
 
-        all_steps_succeeded = True
-        for file_info in file_plan:
-            filename = file_info['filename']
-            purpose = file_info['purpose']
+        # Automatically create requirements.txt if dependencies are listed
+        if dependencies:
+            req_content = "\n".join(dependencies)
+            # Add requirements.txt to the list of files to be created if it's not already there for some reason
+            if not any(f['filename'] == 'requirements.txt' for f in files_to_generate):
+                files_to_generate.append({"filename": "requirements.txt", "purpose": "Project dependencies"})
+            self.project_manager.save_and_commit_files({"requirements.txt": req_content}, "feat: Add requirements.txt")
 
-            step_success = False
-            if existing_files and filename in existing_files:
-                self.update_status("coder", "working", f"Modifying {filename}...")
-                step_success = await self._generate_and_apply_patch(filename, purpose, existing_files[filename],
-                                                                    user_prompt_summary)
-            else:
-                self.update_status("coder", "working", f"Creating {filename}...")
-                step_success = await self._generate_new_file(filename, purpose, file_plan, user_prompt_summary)
+        # Prepare UI and gather generation tasks
+        filenames = [f['filename'] for f in files_to_generate]
+        self.event_bus.emit("prepare_for_generation", filenames)
+        await asyncio.sleep(0.1)  # Give UI time to create tabs
 
-            if not step_success:
-                all_steps_succeeded = False
-                self.handle_error("coder", f"Failed to process file: {filename}")
-                break
+        generation_tasks = [
+            self._generate_new_file(
+                file_info['filename'],
+                file_info['purpose'],
+                plan,
+                user_prompt_summary
+            ) for file_info in files_to_generate if file_info['filename'] != 'requirements.txt'
+        ]
 
-        if not all_steps_succeeded:
-            return
+        # Run all generation tasks in parallel
+        results = await asyncio.gather(*generation_tasks, return_exceptions=True)
+
+        all_successful = all(res is True for res in results)
+        if not all_successful:
+            for res in results:
+                if isinstance(res, Exception):
+                    self.handle_error("coder", f"A sub-task failed during concurrent generation: {res}")
+            return False
+
+        return True
+
+    async def generate_or_modify(self, prompt: str, existing_files: dict = None):
+        """The main entry point for the architect's workflow."""
+        self.log("info", f"Task received: '{prompt}'")
+        user_prompt_summary = f'AI generation for: "{prompt[:50]}..."'
+
+        # This is a new project, use the hierarchical planner.
+        if not existing_files:
+            plan = await self._generate_hierarchical_plan(prompt)
+            if not plan:
+                return  # Stop if planning fails
+
+            generation_succeeded = await self._execute_concurrent_generation(plan, user_prompt_summary)
+            if not generation_succeeded:
+                return  # Stop if any file generation fails
+
+        # This is a modification of an existing project. Use the old patch-based flow.
+        else:
+            self.update_status("architect", "working", "Creating modification plan...")
+            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt,
+                                                             existing_files_json=json.dumps(existing_files, indent=2))
+
+            provider, model = self.llm_client.get_model_for_role("coder")
+            if not provider or not model:
+                self.handle_error("architect", "No model configured.")
+                return
+
+            raw_plan_response = "".join(
+                [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt)])
+
+            try:
+                file_plan = self._parse_json_response(raw_plan_response).get("files", [])
+                if not file_plan: raise ValueError("AI did not return a valid modification plan.")
+                self.update_status("architect", "success", "Modification plan created.")
+            except (json.JSONDecodeError, ValueError) as e:
+                self.handle_error("architect", f"Modification plan creation failed: {e}", raw_plan_response)
+                return
+
+            self.event_bus.emit("prepare_for_generation", [f['filename'] for f in file_plan])
+            await asyncio.sleep(0.1)
+
+            all_steps_succeeded = True
+            for file_info in file_plan:
+                filename = file_info['filename']
+                purpose = file_info['purpose']
+                original_code = existing_files.get(filename)
+                if original_code is None:
+                    self.log("warning",
+                             f"File '{filename}' planned for modification does not exist. Creating it as a new file.")
+                    # Create a minimal plan for the single new file
+                    single_file_plan = {
+                        "files": [{"filename": filename, "purpose": purpose}],
+                        "dependencies": []
+                    }
+                    success = await self._generate_new_file(filename, purpose, single_file_plan, user_prompt_summary)
+                else:
+                    success = await self._generate_and_apply_patch(filename, purpose, original_code,
+                                                                   user_prompt_summary)
+
+                if not success:
+                    all_steps_succeeded = False
+                    self.handle_error("coder", f"Failed to process file: {filename}")
+                    break
+
+            if not all_steps_succeeded:
+                return
 
         self.update_status("coder", "success", "Code generation/modification complete.")
-
-        # --- STEP 3: Validate and Refine ---
         await self._validate_and_refine_loop()
 
-    async def _generate_new_file(self, filename: str, purpose: str, file_plan: list, commit_message: str) -> bool:
-        """Generates a new file from scratch and saves it. Returns success status."""
+    async def _generate_new_file(self, filename: str, purpose: str, file_plan: dict, commit_message: str) -> bool:
+        """Generates a single new file and commits it."""
+        self.update_status("coder", "working", f"Writing {filename}...")
         provider, model = self.llm_client.get_model_for_role("coder")
-        code_prompt = CODER_PROMPT.format(file_plan=json.dumps(file_plan), filename=filename, purpose=purpose)
+        code_prompt = CODER_PROMPT.format(file_plan_json=json.dumps(file_plan, indent=2), filename=filename)
 
         file_content = ""
         async for chunk in self.llm_client.stream_chat(provider, model, code_prompt):
@@ -98,13 +167,14 @@ class ArchitectService:
             self.event_bus.emit("stream_code_chunk", filename, chunk)
 
         cleaned_code = self._clean_code_output(file_content)
-        self.project_manager.save_and_commit_files({filename: cleaned_code}, commit_message)
+        self.project_manager.save_and_commit_files({filename: cleaned_code}, f"feat: Create {filename}")
         self.event_bus.emit("code_generation_complete", {filename: cleaned_code})
+        self.log("info", f"Successfully generated {filename}")
         return True
 
     async def _generate_and_apply_patch(self, filename: str, purpose: str, original_code: str,
                                         commit_message: str) -> bool:
-        """Generates a diff patch, applies it, and emits data. Returns success status."""
+        """Generates and applies a patch for a single file."""
         provider, model = self.llm_client.get_model_for_role("coder")
         patch_prompt = CODE_MODIFIER_PROMPT.format(purpose=purpose, filename=filename, original_code=original_code)
 
@@ -112,20 +182,17 @@ class ArchitectService:
         cleaned_patch = self._clean_code_output(patch_content, is_diff=True)
 
         if not cleaned_patch:
-            self.log("warning", f"AI did not return a patch for {filename}. Skipping modification.")
+            self.log("warning", f"AI returned an empty patch for {filename}. No changes made.")
             return True
 
         success = self.project_manager.patch_file(filename, cleaned_patch, commit_message)
-
         if success:
             updated_files = self.project_manager.get_project_files()
             if filename in updated_files:
                 self.event_bus.emit("code_patched", filename, updated_files[filename], cleaned_patch)
-            else:
-                self.log("warning", f"Patch applied to {filename}, but could not re-read the file.")
             return True
         else:
-            self.log("error", f"A patch generated for {filename} was invalid and could not be applied.")
+            self.log("error", f"A patch generated for {filename} was invalid.")
             return False
 
     async def _validate_and_refine_loop(self):
@@ -140,8 +207,6 @@ class ArchitectService:
                 self.event_bus.emit("ai_response_ready", success_message)
                 return
 
-            # --- THE FIX ---
-            # The refinement loop is now fully patch-based.
             self.update_status("executor", "error", "Validation failed.")
             all_project_files = self.project_manager.get_project_files()
             main_py_path = "main.py"
@@ -152,7 +217,6 @@ class ArchitectService:
             self.update_status("reviewer", "working", "Attempting to fix code...")
             broken_code = all_project_files.get(main_py_path, "")
 
-            # The reviewer now returns a patch, not the full code.
             fix_patch = await self.reviewer_service.review_and_correct_code(main_py_path, broken_code,
                                                                             exec_result.error)
 
@@ -160,19 +224,16 @@ class ArchitectService:
                 self.handle_error("reviewer", f"Could not generate a fix for {main_py_path}.")
                 return
 
-            # Apply the reviewer's patch using the ProjectManager.
             fix_commit_message = f"AI Reviewer fix after error: {exec_result.error.strip().splitlines()[-1]}"
             patch_success = self.project_manager.patch_file(main_py_path, fix_patch, fix_commit_message)
 
             if patch_success:
-                # Emit the patched event so the UI can highlight the reviewer's changes.
                 updated_files = self.project_manager.get_project_files()
                 self.event_bus.emit("code_patched", main_py_path, updated_files.get(main_py_path, ""), fix_patch)
                 self.update_status("reviewer", "success", "Fix implemented. Re-validating...")
             else:
                 self.handle_error("reviewer", f"Generated fix for {main_py_path} was invalid and could not be applied.")
                 return
-            # --- END OF FIX ---
 
         self.handle_error("executor", "Could not fix the code after several attempts.")
 
@@ -224,3 +285,4 @@ class ArchitectService:
     def log(self, message_type: str, content: str):
         """Emits a log message to the event bus."""
         self.event_bus.emit("log_message_received", "ArchitectService", message_type, content)
+
