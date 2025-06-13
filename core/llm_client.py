@@ -1,5 +1,5 @@
 # kintsugi_ava/core/llm_client.py
-# V2: Now configurable, with savable role assignments.
+# V3: Expanded with more powerful models as requested.
 
 import os
 import json
@@ -63,11 +63,7 @@ class LLMClient:
                 self.role_assignments = json.load(f)
         else:
             print("[LLMClient] No assignments file found, setting smart defaults.")
-            # Smart defaults: prefer fast/cheap models
-            self.role_assignments = {
-                "coder": "ollama/llama3",
-                "chat": "ollama/llama3"
-            }
+            self.role_assignments = {"coder": "ollama/llama3", "chat": "ollama/llama3"}
         print(f"[LLMClient] Current assignments: {self.role_assignments}")
 
     def save_assignments(self):
@@ -81,25 +77,31 @@ class LLMClient:
         models = {}
         if "openai" in self.clients:
             models["openai/gpt-4o"] = "OpenAI: GPT-4o"
+
         if "deepseek" in self.clients:
             models["deepseek/deepseek-coder"] = "DeepSeek: Coder"
+            # --- NEW MODEL ADDED ---
+            models["deepseek/deepseek-reasoner"] = "DeepSeek: Reasoner (R1-0528)"
+
         if "google" in self.clients:
-            models["google/gemini-1.5-flash-latest"] = "Google: Gemini 1.5 Flash"
+            # --- NEW MODELS ADDED ---
+            models["google/gemini-2.5-pro-preview-06-05"] = "Google: Gemini 2.5 Pro"
+            models["google/gemini-2.5-flash-preview-05-20"] = "Google: Gemini 2.5 Flash"
+
         if "ollama" in self.clients:
-            # In a real app, we'd query Ollama for its models. For now, hard-code common ones.
             models["ollama/llama3"] = "Ollama: Llama3"
             models["ollama/codellama"] = "Ollama: CodeLlama"
             models["ollama/mistral"] = "Ollama: Mistral"
+
         return models
 
     def get_role_assignments(self) -> dict:
         return self.role_assignments
 
     def set_role_assignments(self, assignments: dict):
-        # Update only the roles we are configuring
         self.role_assignments.update(assignments)
 
-    def get_model_for_role(self, role: str) -> tuple[str, str] | None:
+    def get_model_for_role(self, role: str) -> tuple[str | None, str | None]:
         """Gets the provider and model name for a given role."""
         key = self.role_assignments.get(role)
         if not key or "/" not in key:
@@ -131,7 +133,6 @@ class LLMClient:
             yield f"Error: Streaming function for {provider} not found."
             return
 
-        # Adapt call signature for the router
         if provider in ["openai", "deepseek"]:
             stream = stream_func(client, model, prompt)
         else:
@@ -153,7 +154,9 @@ class LLMClient:
 
     async def _stream_google(self, model: str, prompt: str):
         try:
-            model_instance = genai.GenerativeModel(model)
+            # For Gemini, the model name needs the 'models/' prefix for the API call
+            api_model_name = f"models/{model}" if not model.startswith("models/") else model
+            model_instance = genai.GenerativeModel(api_model_name)
             async for chunk in await model_instance.generate_content_async(prompt, stream=True):
                 if chunk.text: yield chunk.text
         except Exception as e:
