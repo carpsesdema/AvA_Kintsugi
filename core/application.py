@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V24: Injects CodeViewer into TerminalService for context-aware commands.
+# V25: Connects code_patched event for UI diff highlighting.
 
 import asyncio
 from pathlib import Path
@@ -56,7 +56,6 @@ class Application:
         self.event_bus.subscribe("user_request_submitted", self.on_user_request)
         self.event_bus.subscribe("new_project_requested", self.on_new_project)
         self.event_bus.subscribe("load_project_requested", self.on_load_project)
-        # ... (rest of the connections are the same)
         self.event_bus.subscribe("new_session_requested", self.clear_session)
         self.event_bus.subscribe("show_code_viewer_requested", lambda: self.show_window(self.code_viewer))
         self.event_bus.subscribe("show_workflow_monitor_requested", lambda: self.show_window(self.workflow_monitor))
@@ -65,6 +64,7 @@ class Application:
         self.event_bus.subscribe("prepare_for_generation", self.code_viewer.prepare_for_generation)
         self.event_bus.subscribe("stream_code_chunk", self.code_viewer.stream_code_chunk)
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
+        self.event_bus.subscribe("code_patched", self.code_viewer.apply_diff_highlighting)
         self.event_bus.subscribe("ai_response_ready", self.main_window.chat_interface._add_ai_response)
         self.event_bus.subscribe("project_loaded", self.on_project_loaded)
         self.event_bus.subscribe("scan_directory_requested", self.on_scan_directory_requested)

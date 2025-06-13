@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V19: Implements surgical code modification using diff patches.
+# V22: Correctly handles patch application failures to prevent false positives.
 
 import asyncio
 import json
@@ -30,6 +30,7 @@ class ArchitectService:
         user_prompt_summary = f'AI generation for: "{prompt[:50]}..."'
 
         # --- STEP 1: Plan ---
+        self.update_status("architect", "working", "Creating a plan...")
         plan_prompt = ""
         if existing_files:
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt,
@@ -51,7 +52,7 @@ class ArchitectService:
             if not file_plan: raise ValueError("AI did not return a valid file plan.")
             self.update_status("architect", "success", f"Plan created: {len(file_plan)} file(s).")
         except (json.JSONDecodeError, ValueError) as e:
-            self.handle_error("architect", f"Plan creation failed: {e}", raw_plan_response)
+            self.handle_error("architect", "Plan creation failed: {e}", raw_plan_response)
             return
 
         # --- STEP 2: Execute Plan (Create, Modify, or Patch) ---
@@ -59,26 +60,35 @@ class ArchitectService:
         self.event_bus.emit("prepare_for_generation", files_for_viewer)
         await asyncio.sleep(0.1)
 
+        all_steps_succeeded = True
         for file_info in file_plan:
             filename = file_info['filename']
             purpose = file_info['purpose']
 
-            # If the file exists, we're modifying it with a patch.
+            step_success = False
             if existing_files and filename in existing_files:
                 self.update_status("coder", "working", f"Modifying {filename}...")
-                await self._generate_and_apply_patch(filename, purpose, existing_files[filename], user_prompt_summary)
-            # Otherwise, we're creating a new file from scratch.
+                step_success = await self._generate_and_apply_patch(filename, purpose, existing_files[filename],
+                                                                    user_prompt_summary)
             else:
                 self.update_status("coder", "working", f"Creating {filename}...")
-                await self._generate_new_file(filename, purpose, file_plan, user_prompt_summary)
+                step_success = await self._generate_new_file(filename, purpose, file_plan, user_prompt_summary)
+
+            if not step_success:
+                all_steps_succeeded = False
+                self.handle_error("coder", f"Failed to process file: {filename}")
+                break
+
+        if not all_steps_succeeded:
+            return  # Stop execution if any file step failed
 
         self.update_status("coder", "success", "Code generation/modification complete.")
 
         # --- STEP 3: Validate and Refine ---
         await self._validate_and_refine_loop()
 
-    async def _generate_new_file(self, filename: str, purpose: str, file_plan: list, commit_message: str):
-        """Generates a new file from scratch and saves it."""
+    async def _generate_new_file(self, filename: str, purpose: str, file_plan: list, commit_message: str) -> bool:
+        """Generates a new file from scratch and saves it. Returns success status."""
         provider, model = self.llm_client.get_model_for_role("coder")
         code_prompt = CODER_PROMPT.format(file_plan=json.dumps(file_plan), filename=filename, purpose=purpose)
 
@@ -90,10 +100,12 @@ class ArchitectService:
         cleaned_code = self._clean_code_output(file_content)
         self.project_manager.save_and_commit_files({filename: cleaned_code}, commit_message)
         self.event_bus.emit("code_generation_complete", {filename: cleaned_code})
+        return True
 
-    async def _generate_and_apply_patch(self, filename: str, purpose: str, original_code: str, commit_message: str):
-        """Generates a diff patch and applies it to an existing file."""
-        provider, model = self.llm_client.get_model_for_role("coder")  # or a dedicated 'refactor' model
+    async def _generate_and_apply_patch(self, filename: str, purpose: str, original_code: str,
+                                        commit_message: str) -> bool:
+        """Generates a diff patch, applies it, and emits data. Returns success status."""
+        provider, model = self.llm_client.get_model_for_role("coder")
         patch_prompt = CODE_MODIFIER_PROMPT.format(purpose=purpose, filename=filename, original_code=original_code)
 
         patch_content = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, patch_prompt)])
@@ -101,18 +113,24 @@ class ArchitectService:
 
         if not cleaned_patch:
             self.log("warning", f"AI did not return a patch for {filename}. Skipping modification.")
-            return
+            return True  # It didn't fail, it just did nothing.
 
-        # Let the project manager handle the file system and git operations
+        # --- THE FIX ---
+        # The success of this operation now determines the fate of the entire workflow.
         success = self.project_manager.patch_file(filename, cleaned_patch, commit_message)
+
         if success:
-            # In Phase 2, we will emit the diff here for the UI
-            # For now, we reload the file content to show the result
             updated_files = self.project_manager.get_project_files()
             if filename in updated_files:
-                self.event_bus.emit("code_generation_complete", {filename: updated_files[filename]})
+                self.event_bus.emit("code_patched", filename, updated_files[filename], cleaned_patch)
+            else:
+                self.log("warning", f"Patch applied to {filename}, but could not re-read the file.")
+            return True
         else:
-            self.log("error", f"Failed to apply patch to {filename}.")
+            # The patch failed to apply. This is a critical failure of the Coder agent.
+            self.log("error", f"A patch generated for {filename} was invalid and could not be applied.")
+            return False
+        # --- END OF FIX ---
 
     async def _validate_and_refine_loop(self):
         """The self-correction loop that runs and fixes the code."""

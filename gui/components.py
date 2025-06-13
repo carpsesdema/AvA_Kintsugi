@@ -25,7 +25,10 @@ class Colors:
     # Accents
     ACCENT_BLUE = QColor("#58a6ff")      # For primary actions and highlights
     ACCENT_GREEN = QColor("#3fb950")     # For success states
-    ACCENT_RED = QColor("#f85149")       # <-- THE FIX: For error states
+    ACCENT_RED = QColor("#f85149")       # For error states
+
+    # Diff-specific highlights
+    DIFF_ADD_BG = QColor(63, 185, 80, 40)    # Transparent Green
 
 class Typography:
     """A central place for defining font styles."""

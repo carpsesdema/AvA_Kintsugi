@@ -1,5 +1,5 @@
 # kintsugi_ava/core/project_manager.py
-# V8: Replaced patch-ng with the modern, compatible 'unidiff' library.
+# V9: Resolves all project paths to be absolute, fixing path comparison errors.
 
 import os
 import sys
@@ -33,7 +33,12 @@ class ProjectManager:
         if not GIT_AVAILABLE: raise ImportError("GitPython not installed. Run 'pip install GitPython'.")
         if not UNIDIFF_AVAILABLE: raise ImportError("unidiff not installed. Run 'pip install unidiff'.")
 
-        self.workspace_root = Path(workspace_path)
+        # --- THE FIX (PART 1) ---
+        # We resolve the workspace path to get a full, absolute path.
+        # This prevents mix-ups between relative and absolute paths later on.
+        self.workspace_root = Path(workspace_path).resolve()
+        # --- END OF FIX ---
+
         self.workspace_root.mkdir(exist_ok=True)
         self.active_project_path: Path | None = None
         self.repo: git.Repo | None = None
@@ -71,7 +76,11 @@ class ProjectManager:
         return str(self.active_project_path)
 
     def load_project(self, path: str) -> str | None:
-        project_path = Path(path)
+        # --- THE FIX (PART 2) ---
+        # We also resolve the path here to ensure consistency.
+        project_path = Path(path).resolve()
+        # --- END OF FIX ---
+
         if not project_path.is_dir(): return None
         self.active_project_path = project_path
         self.is_existing_project = True
