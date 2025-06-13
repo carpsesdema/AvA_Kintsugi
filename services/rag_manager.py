@@ -1,5 +1,5 @@
 # kintsugi_ava/services/rag_manager.py
-# V2: The coordinator for all RAG activities, now with async processing.
+# V3: Adds method to ingest the currently active project.
 
 import asyncio
 from pathlib import Path
@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from .directory_scanner_service import DirectoryScannerService
 from .rag_service import RAGService
+from core.project_manager import ProjectManager
 
 
 class RAGManager(QObject):
@@ -16,7 +17,6 @@ class RAGManager(QObject):
     This class orchestrates the underlying services and handles async operations
     to avoid blocking the UI.
     """
-    # Signals for communicating with the UI/Log
     log_message = Signal(str, str, str)  # Emits (source, type, message)
 
     def __init__(self, event_bus):
@@ -32,10 +32,7 @@ class RAGManager(QObject):
         print("[RAGManager] Initialized.")
 
     def start_async_initialization(self):
-        """
-        Starts the RAG service's potentially long initialization process in a
-        background task.
-        """
+        """Starts the RAG service's potentially long initialization in a background task."""
         if not self.rag_service.is_initialized:
             self.log_message.emit("RAGManager", "info", "Starting RAG service initialization...")
             asyncio.create_task(self._initialize_rag_service_async())
@@ -50,38 +47,51 @@ class RAGManager(QObject):
             self.log_message.emit("RAGManager", "error", "RAG service failed to initialize.")
 
     def open_scan_directory_dialog(self, parent_widget=None):
-        """
-        Opens a dialog for the user to select a directory to scan and ingest.
-        """
+        """Opens a dialog for the user to select a directory to scan and ingest."""
         if self._is_scanning:
-            QMessageBox.information(parent_widget, "Scan in Progress",
-                                    "A directory scan is already in progress. Please wait for it to finish.")
+            QMessageBox.information(parent_widget, "Scan in Progress", "A directory scan is already in progress.")
             return
 
-        if not self.rag_service.is_initialized:
-            QMessageBox.warning(parent_widget, "RAG Not Ready",
-                                "The RAG service is not ready yet. Please wait for initialization to complete.")
-            self.start_async_initialization()  # Try to kick it off again
-            return
+        if not self._check_rag_ready(parent_widget): return
 
         directory = QFileDialog.getExistingDirectory(
-            parent_widget,
-            "Select Directory to Scan for Knowledge",
-            str(Path.home())
+            parent_widget, "Select Directory to Scan for Knowledge", str(Path.home())
         )
-
         if directory:
             self._is_scanning = True
             asyncio.create_task(self.scan_and_ingest_directory_async(directory))
 
+    def ingest_active_project(self, project_manager: ProjectManager, parent_widget=None):
+        """Ingests all files from the currently active project into the knowledge base."""
+        if self._is_scanning:
+            QMessageBox.information(parent_widget, "Scan in Progress", "A directory scan is already in progress.")
+            return
+
+        if not self._check_rag_ready(parent_widget): return
+
+        project_path = project_manager.active_project_path
+        if not project_path:
+            QMessageBox.warning(parent_widget, "No Active Project", "Please load or create a project first.")
+            return
+
+        self.log_message.emit("RAGManager", "info",
+                              f"Adding active project '{project_manager.active_project_name}' to knowledge base.")
+        self._is_scanning = True
+        asyncio.create_task(self.scan_and_ingest_directory_async(str(project_path)))
+
+    def _check_rag_ready(self, parent_widget=None) -> bool:
+        """Checks if the RAG service is initialized and shows a message if not."""
+        if not self.rag_service.is_initialized:
+            QMessageBox.warning(parent_widget, "RAG Not Ready",
+                                "The RAG service is initializing. Please try again in a moment.")
+            self.start_async_initialization()
+            return False
+        return True
+
     async def scan_and_ingest_directory_async(self, directory_path: str):
-        """
-        Coordinates the entire scan-and-ingest process asynchronously.
-        """
+        """Coordinates the entire scan-and-ingest process asynchronously."""
         try:
             self.log_message.emit("RAGManager", "info", f"Scanning directory: {directory_path}...")
-
-            # Scanning is fast, so we can do it directly
             files_to_process = self.scanner_service.scan(directory_path)
 
             if not files_to_process:
@@ -92,13 +102,10 @@ class RAGManager(QObject):
                                   f"Found {len(files_to_process)} files. Starting ingestion (this may take a while)...")
 
             loop = asyncio.get_running_loop()
-            # Ingestion is slow, run it in a thread pool
-            processed_count = await loop.run_in_executor(
-                None, self.rag_service.ingest_files, files_to_process
-            )
+            processed_count = await loop.run_in_executor(None, self.rag_service.ingest_files, files_to_process)
 
             self.log_message.emit("RAGManager", "success",
-                                  f"Ingestion complete. Added or updated {processed_count} files in the knowledge base.")
+                                  f"Ingestion complete. Added/updated {processed_count} files in the knowledge base.")
 
         except Exception as e:
             self.log_message.emit("RAGManager", "error", f"An error occurred during scan and ingest: {e}")

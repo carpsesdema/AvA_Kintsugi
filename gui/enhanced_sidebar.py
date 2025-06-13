@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/enhanced_sidebar.py
-# V5: Wires up the RAG "Scan Directory" button.
+# V6: Wires up the "Add Project Files" RAG button.
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
 from PySide6.QtCore import Qt
@@ -74,11 +74,14 @@ class EnhancedSidebar(QWidget):
         panel, layout = self._create_styled_panel("Knowledge Base (RAG)")
         scan_btn = ModernButton("Scan Directory", "secondary")
         scan_btn.setIcon(qta.icon("fa5s.search", color=Colors.TEXT_PRIMARY.name()))
-        # --- WIRING THE BUTTON ---
         scan_btn.clicked.connect(lambda: self.event_bus.emit("scan_directory_requested"))
-        # --- END WIRING ---
+
         add_files_btn = ModernButton("Add Project Files", "secondary")
         add_files_btn.setIcon(qta.icon("fa5s.file-medical", color=Colors.TEXT_PRIMARY.name()))
+        # --- WIRING THE BUTTON ---
+        add_files_btn.clicked.connect(lambda: self.event_bus.emit("add_active_project_to_rag_requested"))
+        # --- END WIRING ---
+
         layout.addWidget(scan_btn)
         layout.addWidget(add_files_btn)
         return panel
