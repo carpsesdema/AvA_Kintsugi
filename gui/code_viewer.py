@@ -1,16 +1,17 @@
 # kintsugi_ava/gui/code_viewer.py
-# V15: Added methods to control the integrated terminal's fix button.
+# V18: Corrected to use absolute imports and fixed crash on code_generation_complete.
 
 from pathlib import Path
 from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout
 from PySide6.QtCore import Qt
 
-from .components import Colors
-from .project_context_manager import ProjectContextManager
-from .editor_tab_manager import EditorTabManager
-from .file_tree_manager import FileTreeManager
-from .integrated_terminal import IntegratedTerminal
-from .status_bar import StatusBar
+# --- IMPORT FIX: Using absolute paths from project root ---
+from gui.components import Colors
+from gui.project_context_manager import ProjectContextManager
+from gui.editor_tab_manager import EditorTabManager
+from gui.file_tree_manager import FileTreeManager
+from gui.integrated_terminal import IntegratedTerminal
+from gui.status_bar import StatusBar
 
 
 class CodeViewerWindow(QMainWindow):
@@ -33,9 +34,9 @@ class CodeViewerWindow(QMainWindow):
 
         # Initialize managers
         self.project_context = ProjectContextManager()
-        self.editor_manager = None
-        self.file_tree_manager = None
-        self.terminal = None
+        self.editor_manager: EditorTabManager | None = None
+        self.file_tree_manager: FileTreeManager | None = None
+        self.terminal: IntegratedTerminal | None = None
 
         self._setup_ui()
         self._connect_events()
@@ -124,15 +125,18 @@ class CodeViewerWindow(QMainWindow):
         if self.project_context.is_valid:
             abs_path = self.project_context.get_absolute_path(filename)
             if abs_path:
-                self.editor_manager.stream_content_to_editor(str(abs_path), chunk)
+                self.editor_manager.stream_content_to_editor(str(abs_path.resolve()), chunk)
 
     def display_code(self, files: dict):
-        """Displays completed code files in editors."""
+        """
+        Displays completed code files in editors. This is the fix for the crash.
+        """
         for filename, content in files.items():
             if self.project_context.is_valid:
                 abs_path = self.project_context.get_absolute_path(filename)
                 if abs_path:
-                    self.editor_manager.create_or_update_tab(str(abs_path), content)
+                    path_key = str(abs_path.resolve())
+                    self.editor_manager.create_or_update_tab(path_key, content)
 
     def load_project(self, project_path_str: str):
         """Loads an existing project into the viewer."""
@@ -156,13 +160,20 @@ class CodeViewerWindow(QMainWindow):
         self.activateWindow()
         self.raise_()
 
-    # --- NEW METHODS TO CONTROL THE TERMINAL ---
     def show_fix_button(self):
-        """Makes the 'Review & Fix' button visible in the integrated terminal."""
         if self.terminal:
             self.terminal.show_fix_button()
 
     def hide_fix_button(self):
-        """Hides the 'Review & Fix' button in the integrated terminal."""
         if self.terminal:
             self.terminal.hide_fix_button()
+
+    def highlight_error_in_editor(self, file_path: Path, line_number: int):
+        """Delegates error highlighting to the editor manager."""
+        if self.editor_manager:
+            self.editor_manager.highlight_error(str(file_path), line_number)
+
+    def clear_all_error_highlights(self):
+        """Delegates clearing error highlights to the editor manager."""
+        if self.editor_manager:
+            self.editor_manager.clear_all_error_highlights()

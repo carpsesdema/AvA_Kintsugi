@@ -1,7 +1,8 @@
 # kintsugi_ava/core/application.py
-# V10: Finalized UI refactoring and fixed crash.
+# V11: Wires up error highlighting and clearing.
 
 import asyncio
+from pathlib import Path
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 # GUI Imports
@@ -75,15 +76,16 @@ class Application:
         self.event_bus.subscribe("scan_directory_requested", self.rag_manager.open_scan_directory_dialog)
         self.event_bus.subscribe("add_active_project_to_rag_requested", self._handle_add_project_to_rag)
 
-        # Execution & Fixing (Handled by CodeViewer's terminal)
+        # Execution & Fixing
         self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
         self.event_bus.subscribe("execution_failed", self._handle_execution_failed)
         self.event_bus.subscribe("review_and_fix_requested", self._handle_review_and_fix)
+        self.event_bus.subscribe("error_highlight_requested", self.code_viewer.highlight_error_in_editor)
 
         # UI Updates & Window Visibility
         self.event_bus.subscribe("show_code_viewer_requested", self.code_viewer.show_window)
         self.event_bus.subscribe("show_workflow_monitor_requested", self.workflow_monitor.show)
-        self.event_bus.subscribe("show_terminals_requested", self.terminals.show) # Correctly shows Log Viewer now
+        self.event_bus.subscribe("show_terminals_requested", self.terminals.show)
         self.event_bus.subscribe("ai_response_ready", self.main_window.chat_interface._add_ai_response)
         self.event_bus.subscribe("log_message_received", self.terminals.add_log_message)
         self.event_bus.subscribe("node_status_changed", self.workflow_monitor.scene.update_node_status)
@@ -100,7 +102,6 @@ class Application:
         self.rag_manager.start_async_initialization()
 
     def _handle_user_request(self, prompt, conversation_history):
-        """Kicks off the main AI workflow as a single, orchestrated task."""
         if self.ai_task and not self.ai_task.done():
             QMessageBox.warning(self.main_window, "AI Busy", "The AI is currently processing another request.")
             return
@@ -127,6 +128,8 @@ class Application:
         if self.terminal_task and not self.terminal_task.done():
             self.event_bus.emit("terminal_output_received", "A command is already running.\n")
             return
+        # --- NEW: CLEAR HIGHLIGHTS BEFORE NEW COMMAND ---
+        self.code_viewer.clear_all_error_highlights()
         self._last_error_report = None
         self.code_viewer.hide_fix_button()
         self.terminal_task = asyncio.create_task(self.terminal_service.execute_command(command))
@@ -135,16 +138,20 @@ class Application:
         self._last_error_report = error_report
         self.code_viewer.show_fix_button()
 
-    async def _handle_review_and_fix(self):
+    # --- THE FIX IS HERE ---
+    # Removed the 'async' keyword to make this a regular method.
+    def _handle_review_and_fix(self):
         if not self._last_error_report:
             return
         self.code_viewer.hide_fix_button()
         if self.ai_task and not self.ai_task.done():
             QMessageBox.warning(self.main_window, "AI Busy", "The AI is currently processing another request.")
             return
+        # It correctly creates the task inside, which is the proper async pattern.
         self.ai_task = asyncio.create_task(self.validation_service.review_and_fix_file(self._last_error_report))
         self.ai_task.add_done_callback(self._on_ai_task_done)
         self._last_error_report = None
+    # --- END OF FIX ---
 
     def _handle_new_project(self):
         project_path = self.project_manager.new_project("New_Project")
@@ -181,6 +188,9 @@ class Application:
             self.terminal_task.cancel()
         for agent_id in ["architect", "coder", "executor", "reviewer"]:
             self.event_bus.emit("node_status_changed", agent_id, "idle", "Ready")
+
+        # --- NEW: CLEAR HIGHLIGHTS ON NEW SESSION ---
+        self.code_viewer.clear_all_error_highlights()
         self.code_viewer.hide_fix_button()
         self._last_error_report = None
         print("[Application] New session state reset.")

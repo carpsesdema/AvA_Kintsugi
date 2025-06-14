@@ -1,5 +1,5 @@
 # kintsugi_ava/services/validation_service.py
-# V10: Refactored for user-driven workflow. Removed autonomous loop.
+# V11: Emits an event to request error highlighting in the UI.
 
 import re
 from pathlib import Path
@@ -37,12 +37,15 @@ class ValidationService:
         all_project_files = self.project_manager.get_project_files()
         file_to_fix, line_number = self._parse_error_traceback(error_report)
 
+        # --- NEW: BROADCAST ERROR LOCATION FOR UI HIGHLIGHTING ---
+        if file_to_fix and line_number > 0 and self.project_manager.active_project_path:
+            full_path = self.project_manager.active_project_path / file_to_fix
+            self.event_bus.emit("error_highlight_requested", full_path, line_number)
+        # --- END NEW ---
+
         if not file_to_fix or file_to_fix not in all_project_files:
             self.handle_error("executor", f"Could not find file '{file_to_fix}' in the project file list to apply fix.")
             return False
-
-        # Let the UI know which file is being reviewed
-        self.event_bus.emit("validation_failed", [file_to_fix])
 
         self.update_status("reviewer", "working", f"Attempting to fix {file_to_fix}...")
         broken_code = all_project_files.get(file_to_fix, "")
@@ -90,7 +93,7 @@ class ValidationService:
         for file_path_str, line_num_str in reversed(traceback_lines):
             try:
                 file_path = Path(file_path_str).resolve()
-                is_in_project = project_root in file_path.parents
+                is_in_project = project_root in file_path.parents or project_root == file_path.parent
                 is_in_venv = venv_path in file_path.parents
 
                 if is_in_project and not is_in_venv:
