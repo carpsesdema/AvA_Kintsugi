@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V9: Simplified with diff/patch system removed - only full file generation and replacement.
+# V10: Fixed to use architect role for planning, coder role for actual coding.
 
 import asyncio
 import json
@@ -19,7 +19,7 @@ from utils.code_summarizer import CodeSummarizer
 class ArchitectService:
     """
     Handles the AI-driven planning and code generation/modification process.
-    Simplified to use only full file generation - no more complex patch system.
+    Uses architect role for planning, coder role for actual code generation.
     """
 
     def __init__(self, event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager,
@@ -35,7 +35,7 @@ class ArchitectService:
         rag_context = self.rag_service.query(prompt)
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
 
-        provider, model = self.llm_client.get_model_for_role("coder")
+        provider, model = self.llm_client.get_model_for_role("architect")
         if not provider or not model:
             self.handle_error("architect", "No model configured.")
             return None
@@ -121,7 +121,7 @@ class ArchitectService:
         self.update_status("architect", "working", "Creating modification plan...")
         plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt,
                                                          existing_files_json=json.dumps(existing_files, indent=2))
-        provider, model = self.llm_client.get_model_for_role("coder")
+        provider, model = self.llm_client.get_model_for_role("architect")
         if not provider or not model:
             self.handle_error("architect", "No model configured.")
             return False

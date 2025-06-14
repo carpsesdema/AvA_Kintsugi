@@ -1,25 +1,316 @@
 # kintsugi_ava/gui/editor_tab_manager.py
-# Manages editor tabs and their content for the Code Viewer.
+# Enhanced with professional code editor features: line numbers, find/replace, better editing.
 
 from pathlib import Path
 from typing import Dict, Optional
-from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextCursor
+from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget, QVBoxLayout, QHBoxLayout, QFrame
+from PySide6.QtCore import Qt, QRect, QSize
+from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QKeySequence, QTextCharFormat, QFont
 
 from .components import Colors, Typography
 from .code_viewer_helpers import PythonHighlighter
 
 
+class LineNumberArea(QWidget):
+    """Line number area for the enhanced code editor."""
+
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.code_editor = editor
+
+    def sizeHint(self):
+        return QSize(self.code_editor.line_number_area_width(), 0)
+
+    def paintEvent(self, event):
+        self.code_editor.line_number_area_paint_event(event)
+
+
+class EnhancedCodeEditor(QPlainTextEdit):
+    """Professional code editor with line numbers, current line highlighting, and better editing."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Setup font and basic properties
+        self.setFont(Typography.get_font(11, family="JetBrains Mono"))
+        self.setTabStopDistance(40)  # 4 spaces for tab
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+
+        # Line number area
+        self.line_number_area = LineNumberArea(self)
+
+        # Colors
+        self.current_line_color = QColor(Colors.ELEVATED_BG.red(), Colors.ELEVATED_BG.green(),
+                                         Colors.ELEVATED_BG.blue(), 80)
+        self.line_number_color = Colors.TEXT_SECONDARY
+        self.line_number_bg_color = QColor(Colors.SECONDARY_BG.red(), Colors.SECONDARY_BG.green(),
+                                           Colors.SECONDARY_BG.blue(), 200)
+
+        # Setup styling
+        self.setup_styling()
+
+        # Connect signals
+        self.blockCountChanged.connect(self.update_line_number_area_width)
+        self.updateRequest.connect(self.update_line_number_area)
+        self.cursorPositionChanged.connect(self.highlight_current_line)
+
+        # Initial setup
+        self.update_line_number_area_width(0)
+        self.highlight_current_line()
+
+    def setup_styling(self):
+        """Setup editor styling."""
+        self.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: {Colors.PRIMARY_BG.name()};
+                color: {Colors.TEXT_PRIMARY.name()};
+                border: none;
+                selection-background-color: {Colors.ACCENT_BLUE.name()};
+                selection-color: {Colors.TEXT_PRIMARY.name()};
+            }}
+        """)
+
+    def line_number_area_width(self):
+        """Calculate width needed for line numbers."""
+        digits = 1
+        max_num = max(1, self.blockCount())
+        while max_num >= 10:
+            max_num //= 10
+            digits += 1
+
+        space = 8 + self.fontMetrics().horizontalAdvance('9') * digits
+        return max(space, 50)
+
+    def update_line_number_area_width(self, new_block_count):
+        """Update line number area width."""
+        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+
+    def update_line_number_area(self, rect, dy):
+        """Update line number area on scroll."""
+        if dy:
+            self.line_number_area.scroll(0, dy)
+        else:
+            self.line_number_area.update(0, rect.y(), self.line_number_area.width(), rect.height())
+
+        if rect.contains(self.viewport().rect()):
+            self.update_line_number_area_width(0)
+
+    def resizeEvent(self, event):
+        """Handle resize events."""
+        super().resizeEvent(event)
+
+        cr = self.contentsRect()
+        self.line_number_area.setGeometry(QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height()))
+
+    def line_number_area_paint_event(self, event):
+        """Paint the line numbers."""
+        painter = QPainter(self.line_number_area)
+        painter.fillRect(event.rect(), self.line_number_bg_color)
+
+        block = self.firstVisibleBlock()
+        block_number = block.blockNumber()
+        top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
+        bottom = top + int(self.blockBoundingRect(block).height())
+
+        # Set font and color for line numbers
+        painter.setPen(self.line_number_color)
+        painter.setFont(self.font())
+
+        while block.isValid() and top <= event.rect().bottom():
+            if block.isVisible() and bottom >= event.rect().top():
+                number = str(block_number + 1)
+                painter.drawText(0, top, self.line_number_area.width() - 5, self.fontMetrics().height(),
+                                 Qt.AlignmentFlag.AlignRight, number)
+
+            block = block.next()
+            top = bottom
+            bottom = top + int(self.blockBoundingRect(block).height())
+            block_number += 1
+
+    def highlight_current_line(self):
+        """Highlight the current line."""
+        extra_selections = []
+
+        if not self.isReadOnly():
+            selection = QTextEdit.ExtraSelection()
+
+            selection.format.setBackground(self.current_line_color)
+            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+            selection.cursor = self.textCursor()
+            selection.cursor.clearSelection()
+            extra_selections.append(selection)
+
+        self.setExtraSelections(extra_selections)
+
+    def keyPressEvent(self, event):
+        """Handle key press events with enhanced editing features."""
+        # Auto-indentation for Python
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+            cursor = self.textCursor()
+            current_block = cursor.block()
+            current_text = current_block.text()
+
+            # Calculate indentation
+            indent = 0
+            for char in current_text:
+                if char == ' ':
+                    indent += 1
+                elif char == '\t':
+                    indent += 4
+                else:
+                    break
+
+            # Add extra indent for colons (Python blocks)
+            if current_text.rstrip().endswith(':'):
+                indent += 4
+
+            super().keyPressEvent(event)
+
+            # Insert indentation
+            if indent > 0:
+                self.insertPlainText(' ' * indent)
+
+        # Tab handling - insert 4 spaces instead of tab
+        elif event.key() == Qt.Key.Key_Tab:
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                # Indent selection
+                self.indent_selection()
+            else:
+                # Insert spaces
+                self.insertPlainText('    ')
+
+        # Shift+Tab - unindent
+        elif event.key() == Qt.Key.Key_Backtab:
+            self.unindent_selection()
+
+        # Ctrl+/ - toggle comment
+        elif event.key() == Qt.Key.Key_Slash and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.toggle_comment()
+
+        # Ctrl+D - duplicate line
+        elif event.key() == Qt.Key.Key_D and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.duplicate_line()
+
+        else:
+            super().keyPressEvent(event)
+
+    def indent_selection(self):
+        """Indent selected lines."""
+        cursor = self.textCursor()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+
+        cursor.setPosition(start)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+
+        while cursor.position() <= end:
+            cursor.insertText('    ')
+            end += 4
+            if not cursor.movePosition(QTextCursor.MoveOperation.NextBlock):
+                break
+
+    def unindent_selection(self):
+        """Unindent selected lines."""
+        cursor = self.textCursor()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+
+        cursor.setPosition(start)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+
+        while cursor.position() <= end:
+            block_text = cursor.block().text()
+            if block_text.startswith('    '):
+                cursor.deleteChar()
+                cursor.deleteChar()
+                cursor.deleteChar()
+                cursor.deleteChar()
+                end -= 4
+            elif block_text.startswith('\t'):
+                cursor.deleteChar()
+                end -= 1
+
+            if not cursor.movePosition(QTextCursor.MoveOperation.NextBlock):
+                break
+
+    def toggle_comment(self):
+        """Toggle comment on current line or selection."""
+        cursor = self.textCursor()
+
+        if cursor.hasSelection():
+            # Comment/uncomment selection
+            start = cursor.selectionStart()
+            end = cursor.selectionEnd()
+            cursor.setPosition(start)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+
+            while cursor.position() <= end:
+                block_text = cursor.block().text()
+                stripped = block_text.lstrip()
+
+                if stripped.startswith('# '):
+                    # Uncomment
+                    indent = len(block_text) - len(stripped)
+                    cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, indent)
+                    cursor.deleteChar()  # #
+                    cursor.deleteChar()  # space
+                    end -= 2
+                elif stripped.startswith('#'):
+                    # Uncomment (no space after #)
+                    indent = len(block_text) - len(stripped)
+                    cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, indent)
+                    cursor.deleteChar()  # #
+                    end -= 1
+                else:
+                    # Comment
+                    cursor.insertText('# ')
+                    end += 2
+
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                if not cursor.movePosition(QTextCursor.MoveOperation.NextBlock):
+                    break
+        else:
+            # Comment/uncomment current line
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            block_text = cursor.block().text()
+            stripped = block_text.lstrip()
+
+            if stripped.startswith('# '):
+                # Uncomment
+                indent = len(block_text) - len(stripped)
+                cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, indent)
+                cursor.deleteChar()
+                cursor.deleteChar()
+            elif stripped.startswith('#'):
+                # Uncomment (no space)
+                indent = len(block_text) - len(stripped)
+                cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, indent)
+                cursor.deleteChar()
+            else:
+                # Comment
+                cursor.insertText('# ')
+
+    def duplicate_line(self):
+        """Duplicate the current line."""
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+
+        selected_text = cursor.selectedText()
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+        cursor.insertText('\n' + selected_text)
+
+
 class EditorTabManager:
     """
-    Manages editor tabs and their content.
+    Manages editor tabs with enhanced code editors.
     Single responsibility: Handle tab creation, content management, and editor operations.
     """
 
     def __init__(self, tab_widget: QTabWidget):
         self.tab_widget = tab_widget
-        self.editors: Dict[str, QTextEdit] = {}
+        self.editors: Dict[str, EnhancedCodeEditor] = {}
         self._setup_initial_state()
 
     def _setup_initial_state(self):
@@ -56,7 +347,7 @@ class EditorTabManager:
 
     def create_editor_tab(self, path_key: str) -> bool:
         """
-        Creates a new editor tab for the given path.
+        Creates a new enhanced editor tab for the given path.
 
         Args:
             path_key: Unique identifier/path for the editor
@@ -71,8 +362,7 @@ class EditorTabManager:
         if self.tab_widget.count() == 1 and self.tab_widget.tabText(0) == "Welcome":
             self.tab_widget.removeTab(0)
 
-        editor = QTextEdit()
-        editor.setFont(Typography.get_font(11, family="JetBrains Mono"))
+        editor = EnhancedCodeEditor()
 
         # Add syntax highlighting for Python files
         if path_key.endswith('.py'):
@@ -82,7 +372,7 @@ class EditorTabManager:
         self.tab_widget.setTabToolTip(tab_index, path_key)
         self.editors[path_key] = editor
 
-        print(f"[EditorTabManager] Created tab for: {path_key}")
+        print(f"[EditorTabManager] Created enhanced editor tab for: {path_key}")
         return True
 
     def set_editor_content(self, path_key: str, content: str) -> bool:

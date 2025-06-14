@@ -3,7 +3,7 @@
 
 from pathlib import Path
 from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt
 
 from .components import Colors
 from .project_context_manager import ProjectContextManager
@@ -114,7 +114,7 @@ class CodeViewerWindow(QMainWindow):
         self.terminal.clear_output()
         print("[CodeViewer] Prepared for new project session")
 
-    @Slot(list)  # Fixed: removed the str parameter that was causing event signature issues
+    # Fixed: removed the str parameter that was causing event signature issues
     def prepare_for_generation(self, filenames: list, project_path: str = None):
         """
         Prepares the UI for code generation.
@@ -147,7 +147,6 @@ class CodeViewerWindow(QMainWindow):
             if abs_path and abs_path.is_file():
                 self.editor_manager.open_file_in_tab(abs_path)
 
-    @Slot(str, str)
     def stream_code_chunk(self, filename: str, chunk: str):
         """Streams a chunk of code to the appropriate editor."""
         if self.project_context.is_valid:
@@ -155,7 +154,6 @@ class CodeViewerWindow(QMainWindow):
             if abs_path:
                 self.editor_manager.stream_content_to_editor(str(abs_path), chunk)
 
-    @Slot(dict)
     def display_code(self, files: dict):
         """Displays completed code files in editors."""
         for filename, content in files.items():
@@ -170,7 +168,6 @@ class CodeViewerWindow(QMainWindow):
                         # New tab created, set content
                         self.editor_manager.set_editor_content(path_key, content)
 
-    @Slot(str)
     def load_project(self, project_path_str: str):
         """Loads an existing project into the viewer."""
         project_path = Path(project_path_str)

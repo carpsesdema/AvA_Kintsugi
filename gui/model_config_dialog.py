@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/model_config_dialog.py
-# V2: Added Reviewer role to the configuration.
+# V3: Added Architect role to the configuration.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QMessageBox
@@ -15,7 +15,7 @@ class ModelConfigurationDialog(QDialog):
         super().__init__(parent)
         self.llm_client = llm_client
         self.setWindowTitle("Configure AI Models")
-        self.setMinimumSize(500, 300)
+        self.setMinimumSize(500, 350)
         self.setStyleSheet(f"background-color: {Colors.SECONDARY_BG.name()};")
 
         main_layout = QVBoxLayout(self)
@@ -26,8 +26,8 @@ class ModelConfigurationDialog(QDialog):
         main_layout.addWidget(title)
 
         self.role_combos = {}
-        # --- ADDED REVIEWER ROLE ---
-        roles_to_configure = ["coder", "chat", "reviewer"]
+        # --- ADDED ARCHITECT ROLE ---
+        roles_to_configure = ["architect", "coder", "chat", "reviewer"]
 
         for role in roles_to_configure:
             layout, combo = self._create_role_selector(role.title())

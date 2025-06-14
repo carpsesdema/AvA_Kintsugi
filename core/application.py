@@ -40,7 +40,7 @@ class Application:
         # --- GUI Windows ---
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow(self.event_bus)
-        self.workflow_monitor = WorkflowMonitorWindow()
+        self.workflow_monitor = WorkflowMonitorWindow(self.event_bus)
         self.terminals = TerminalsWindow()
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client, self.main_window)
 
@@ -113,7 +113,29 @@ class Application:
         if self.ai_task and not self.ai_task.done():
             QMessageBox.warning(self.main_window, "AI Busy", "The AI is currently processing another request.")
             return
+
         self.ai_task = asyncio.create_task(self._run_full_workflow(prompt))
+        # This is our new safety net. It will call the method below when the task is done.
+        self.ai_task.add_done_callback(self._on_ai_task_done)
+
+    def _on_ai_task_done(self, task: asyncio.Task):
+        """Callback executed when the main AI task is finished to catch silent errors."""
+        try:
+            # This will re-raise any exception that occurred in the task
+            task.result()
+            print("[Application] AI task finished successfully.")
+        except asyncio.CancelledError:
+            print("[Application] AI task was cancelled.")
+        except Exception as e:
+            # This is the crucial part. We will now see the hidden error.
+            print(f"[Application] CRITICAL ERROR IN AI TASK: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self.main_window,
+                "Workflow Error",
+                f"The AI workflow failed unexpectedly.\n\nError: {e}\n\nPlease check the console output for details."
+            )
 
     async def _run_full_workflow(self, prompt: str):
         """Orchestrates the two-phase workflow: Generation then Validation."""

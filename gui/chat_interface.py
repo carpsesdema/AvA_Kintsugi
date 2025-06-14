@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLineEdit, QFrame, QScrollArea, QHBoxLayout
-from PySide6.QtCore import Qt, Slot, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPalette
 import qtawesome as qta
 
@@ -155,7 +155,6 @@ class ChatInterface(QWidget):
             self._add_message(user_text, is_user=True)
             self.event_bus.emit("user_request_submitted", user_text, self.conversation_history)
 
-    @Slot(str)
     def _add_ai_response(self, text: str):
         """A dedicated public slot to handle adding real AI responses."""
         self._add_message(text, is_user=False)

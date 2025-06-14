@@ -2,7 +2,7 @@
 # V3: Enhanced workflow monitor with file flow visualization and event integration
 
 from PySide6.QtWidgets import QMainWindow, QGraphicsView, QVBoxLayout, QWidget, QLabel, QHBoxLayout
-from PySide6.QtCore import Qt, Slot, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPainter, QFont
 
 from .components import Colors, Typography
@@ -119,7 +119,6 @@ class WorkflowMonitorWindow(QMainWindow):
 
     # === EVENT HANDLERS ===
 
-    @Slot(list, str)
     def _on_prepare_for_generation(self, filenames: list, project_path: str = None):
         """Handles preparation for code generation."""
         self.current_files = [f for f in filenames if not f.endswith('.txt')]  # Filter out requirements.txt
@@ -137,21 +136,18 @@ class WorkflowMonitorWindow(QMainWindow):
 
         self._update_status_display()
 
-    @Slot(str, str)
     def _on_stream_code_chunk(self, filename: str, chunk: str):
         """Handles real-time code streaming."""
         self.workflow_phase = "generating"
         self.scene.handle_file_streaming(filename)
         self._update_status_display()
 
-    @Slot(dict)
     def _on_code_generation_complete(self, files: dict):
         """Handles completion of code generation."""
         self.workflow_phase = "testing"
         self.scene.move_files_to_executor()
         self._update_status_display()
 
-    @Slot(str, str, str)
     def _on_node_status_changed(self, agent_id: str, status: str, status_text: str):
         """Updates node status in the visualization."""
         self.scene.update_node_status(agent_id, status, status_text)
@@ -229,7 +225,6 @@ class WorkflowMonitorWindow(QMainWindow):
 
     # === PUBLIC INTERFACE ===
 
-    @Slot(str, str, str)
     def update_node_status(self, agent_id: str, status: str, status_text: str):
         """Public slot for updating node status (maintains compatibility)."""
         self._on_node_status_changed(agent_id, status, status_text)

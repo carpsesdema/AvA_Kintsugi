@@ -51,10 +51,18 @@ class LLMClient:
         else:
             print("[LLMClient] No assignments file found, setting smart defaults.")
             self.role_assignments = {
-                "coder": "deepseek/deepseek-coder",
-                "chat": "google/gemini-1.5-flash-latest",
-                "reviewer": "deepseek/deepseek-reasoner"  # <-- Smart default for reviewer
+                "architect": "google/gemini-2.5-flash-preview-05-20",  # FAST for planning
+                "coder": "deepseek/deepseek-coder",  # NOT reasoner
+                "chat": "google/gemini-2.5-flash-preview-05-20",
+                "reviewer": "google/gemini-2.5-flash-preview-05-20"
             }
+
+        # EMERGENCY FIX: Ensure architect role exists
+        if "architect" not in self.role_assignments:
+            print("[LLMClient] EMERGENCY: Adding missing architect role!")
+            self.role_assignments["architect"] = "google/gemini-2.5-flash-preview-05-20"
+            self.save_assignments()
+
         print(f"[LLMClient] Current assignments: {self.role_assignments}")
 
     def save_assignments(self):
@@ -86,7 +94,8 @@ class LLMClient:
     def get_model_for_role(self, role: str) -> tuple[str | None, str | None]:
         key = self.role_assignments.get(role)
         if not key or "/" not in key:
-            print(f"[LLMClient] Warning: No valid model assigned to role '{role}'.")
+            print(f"[LLMClient] WARNING: No valid model assigned to role '{role}'.")
+            print(f"[LLMClient] Available roles: {list(self.role_assignments.keys())}")
             # Fallback to coder model if reviewer is not set, etc.
             key = self.role_assignments.get("coder")
             if not key or "/" not in key: return None, None

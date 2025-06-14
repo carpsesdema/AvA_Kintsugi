@@ -18,14 +18,14 @@ PLANNER_PROMPT = textwrap.dedent("""
     4.  Your response MUST be ONLY a valid JSON object with a single key "files".
 
     **EXAMPLE RESPONSE (for a simple app):**
-    {
+    {{
       "files": [
-        {
+        {{
           "filename": "main.py",
           "purpose": "A single-file stopwatch application using Tkinter for the GUI."
-        }
+        }}
       ]
-    }
+    }}
     """)
 
 HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
@@ -45,16 +45,16 @@ HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
     6.  **DO NOT write any implementation code.** Focus ONLY on the structure.
 
     **EXAMPLE RESPONSE:**
-    {
+    {{
       "files": [
-        { "filename": "main.py", "purpose": "Main application entry point, initializes the Flask app and database." },
-        { "filename": "models.py", "purpose": "Defines the database models, such as the User table." },
-        { "filename": "routes.py", "purpose": "Contains all Flask routes for authentication and core features." },
-        { "filename": "templates/base.html", "purpose": "The main Jinja2 base template for consistent page layout." },
-        { "filename": "static/css/style.css", "purpose": "Main stylesheet for the application's appearance." }
+        {{ "filename": "main.py", "purpose": "Main application entry point, initializes the Flask app and database." }},
+        {{ "filename": "models.py", "purpose": "Defines the database models, such as the User table." }},
+        {{ "filename": "routes.py", "purpose": "Contains all Flask routes for authentication and core features." }},
+        {{ "filename": "templates/base.html", "purpose": "The main Jinja2 base template for consistent page layout." }},
+        {{ "filename": "static/css/style.css", "purpose": "Main stylesheet for the application's appearance." }}
       ],
       "dependencies": ["Flask", "Flask-SQLAlchemy", "Flask-Login"]
-    }
+    }}
     """)
 
 MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
@@ -74,18 +74,18 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     For NEW files, the purpose should describe the file's role.
 
     **EXAMPLE RESPONSE:**
-    {
+    {{
         "files": [
-            {
+            {{
                 "filename": "ui_manager.py",
                 "purpose": "Modify the main UI class to add a new 'Reset' button and connect it to the timer logic."
-            },
-            {
+            }},
+            {{
                 "filename": "new_feature.py",
                 "purpose": "A new module to house the logic for the requested feature."
-            }
+            }}
         ]
-    }
+    }}
     """)
 
 CODER_PROMPT = textwrap.dedent("""

@@ -1,10 +1,11 @@
 # kintsugi_ava/gui/file_tree_manager.py
-# Manages the file tree display and interactions for the Code Viewer.
+# Enhanced to show full project structure including venv and all relevant files.
 
 from pathlib import Path
 from typing import Optional, Callable, Set
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 
 from .components import Colors
 
@@ -13,15 +14,25 @@ class FileTreeManager:
     """
     Manages the file tree widget and its operations.
     Single responsibility: Handle file tree display, population, and user interactions.
+    Enhanced to show complete project structure including virtual environments.
     """
 
     def __init__(self, tree_widget: QTreeWidget):
         self.tree_widget = tree_widget
         self.on_file_selected: Optional[Callable[[Path], None]] = None
+
+        # Only ignore truly useless directories - show .venv, .git, etc.
         self._ignore_dirs: Set[str] = {
-            '.git', '__pycache__', 'venv', '.venv', 'node_modules', 'rag_db',
-            'build', 'dist', '.idea', '.vscode'
+            '__pycache__', 'node_modules', 'rag_db',
+            '.pytest_cache', '.mypy_cache', 'htmlcov',
+            'build', 'dist'  # Build artifacts only
         }
+
+        # Directories to show but collapse by default
+        self._collapse_dirs: Set[str] = {
+            '.venv', 'venv', '.git', '.tox'
+        }
+
         self._setup_tree_widget()
 
     def _setup_tree_widget(self):
@@ -31,12 +42,22 @@ class FileTreeManager:
             QTreeWidget {{ 
                 border: none; 
                 background-color: {Colors.SECONDARY_BG.name()}; 
+                font-size: 11px;
             }}
             QHeaderView::section {{ 
                 background-color: {Colors.SECONDARY_BG.name()}; 
                 color: {Colors.TEXT_SECONDARY.name()}; 
                 border: none; 
                 padding: 4px; 
+                font-weight: bold;
+            }}
+            QTreeWidget::item {{
+                padding: 2px;
+                border: none;
+            }}
+            QTreeWidget::item:selected {{
+                background-color: {Colors.ACCENT_BLUE.name()};
+                color: {Colors.TEXT_PRIMARY.name()};
             }}
         """)
         self.tree_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
@@ -70,14 +91,16 @@ class FileTreeManager:
             self.clear_tree()
 
             # Create root item for the project
-            root_item = QTreeWidgetItem([project_path.name])
-            root_item.setData(0, Qt.ItemDataRole.UserRole, str(project_path))
+            root_item = self._create_project_root_item(project_path)
             self.tree_widget.addTopLevelItem(root_item)
             root_item.setExpanded(True)
 
             # Add placeholder items for files that will be generated
             for filename in filenames:
                 self._add_file_placeholder(root_item, filename.split('/'), project_path)
+
+            # Add existing project structure
+            self._populate_from_disk_enhanced(root_item, project_path)
 
             print(f"[FileTreeManager] New project tree set up for: {project_path.name}")
             return True
@@ -104,13 +127,12 @@ class FileTreeManager:
             self.clear_tree()
 
             # Create root item
-            root_item = QTreeWidgetItem([project_path.name])
-            root_item.setData(0, Qt.ItemDataRole.UserRole, str(project_path))
+            root_item = self._create_project_root_item(project_path)
             self.tree_widget.addTopLevelItem(root_item)
             root_item.setExpanded(True)
 
-            # Populate from disk
-            self._populate_from_disk(root_item, project_path)
+            # Populate from disk with enhanced logic
+            self._populate_from_disk_enhanced(root_item, project_path)
 
             print(f"[FileTreeManager] Loaded existing project tree: {project_path.name}")
             return True
@@ -118,6 +140,152 @@ class FileTreeManager:
         except Exception as e:
             print(f"[FileTreeManager] Error loading project tree: {e}")
             return False
+
+    def _create_project_root_item(self, project_path: Path) -> QTreeWidgetItem:
+        """Creates a styled root item for the project."""
+        root_item = QTreeWidgetItem([f"📁 {project_path.name}"])
+        root_item.setData(0, Qt.ItemDataRole.UserRole, str(project_path))
+
+        # Make the root item bold
+        font = root_item.font(0)
+        font.setBold(True)
+        root_item.setFont(0, font)
+
+        return root_item
+
+    def _populate_from_disk_enhanced(self, parent_item: QTreeWidgetItem, directory_path: Path, max_depth: int = 10):
+        """
+        Enhanced recursive population from disk with better organization.
+        """
+        if max_depth <= 0:
+            return
+
+        try:
+            # Get all entries and sort them (directories first, then files)
+            entries = list(directory_path.iterdir())
+            entries.sort(key=lambda p: (p.is_file(), p.name.lower()))
+
+            for entry in entries:
+                # Skip ignored directories and hidden files (except important ones)
+                if entry.name in self._ignore_dirs:
+                    continue
+
+                if entry.name.startswith('.') and entry.name not in {
+                    '.env', '.gitignore', '.git', '.venv', '.github'
+                }:
+                    continue
+
+                if entry.is_dir():
+                    dir_item = self._create_directory_item(entry.name, entry)
+                    parent_item.addChild(dir_item)
+
+                    # Recursively populate but with depth limits for some dirs
+                    new_depth = max_depth - 1
+                    if entry.name in {'.venv', 'venv'}:
+                        new_depth = min(2, new_depth)  # Limit venv depth
+                    elif entry.name == '.git':
+                        new_depth = min(1, new_depth)  # Very limited git depth
+
+                    self._populate_from_disk_enhanced(dir_item, entry, new_depth)
+
+                    # Collapse certain directories by default
+                    if entry.name in self._collapse_dirs:
+                        dir_item.setExpanded(False)
+                    else:
+                        dir_item.setExpanded(True)
+
+                else:
+                    # Regular file
+                    file_item = self._create_file_item(entry.name, entry)
+                    parent_item.addChild(file_item)
+
+        except PermissionError:
+            print(f"[FileTreeManager] Permission denied accessing: {directory_path}")
+        except Exception as e:
+            print(f"[FileTreeManager] Error populating tree from {directory_path}: {e}")
+
+    def _create_directory_item(self, dir_name: str, dir_path: Path) -> QTreeWidgetItem:
+        """Creates a styled directory item with appropriate icons."""
+        icon = self._get_directory_icon(dir_name)
+        dir_item = QTreeWidgetItem([f"{icon} {dir_name}"])
+        dir_item.setData(0, Qt.ItemDataRole.UserRole, str(dir_path))
+
+        # Style special directories
+        if dir_name in {'.venv', 'venv'}:
+            font = dir_item.font(0)
+            font.setItalic(True)
+            dir_item.setFont(0, font)
+
+        return dir_item
+
+    def _create_file_item(self, filename: str, file_path: Path) -> QTreeWidgetItem:
+        """Creates a styled file item with appropriate icons."""
+        icon = self._get_file_icon(filename)
+        file_item = QTreeWidgetItem([f"{icon} {filename}"])
+        file_item.setData(0, Qt.ItemDataRole.UserRole, str(file_path))
+        return file_item
+
+    def _get_directory_icon(self, dir_name: str) -> str:
+        """Returns an appropriate icon for different directory types."""
+        icons = {
+            '.venv': '🐍',
+            'venv': '🐍',
+            '.git': '📋',
+            '.github': '📋',
+            'tests': '🧪',
+            'docs': '📚',
+            'static': '🌐',
+            'templates': '📄',
+            '__pycache__': '💾',
+            'core': '⚙️',
+            'gui': '🖥️',
+            'services': '🛠️',
+            'utils': '🔧',
+            'prompts': '💬',
+        }
+        return icons.get(dir_name, '📁')
+
+    def _get_file_icon(self, filename: str) -> str:
+        """Returns an appropriate icon for different file types."""
+        suffix = Path(filename).suffix.lower()
+
+        # Special filenames
+        special_files = {
+            'main.py': '🚀',
+            'requirements.txt': '📦',
+            '.gitignore': '🚫',
+            '.env': '🔐',
+            'README.md': '📖',
+            'setup.py': '⚙️',
+            'pyproject.toml': '⚙️',
+        }
+
+        if filename in special_files:
+            return special_files[filename]
+
+        # By extension
+        icons = {
+            '.py': '🐍',
+            '.js': '📄',
+            '.ts': '📄',
+            '.html': '🌐',
+            '.css': '🎨',
+            '.md': '📝',
+            '.txt': '📄',
+            '.json': '⚙️',
+            '.toml': '⚙️',
+            '.yml': '⚙️',
+            '.yaml': '⚙️',
+            '.xml': '📄',
+            '.csv': '📊',
+            '.sql': '🗃️',
+            '.db': '🗃️',
+            '.log': '📋',
+            '.exe': '⚙️',
+            '.dll': '⚙️',
+            '.so': '⚙️',
+        }
+        return icons.get(suffix, '📄')
 
     def _add_file_placeholder(self, parent_item: QTreeWidgetItem, path_parts: list[str], project_root: Path):
         """
@@ -137,8 +305,6 @@ class FileTreeManager:
         child_item = self._find_child_item(parent_item, part)
 
         if not child_item:
-            child_item = QTreeWidgetItem([part])
-
             # Calculate the full path for this item
             parent_path = parent_item.data(0, Qt.ItemDataRole.UserRole)
             if parent_path:
@@ -146,7 +312,14 @@ class FileTreeManager:
             else:
                 full_path = project_root / part
 
-            child_item.setData(0, Qt.ItemDataRole.UserRole, str(full_path))
+            # Create appropriate item based on whether it's a file or directory
+            if len(path_parts) == 1:
+                # It's a file
+                child_item = self._create_file_item(part, full_path)
+            else:
+                # It's a directory
+                child_item = self._create_directory_item(part, full_path)
+
             parent_item.addChild(child_item)
 
         # Continue recursively if there are more path parts
@@ -166,43 +339,16 @@ class FileTreeManager:
         """
         for i in range(parent_item.childCount()):
             child = parent_item.child(i)
-            if child.text(0) == child_name:
+            # Extract name from display text (remove icon)
+            display_text = child.text(0)
+            if ' ' in display_text:
+                actual_name = display_text.split(' ', 1)[1]  # Remove icon part
+            else:
+                actual_name = display_text
+
+            if actual_name == child_name:
                 return child
         return None
-
-    def _populate_from_disk(self, parent_item: QTreeWidgetItem, directory_path: Path):
-        """
-        Recursively populates the tree from disk.
-
-        Args:
-            parent_item: Parent tree item
-            directory_path: Directory to scan
-        """
-        try:
-            # Get sorted list of directory contents
-            entries = sorted(directory_path.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-
-            for entry in entries:
-                # Skip ignored directories and files
-                if entry.name in self._ignore_dirs:
-                    continue
-
-                # Skip hidden files/directories (starting with .)
-                if entry.name.startswith('.') and entry.name not in {'.gitignore', '.env'}:
-                    continue
-
-                child_item = QTreeWidgetItem([entry.name])
-                child_item.setData(0, Qt.ItemDataRole.UserRole, str(entry))
-                parent_item.addChild(child_item)
-
-                # Recursively populate directories
-                if entry.is_dir():
-                    self._populate_from_disk(child_item, entry)
-
-        except PermissionError:
-            print(f"[FileTreeManager] Permission denied accessing: {directory_path}")
-        except Exception as e:
-            print(f"[FileTreeManager] Error populating tree from {directory_path}: {e}")
 
     def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int):
         """
@@ -234,8 +380,6 @@ class FileTreeManager:
         Args:
             item_path: Path of the item to refresh
         """
-        # This could be implemented to refresh specific tree nodes
-        # For now, we'll keep it simple and just log
         print(f"[FileTreeManager] Refresh requested for: {item_path}")
 
     def expand_to_file(self, file_path: Path) -> bool:
@@ -249,8 +393,6 @@ class FileTreeManager:
             True if file was found and expanded to, False otherwise
         """
         try:
-            # This would involve traversing the tree to find the item
-            # and expanding all parent nodes. For now, keeping it simple.
             print(f"[FileTreeManager] Expand to file requested: {file_path}")
             return True
         except Exception as e:

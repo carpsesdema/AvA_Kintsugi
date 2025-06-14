@@ -2,7 +2,7 @@
 # A dedicated, event-driven status bar for the Code Viewer IDE.
 
 from PySide6.QtWidgets import QStatusBar, QLabel
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt
 import qtawesome as qta
 
 from .components import Colors, Typography
@@ -56,12 +56,10 @@ class StatusBar(QStatusBar):
         self.event_bus.subscribe("branch_updated", self.on_branch_updated)
         self.event_bus.subscribe("log_message_received", self.on_log_message)
 
-    @Slot(str)
     def on_branch_updated(self, branch_name: str):
         """Updates the Git branch display."""
         self.branch_label.setText(branch_name)
 
-    @Slot(str, str, str)
     def on_log_message(self, source: str, msg_type: str, content: str):
         """Listens for RAG manager logs to update its status."""
         if source == "RAGManager":

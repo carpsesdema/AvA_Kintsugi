@@ -2,7 +2,7 @@
 # A real, live-streaming log terminal.
 
 from PySide6.QtWidgets import QMainWindow, QTextEdit
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QTextCursor, QColor
 from datetime import datetime
 import html
@@ -35,7 +35,6 @@ class TerminalsWindow(QMainWindow):
         self.log_view.setPlainText("--- Kintsugi AvA Log Terminal Initialized ---")
         self.setCentralWidget(self.log_view)
 
-    @Slot(str, str, str)
     def add_log_message(self, source: str, message_type: str, content: str):
         """A public slot that receives log data and displays it."""
 
