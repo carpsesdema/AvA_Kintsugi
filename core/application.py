@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V5: Restores immediate UI updates for new project creation.
+# V7: Updates event subscription to handle consistent payload.
 
 import asyncio
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -88,7 +88,6 @@ class Application:
         self.event_bus.subscribe("add_active_project_to_rag_requested", self._handle_add_project_to_rag)
         self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
         self.event_bus.subscribe("new_session_requested", self._handle_new_session)
-        self.event_bus.subscribe("project_creation_finished", self._handle_project_created)
 
         # Window Visibility & UI Updates
         self.event_bus.subscribe("show_code_viewer_requested", self.code_viewer.show_window)
@@ -98,6 +97,7 @@ class Application:
         self.event_bus.subscribe("log_message_received", self.terminals.add_log_message)
         self.event_bus.subscribe("node_status_changed", self.workflow_monitor.update_node_status)
         self.event_bus.subscribe("branch_updated", self.code_viewer.statusBar().on_branch_updated)
+        # --- THE FIX: The subscriber now correctly handles the consistent event payload ---
         self.event_bus.subscribe("prepare_for_generation", self.code_viewer.prepare_for_generation)
         self.event_bus.subscribe("stream_code_chunk", self.code_viewer.stream_code_chunk)
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
@@ -134,7 +134,7 @@ class Application:
         self.terminal_task = asyncio.create_task(self.terminal_service.execute_command(command))
 
     def _handle_new_project(self):
-        """Handles the user's request to create a new project and updates the UI immediately."""
+        """Handles the user's request to create a new project."""
         project_path = self.project_manager.new_project("New_Project")
 
         if not project_path:
@@ -147,15 +147,12 @@ class Application:
             )
             return
 
-        # --- THE FIX ---
-        # The UI must be updated immediately upon project creation.
         self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
-        self.code_viewer.load_project(project_path)
+        self.code_viewer.prepare_for_new_project_session()
         if self.project_manager.repo and self.project_manager.repo.active_branch:
             self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
-        # --- END FIX ---
 
-        self.event_bus.emit("new_session_requested")  # Clear chat and reset workflow for the new project
+        self.event_bus.emit("new_session_requested")
 
     def _handle_load_project(self):
         """Open a dialog to load an existing project."""
@@ -188,16 +185,6 @@ class Application:
         for agent_id in ["architect", "coder", "executor", "reviewer"]:
             self.event_bus.emit("node_status_changed", agent_id, "idle", "Ready")
         print("[Application] New session state reset.")
-
-    def _handle_project_created(self, project_path: str):
-        """Handles the finalization of a new project's creation."""
-        # This handler is still useful for refreshing the UI after the code generation completes,
-        # ensuring the file tree is up-to-date with any generated files.
-        print(f"[Application] Code generation finished. Refreshing view from: {project_path}")
-        self.code_viewer.load_project(project_path)
-        self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
-        if self.project_manager.repo and self.project_manager.repo.active_branch:
-            self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
 
     async def cancel_all_tasks(self):
         """Safely cancel any running background tasks on shutdown."""

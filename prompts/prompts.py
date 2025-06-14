@@ -1,164 +1,167 @@
-# prompts.py
+# kintsugi_ava/prompts/prompts.py
+# V3: Adds a new full-file refinement prompt for reliability.
 
-PLANNER_PROMPT = """
-You are an expert software architect who specializes in creating plans for Python applications.
+import textwrap
 
-**ADDITIONAL CONTEXT FROM KNOWLEDGE BASE:**
-{rag_context}
+PLANNER_PROMPT = textwrap.dedent("""
+    You are an expert software architect who specializes in creating plans for Python applications.
 
-**USER REQUEST:** "{prompt}"
+    **ADDITIONAL CONTEXT FROM KNOWLEDGE BASE:**
+    {rag_context}
 
-**INSTRUCTIONS:**
-1.  Your goal is to create a plan for a **Python application**.
-2.  Review the user request and the additional context.
-3.  The main executable script **MUST be named `main.py`**.
-4.  Your response MUST be ONLY a valid JSON object with a single key "files".
+    **USER REQUEST:** "{prompt}"
 
-**EXAMPLE RESPONSE (for a simple app):**
-{{
-  "files": [
-    {{
-      "filename": "main.py",
-      "purpose": "A single-file stopwatch application using Tkinter for the GUI."
-    }}
-  ]
-}}
-"""
+    **INSTRUCTIONS:**
+    1.  Your goal is to create a plan for a **Python application**.
+    2.  Review the user request and the additional context.
+    3.  The main executable script **MUST be named `main.py`**.
+    4.  Your response MUST be ONLY a valid JSON object with a single key "files".
 
-HIERARCHICAL_PLANNER_PROMPT = """
-You are an expert software architect. Your task is to design a robust and modular file structure for a new Python application based on the user's request.
+    **EXAMPLE RESPONSE (for a simple app):**
+    {
+      "files": [
+        {
+          "filename": "main.py",
+          "purpose": "A single-file stopwatch application using Tkinter for the GUI."
+        }
+      ]
+    }
+    """)
 
-**USER REQUEST:** "{prompt}"
+HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
+    You are an expert software architect. Your task is to design a robust and modular file structure for a new Python application based on the user's request.
 
-**ADDITIONAL CONTEXT FROM KNOWLEDGE BASE:**
-{rag_context}
+    **USER REQUEST:** "{prompt}"
 
-**CRITICAL INSTRUCTIONS:**
-1.  Deconstruct the user's request into a logical, multi-file Python project.
-2.  For each file, provide a concise, one-sentence "purpose" describing its role.
-3.  The main executable script **MUST be named `main.py`**.
-4.  Identify all necessary pip installable dependencies.
-5.  Your response **MUST** be ONLY a valid JSON object. Do not include any other text, explanations, or markdown.
-6.  **DO NOT write any implementation code.** Focus ONLY on the structure.
+    **ADDITIONAL CONTEXT FROM KNOWLEDGE BASE:**
+    {rag_context}
 
-**EXAMPLE RESPONSE:**
-{{
-  "files": [
-    {{ "filename": "main.py", "purpose": "Main application entry point, initializes the Flask app and database." }},
-    {{ "filename": "models.py", "purpose": "Defines the database models, such as the User table." }},
-    {{ "filename": "routes.py", "purpose": "Contains all Flask routes for authentication and core features." }},
-    {{ "filename": "templates/base.html", "purpose": "The main Jinja2 base template for consistent page layout." }},
-    {{ "filename": "static/css/style.css", "purpose": "Main stylesheet for the application's appearance." }}
-  ],
-  "dependencies": ["Flask", "Flask-SQLAlchemy", "Flask-Login"]
-}}
-"""
+    **CRITICAL INSTRUCTIONS:**
+    1.  Deconstruct the user's request into a logical, multi-file Python project.
+    2.  For each file, provide a concise, one-sentence "purpose" describing its role.
+    3.  The main executable script **MUST be named `main.py`**.
+    4.  Identify all necessary pip installable dependencies.
+    5.  Your response **MUST** be ONLY a valid JSON object. Do not include any other text, explanations, or markdown.
+    6.  **DO NOT write any implementation code.** Focus ONLY on the structure.
 
-MODIFICATION_PLANNER_PROMPT = """
-You are an expert software architect specializing in refactoring and modifying existing Python codebases.
+    **EXAMPLE RESPONSE:**
+    {
+      "files": [
+        { "filename": "main.py", "purpose": "Main application entry point, initializes the Flask app and database." },
+        { "filename": "models.py", "purpose": "Defines the database models, such as the User table." },
+        { "filename": "routes.py", "purpose": "Contains all Flask routes for authentication and core features." },
+        { "filename": "templates/base.html", "purpose": "The main Jinja2 base template for consistent page layout." },
+        { "filename": "static/css/style.css", "purpose": "Main stylesheet for the application's appearance." }
+      ],
+      "dependencies": ["Flask", "Flask-SQLAlchemy", "Flask-Login"]
+    }
+    """)
 
-**USER'S MODIFICATION REQUEST:** "{prompt}"
+MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
+    You are an expert software architect specializing in refactoring and modifying existing Python codebases.
 
-**EXISTING PROJECT FILES (filename: content):**
-```json
-{existing_files_json}
-```
-**INSTRUCTIONS:**
-Analyze the user's request and the existing files.
-Determine which files need to be modified and which new files need to be created.
-Your response MUST be ONLY a valid JSON object listing all files that need to be generated.
-For files that need to be MODIFIED, the purpose should describe the change.
-For NEW files, the purpose should describe the file's role.
+    **USER'S MODIFICATION REQUEST:** "{prompt}"
 
-**EXAMPLE RESPONSE:**
-{{
-"files": [
-{{
-"filename": "ui_manager.py",
-"purpose": "Modify the main UI class to add a new 'Reset' button and connect it to the timer logic."
-}},
-{{
-"filename": "new_feature.py",
-"purpose": "A new module to house the logic for the requested feature."
-}}
-]
-}}
-"""
-CODER_PROMPT = """
-You are an expert Python developer. Your task is to write the code for a single file within a larger project.
+    **EXISTING PROJECT FILES (filename: content):**
+    ```json
+    {existing_files_json}
+    ```
+    **INSTRUCTIONS:**
+    Analyze the user's request and the existing files.
+    Determine which files need to be modified and which new files need to be created.
+    Your response MUST be ONLY a valid JSON object listing all files that need to be generated.
+    For files that need to be MODIFIED, the purpose should describe the change.
+    For NEW files, the purpose should describe the file's role.
 
-**CONTEXT: FULL PROJECT PLAN**
-This is the complete plan for the application you are helping to build. Use it to understand the relationships between files.
-```json
-{file_plan_json}
-```
+    **EXAMPLE RESPONSE:**
+    {
+        "files": [
+            {
+                "filename": "ui_manager.py",
+                "purpose": "Modify the main UI class to add a new 'Reset' button and connect it to the timer logic."
+            },
+            {
+                "filename": "new_feature.py",
+                "purpose": "A new module to house the logic for the requested feature."
+            }
+        ]
+    }
+    """)
 
-**CONTEXT: ALREADY COMPLETED FILES**
-The following files have already been written. You can use them as context for writing your assigned file, especially for getting `import` statements correct.
-```json
-{completed_files_json}
-```
+CODER_PROMPT = textwrap.dedent("""
+    You are an expert Python developer. Your task is to write the code for a single file within a larger project.
 
-**YOUR ASSIGNED TASK**
-- **File to Write:** `{filename}`
-- **Purpose of this File:** `{purpose}`
+    **CONTEXT: FULL PROJECT PLAN**
+    This is the complete plan for the application you are helping to build. Use it to understand the relationships between files.
+    ```json
+    {file_plan_json}
+    ```
 
-**CRITICAL INSTRUCTIONS:**
-1.  Your response **MUST ONLY** contain the complete, raw code for the single file you were assigned: `{filename}`.
-2.  **DO NOT** include code from other files.
-3.  **DO NOT** include any explanations, comments, or markdown formatting like ```python.
-4.  Ensure the code is robust, clean, and professional.
-5.  Use the "FULL PROJECT PLAN" and "ALREADY COMPLETED FILES" to write correct import statements.
-"""
+    **CONTEXT: SUMMARIES OF COMPLETED FILES**
+    These are structural summaries (imports, classes, function signatures) of files already written. Use them to understand how to import and call code from other files.
+    ```json
+    {code_summaries_json}
+    ```
 
-CODE_MODIFIER_PROMPT = """
-You are an expert Python developer specializing in surgical code modification.
-Your task is to generate a diff patch to apply to an existing file based on a user's request.
+    **YOUR ASSIGNED TASK**
+    - **File to Write:** `{filename}`
+    - **Purpose of this File:** `{purpose}`
 
-**USER'S MODIFICATION REQUEST:** {purpose}
+    **CRITICAL INSTRUCTIONS:**
+    1.  Your response **MUST ONLY** contain the complete, raw code for the single file you were assigned: `{filename}`.
+    2.  **DO NOT** include code from other files.
+    3.  **DO NOT** include any explanations, comments, or markdown formatting like ```python.
+    4.  Ensure the code is robust, clean, and professional.
+    5.  Use the "FULL PROJECT PLAN" and "SUMMARIES OF COMPLETED FILES" to write correct import statements.
+    """)
 
-**ORIGINAL FILE CONTENT for `{filename}`:**
-```python
-{original_code}
-```
+CODE_MODIFIER_PROMPT = textwrap.dedent("""
+    You are an expert Python developer specializing in surgical code modification.
+    Your task is to generate a diff patch to apply to an existing file based on a user's request.
 
-**CRITICAL INSTRUCTIONS:**
-1.  Analyze the user's request and the original code to determine the precise changes needed.
-2.  Your response **MUST** be only a standard, unified format diff patch.
-3.  **Do NOT include the file headers** (`--- a/...` or `+++ b/...`).
-4.  Do NOT include any other text, explanations, or markdown. Start the diff directly with `@@ ... @@`.
+    **USER'S MODIFICATION REQUEST:** {purpose}
 
-**EXAMPLE DIFF RESPONSE:**
-```diff
-@@ -15,7 +15,8 @@
- class MainWindow(QMainWindow):
-     def __init__(self, event_bus: EventBus):
-         super().__init__()
--        self.setWindowTitle("My App")
-+        # Set a more descriptive window title
-+        self.setWindowTitle("My Awesome App")
-         self.setGeometry(100, 100, 800, 600)
-         self.setup_ui()
-```
-"""
+    **ORIGINAL FILE CONTENT for `{filename}`:**
+    ```python
+    {original_code}
+    ```
 
-REFINEMENT_PROMPT = """
-You are a senior software engineer acting as a code reviewer. Your task is to generate a diff patch to fix a Python script that failed to run.
+    **CRITICAL INSTRUCTIONS:**
+    1.  Your response **MUST** be only a standard, unified format diff patch.
+    2.  **Do NOT include the file headers** (`--- a/...` or `+++ b/...`).
+    3.  Do NOT include any other text, explanations, or markdown. Start the diff directly with `@@ ... @@`.
 
-**FAILED FILE:** `{filename}`
-**ERROR MESSAGE (originating near line {line_number}):**
-```
-{error}
-```
+    **EXAMPLE DIFF RESPONSE:**
+    ```diff
+    @@ -15,7 +15,8 @@
+     class MainWindow(QMainWindow):
+         def __init__(self, event_bus: EventBus):
+             super().__init__()
+-            self.setWindowTitle("My App")
++            # Set a more descriptive window title
++            self.setWindowTitle("My Awesome App")
+             self.setGeometry(100, 100, 800, 600)
+             self.setup_ui()
+    ```
+    """)
 
-**ORIGINAL FILE CONTENT for `{filename}`:**
-```python
-{code}
-```
+REFINEMENT_PROMPT = textwrap.dedent("""
+    You are a senior software engineer acting as a code reviewer. Your task is to fix a Python script that failed to run by rewriting it.
 
-**CRITICAL INSTRUCTIONS:**
-1.  Analyze the error message and the original code to determine the precise changes needed to fix the bug.
-2.  Your response **MUST** be only a standard, unified format diff patch.
-3.  **Do NOT include the file headers** (`--- a/...` or `+++ b/...`).
-4.  Do NOT include any other text, explanations, or markdown. Start the diff directly with `@@ ... @@`.
-"""
+    **FAILED FILE:** `{filename}`
+    **ERROR MESSAGE (originating near line {line_number}):**
+    ```
+    {error}
+    ```
+
+    **ORIGINAL FILE CONTENT for `{filename}`:**
+    ```python
+    {code}
+    ```
+
+    **CRITICAL INSTRUCTIONS:**
+    1.  Analyze the error message and the original code to determine the precise changes needed to fix the bug.
+    2.  Your response **MUST** be only the **complete, corrected, and full source code** for the file `{filename}`.
+    3.  **DO NOT** include a diff, a patch, or any explanations.
+    4.  **DO NOT** use markdown formatting like ```python. Just return the raw code.
+    """)
