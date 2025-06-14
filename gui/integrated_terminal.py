@@ -9,7 +9,7 @@ from PySide6.QtCore import Signal, Qt
 import qtawesome as qta
 
 from .components import Colors, Typography, ModernButton
-
+# THE CIRCULAR IMPORT WAS CAUSED BY AN ERRONEOUS IMPORT OF CodeViewerWindow HERE. IT HAS BEEN REMOVED.
 
 class IntegratedTerminal(QWidget):
     """
@@ -57,8 +57,13 @@ class IntegratedTerminal(QWidget):
             QPushButton:hover {{
                 background-color: #ff4747;
             }}
+            QPushButton:disabled {{
+                background-color: {Colors.ELEVATED_BG.name()};
+                color: {Colors.TEXT_SECONDARY.name()};
+                border-color: {Colors.BORDER_DEFAULT.name()};
+            }}
         """)
-        self.fix_button.clicked.connect(lambda: self.command_entered.emit("review_and_fix"))
+        self.fix_button.clicked.connect(lambda: self.event_bus.emit("review_and_fix_requested"))
         self.fix_button.hide()  # Hidden by default
 
         button_layout.addWidget(run_main_btn)
@@ -126,9 +131,16 @@ class IntegratedTerminal(QWidget):
         self.output_view.clear()
 
     def show_fix_button(self):
-        """Makes the 'Review & Fix' button visible."""
+        """Makes the 'Review & Fix' button visible and enabled."""
+        self.fix_button.setText("Review & Fix")
+        self.fix_button.setEnabled(True)
         self.fix_button.show()
 
     def hide_fix_button(self):
         """Hides the 'Review & Fix' button."""
         self.fix_button.hide()
+
+    def show_fixing_in_progress(self):
+        """Disables the button and changes text to show work is in progress."""
+        self.fix_button.setText("AI is Reviewing...")
+        self.fix_button.setEnabled(False)

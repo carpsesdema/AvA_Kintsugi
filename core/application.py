@@ -42,7 +42,7 @@ class Application:
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow(self.event_bus)
         self.workflow_monitor = WorkflowMonitorWindow(self.event_bus)
-        self.terminals = TerminalsWindow(self.event_bus) # This is now the Log Viewer
+        self.terminals = TerminalsWindow(self.event_bus)  # This is now the Log Viewer
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client, self.main_window)
 
         # --- Services ---
@@ -118,9 +118,16 @@ class Application:
             print(f"[Application] CRITICAL ERROR IN AI TASK: {e}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self.main_window, "Workflow Error", f"The AI workflow failed unexpectedly.\n\nError: {e}")
+            QMessageBox.critical(self.main_window, "Workflow Error",
+                                 f"The AI workflow failed unexpectedly.\n\nError: {e}")
+        finally:
+            # --- FIX: Ensure the fix button is reset after the task finishes ---
+            self.code_viewer.hide_fix_button()
 
     async def _run_full_workflow(self, prompt: str):
+        self.event_bus.emit("log_message_received", "Application", "info", "Waiting for RAG service to be ready...")
+        await self.rag_manager.wait_for_initialization()
+        self.event_bus.emit("log_message_received", "Application", "info", "RAG is ready. Starting workflow.")
         existing_files = self.project_manager.get_project_files() if self.project_manager.is_existing_project else None
         await self.architect_service.generate_or_modify(prompt, existing_files)
 
@@ -128,7 +135,6 @@ class Application:
         if self.terminal_task and not self.terminal_task.done():
             self.event_bus.emit("terminal_output_received", "A command is already running.\n")
             return
-        # --- NEW: CLEAR HIGHLIGHTS BEFORE NEW COMMAND ---
         self.code_viewer.clear_all_error_highlights()
         self._last_error_report = None
         self.code_viewer.hide_fix_button()
@@ -138,25 +144,27 @@ class Application:
         self._last_error_report = error_report
         self.code_viewer.show_fix_button()
 
-    # --- THE FIX IS HERE ---
-    # Removed the 'async' keyword to make this a regular method.
     def _handle_review_and_fix(self):
         if not self._last_error_report:
             return
-        self.code_viewer.hide_fix_button()
+
+        # --- FIX: Provide immediate user feedback ---
+        self.code_viewer.terminal.show_fixing_in_progress()
+
         if self.ai_task and not self.ai_task.done():
             QMessageBox.warning(self.main_window, "AI Busy", "The AI is currently processing another request.")
+            self.code_viewer.hide_fix_button()  # Reset the button if we return early
             return
-        # It correctly creates the task inside, which is the proper async pattern.
+
         self.ai_task = asyncio.create_task(self.validation_service.review_and_fix_file(self._last_error_report))
         self.ai_task.add_done_callback(self._on_ai_task_done)
         self._last_error_report = None
-    # --- END OF FIX ---
 
     def _handle_new_project(self):
         project_path = self.project_manager.new_project("New_Project")
         if not project_path:
-            QMessageBox.critical(self.main_window, "Project Creation Failed", "Could not initialize Git. Please ensure Git is installed and in your PATH.")
+            QMessageBox.critical(self.main_window, "Project Creation Failed",
+                                 "Could not initialize Git. Please ensure Git is installed and in your PATH.")
             return
         self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
         self.code_viewer.prepare_for_new_project_session()
@@ -165,7 +173,8 @@ class Application:
         self.event_bus.emit("new_session_requested")
 
     def _handle_load_project(self):
-        path = QFileDialog.getExistingDirectory(self.main_window, "Load Project", str(self.project_manager.workspace_root))
+        path = QFileDialog.getExistingDirectory(self.main_window, "Load Project",
+                                                str(self.project_manager.workspace_root))
         if path:
             project_path = self.project_manager.load_project(path)
             if project_path:
@@ -189,7 +198,6 @@ class Application:
         for agent_id in ["architect", "coder", "executor", "reviewer"]:
             self.event_bus.emit("node_status_changed", agent_id, "idle", "Ready")
 
-        # --- NEW: CLEAR HIGHLIGHTS ON NEW SESSION ---
         self.code_viewer.clear_all_error_highlights()
         self.code_viewer.hide_fix_button()
         self._last_error_report = None

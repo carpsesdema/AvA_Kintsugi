@@ -38,9 +38,16 @@ class ExecutionEngine:
         if not main_file_path.exists():
             return ExecutionResult(False, "", "Execution failed: No 'main.py' file found.")
 
-        # --- VENV-AWARE LOGIC ---
-        # Prefer the project's venv python, otherwise fall back to the host python
-        python_executable = self.project_manager.venv_python_path or sys.executable
+        # --- VENV-AWARE LOGIC (THE FIX) ---
+        # Be strict. We MUST use the project's venv. If it doesn't exist, fail loudly.
+        python_executable = self.project_manager.venv_python_path
+        if not python_executable:
+            error_msg = (
+                "Execution failed: Could not find the project's virtual environment (.venv).\n"
+                "Please try creating a new project to ensure the venv is set up correctly."
+            )
+            return ExecutionResult(False, "", error_msg)
+
         print(f"[ExecutionEngine] Using interpreter: {python_executable}")
         # --- END VENV-AWARE LOGIC ---
 

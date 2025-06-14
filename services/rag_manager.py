@@ -26,14 +26,22 @@ class RAGManager(QObject):
         self.rag_service = RAGService()
         self._is_scanning = False
 
+        # --- NEW: Event to signal when initialization is complete ---
+        self.initialization_complete_event = asyncio.Event()
+
         self.log_message.connect(
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
         )
         print("[RAGManager] Initialized.")
 
+    # --- NEW: Public method for other services to wait on ---
+    async def wait_for_initialization(self):
+        """Asynchronously waits until the RAG service has finished its initial loading."""
+        await self.initialization_complete_event.wait()
+
     def start_async_initialization(self):
         """Starts the RAG service's potentially long initialization in a background task."""
-        if not self.rag_service.is_initialized:
+        if not self.rag_service.is_initialized and not self.initialization_complete_event.is_set():
             self.log_message.emit("RAGManager", "info", "Starting RAG service initialization...")
             asyncio.create_task(self._initialize_rag_service_async())
 
@@ -43,8 +51,10 @@ class RAGManager(QObject):
         await loop.run_in_executor(None, self.rag_service._initialize)
         if self.rag_service.is_initialized:
             self.log_message.emit("RAGManager", "success", "RAG service is now ready.")
+            self.initialization_complete_event.set()  # --- NEW: Signal that we're done ---
         else:
             self.log_message.emit("RAGManager", "error", "RAG service failed to initialize.")
+            self.initialization_complete_event.set()  # Also set on failure to avoid deadlocks
 
     def open_scan_directory_dialog(self, parent_widget=None):
         """Opens a dialog for the user to select a directory to scan and ingest."""
