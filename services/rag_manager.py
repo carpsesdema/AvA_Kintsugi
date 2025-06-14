@@ -1,123 +1,118 @@
 # kintsugi_ava/services/rag_manager.py
-# V3: Adds method to ingest the currently active project.
+# V5: Manages the RAGService client and launches the external server process.
 
 import asyncio
+import subprocess
+import sys
 from pathlib import Path
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtCore import QObject, Signal, QTimer
+from PySide6.QtWidgets import QMessageBox
 
-from .directory_scanner_service import DirectoryScannerService
 from .rag_service import RAGService
 from core.project_manager import ProjectManager
 
 
 class RAGManager(QObject):
     """
-    Manages the RAG pipeline, from scanning files to querying the database.
-    This class orchestrates the underlying services and handles async operations
-    to avoid blocking the UI.
+    Manages the RAG pipeline by orchestrating the RAGService client and
+    launching/monitoring the external RAG server process.
     """
     log_message = Signal(str, str, str)  # Emits (source, type, message)
 
     def __init__(self, event_bus):
         super().__init__()
         self.event_bus = event_bus
-        self.scanner_service = DirectoryScannerService()
         self.rag_service = RAGService()
-        self._is_scanning = False
+        self.rag_server_process = None
 
-        # --- NEW: Event to signal when initialization is complete ---
-        self.initialization_complete_event = asyncio.Event()
+        # Timer to periodically check the server status
+        self.status_check_timer = QTimer()
+        self.status_check_timer.timeout.connect(self.check_server_status_async)
+        self.status_check_timer.start(5000)  # Check every 5 seconds
 
         self.log_message.connect(
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
         )
         print("[RAGManager] Initialized.")
 
-    # --- NEW: Public method for other services to wait on ---
-    async def wait_for_initialization(self):
-        """Asynchronously waits until the RAG service has finished its initial loading."""
-        await self.initialization_complete_event.wait()
+    def check_server_status_async(self):
+        """Asynchronously checks server status and updates UI via logs."""
+        asyncio.create_task(self._check_and_log_status())
 
-    def start_async_initialization(self):
-        """Starts the RAG service's potentially long initialization in a background task."""
-        if not self.rag_service.is_initialized and not self.initialization_complete_event.is_set():
-            self.log_message.emit("RAGManager", "info", "Starting RAG service initialization...")
-            asyncio.create_task(self._initialize_rag_service_async())
+    async def _check_and_log_status(self):
+        """Helper to check connection and emit log messages."""
+        is_now_connected = await self.rag_service.check_connection()
 
-    async def _initialize_rag_service_async(self):
-        """Runs the blocking RAG service initialization in a thread."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self.rag_service._initialize)
-        if self.rag_service.is_initialized:
-            self.log_message.emit("RAGManager", "success", "RAG service is now ready.")
-            self.initialization_complete_event.set()  # --- NEW: Signal that we're done ---
+        if is_now_connected:
+            self.log_message.emit("RAGManager", "success", "RAG service is running.")
         else:
-            self.log_message.emit("RAGManager", "error", "RAG service failed to initialize.")
-            self.initialization_complete_event.set()  # Also set on failure to avoid deadlocks
+            if self.rag_server_process and self.rag_server_process.poll() is not None:
+                self.log_message.emit("RAGManager", "error", "RAG server process has terminated.")
+                self.rag_server_process = None
+            else:
+                self.log_message.emit("RAGManager", "info", "RAG service is not running.")
 
-    def open_scan_directory_dialog(self, parent_widget=None):
-        """Opens a dialog for the user to select a directory to scan and ingest."""
-        if self._is_scanning:
-            QMessageBox.information(parent_widget, "Scan in Progress", "A directory scan is already in progress.")
+    def launch_rag_server(self, parent_widget=None):
+        """
+        Launches the rag_server.py script as a separate background process.
+        """
+        if self.rag_server_process and self.rag_server_process.poll() is None:
+            QMessageBox.information(parent_widget, "Already Running", "The RAG server process is already running.")
             return
 
-        if not self._check_rag_ready(parent_widget): return
+        self.log_message.emit("RAGManager", "info", "Attempting to launch RAG server...")
 
-        directory = QFileDialog.getExistingDirectory(
-            parent_widget, "Select Directory to Scan for Knowledge", str(Path.home())
-        )
-        if directory:
-            self._is_scanning = True
-            asyncio.create_task(self.scan_and_ingest_directory_async(directory))
-
-    def ingest_active_project(self, project_manager: ProjectManager, parent_widget=None):
-        """Ingests all files from the currently active project into the knowledge base."""
-        if self._is_scanning:
-            QMessageBox.information(parent_widget, "Scan in Progress", "A directory scan is already in progress.")
-            return
-
-        if not self._check_rag_ready(parent_widget): return
-
-        project_path = project_manager.active_project_path
-        if not project_path:
-            QMessageBox.warning(parent_widget, "No Active Project", "Please load or create a project first.")
-            return
-
-        self.log_message.emit("RAGManager", "info",
-                              f"Adding active project '{project_manager.active_project_name}' to knowledge base.")
-        self._is_scanning = True
-        asyncio.create_task(self.scan_and_ingest_directory_async(str(project_path)))
-
-    def _check_rag_ready(self, parent_widget=None) -> bool:
-        """Checks if the RAG service is initialized and shows a message if not."""
-        if not self.rag_service.is_initialized:
-            QMessageBox.warning(parent_widget, "RAG Not Ready",
-                                "The RAG service is initializing. Please try again in a moment.")
-            self.start_async_initialization()
-            return False
-        return True
-
-    async def scan_and_ingest_directory_async(self, directory_path: str):
-        """Coordinates the entire scan-and-ingest process asynchronously."""
         try:
-            self.log_message.emit("RAGManager", "info", f"Scanning directory: {directory_path}...")
-            files_to_process = self.scanner_service.scan(directory_path)
+            # Determine the path to the python executable in the current venv
+            # This is crucial for ensuring it uses the same environment
+            python_executable = sys.executable
+            server_script_path = Path(__file__).parent.parent / "rag_server.py"
+            requirements_path = Path(__file__).parent.parent / "requirements_rag.txt"
 
-            if not files_to_process:
-                self.log_message.emit("RAGManager", "info", "No new supported files found to ingest.")
+            if not server_script_path.exists():
+                 QMessageBox.critical(parent_widget, "Error", f"Could not find rag_server.py at {server_script_path}")
+                 return
+
+            if not requirements_path.exists():
+                 QMessageBox.critical(parent_widget, "Error", f"Could not find requirements_rag.txt at {requirements_path}")
+                 return
+
+            # First, ensure dependencies are installed
+            print(f"Installing RAG server dependencies from {requirements_path}...")
+            # Using Popen to avoid blocking while pip runs
+            pip_install = subprocess.Popen([python_executable, "-m", "pip", "install", "-r", str(requirements_path)],
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout, stderr = pip_install.communicate()
+            if pip_install.returncode != 0:
+                self.log_message.emit("RAGManager", "error", f"Failed to install RAG dependencies: {stderr}")
+                QMessageBox.critical(parent_widget, "Dependency Error", f"Failed to install RAG dependencies:\n{stderr}")
                 return
+            self.log_message.emit("RAGManager", "success", "RAG dependencies are up to date.")
 
-            self.log_message.emit("RAGManager", "info",
-                                  f"Found {len(files_to_process)} files. Starting ingestion (this may take a while)...")
+            # Launch the server in a new process, hiding the console window on Windows
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NO_WINDOW
 
-            loop = asyncio.get_running_loop()
-            processed_count = await loop.run_in_executor(None, self.rag_service.ingest_files, files_to_process)
-
-            self.log_message.emit("RAGManager", "success",
-                                  f"Ingestion complete. Added/updated {processed_count} files in the knowledge base.")
+            self.rag_server_process = subprocess.Popen(
+                [python_executable, str(server_script_path)],
+                creationflags=creation_flags
+            )
+            self.log_message.emit("RAGManager", "info", f"RAG server process started with PID: {self.rag_server_process.pid}")
 
         except Exception as e:
-            self.log_message.emit("RAGManager", "error", f"An error occurred during scan and ingest: {e}")
-        finally:
-            self._is_scanning = False
+            self.log_message.emit("RAGManager", "error", f"Failed to launch RAG server: {e}")
+            QMessageBox.critical(parent_widget, "Launch Error", f"Could not launch the RAG server:\n{e}")
+
+    def terminate_rag_server(self):
+        """Terminates the RAG server process if it's running."""
+        if self.rag_server_process and self.rag_server_process.poll() is None:
+            self.log_message.emit("RAGManager", "info", f"Terminating RAG server process (PID: {self.rag_server_process.pid})...")
+            self.rag_server_process.terminate()
+            try:
+                self.rag_server_process.wait(timeout=5)
+                self.log_message.emit("RAGManager", "success", "RAG server terminated successfully.")
+            except subprocess.TimeoutExpired:
+                self.log_message.emit("RAGManager", "warning", "RAG server did not terminate gracefully. Forcing kill.")
+                self.rag_server_process.kill()
+            self.rag_server_process = None

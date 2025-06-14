@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V11: Fixed major performance bug in generation loop.
+# V12: Simplified to work with the new RAGService client.
 
 import asyncio
 import json
@@ -28,7 +28,7 @@ class ArchitectService:
         self.event_bus = event_bus
         self.llm_client = llm_client
         self.project_manager = project_manager
-        self.rag_service = rag_service
+        self.rag_service = rag_service  # This is now the lightweight RAG client
 
     async def generate_or_modify(self, prompt: str, existing_files: dict | None) -> bool:
         """Determines whether to start a new project or modify an existing one."""
@@ -39,8 +39,6 @@ class ArchitectService:
             if plan:
                 success = await self._execute_artisanal_generation(plan)
         else:
-            # For modifications, we'll need a different flow.
-            # For now, let's assume we can get a plan and regenerate files.
             self.log("info", "Modification of existing project is not fully implemented yet.")
             success = False  # Placeholder
 
@@ -51,7 +49,10 @@ class ArchitectService:
     async def _generate_hierarchical_plan(self, prompt: str) -> dict | None:
         """Generates a structured, multi-file plan for a new project."""
         self.update_status("architect", "working", "Designing project structure...")
-        rag_context = self.rag_service.query(prompt)
+
+        # Query the RAG service for context. The service itself handles connection errors.
+        rag_context = await self.rag_service.query(prompt)
+
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
 
         provider, model = self.llm_client.get_model_for_role("architect")
@@ -88,20 +89,16 @@ class ArchitectService:
         self.event_bus.emit("prepare_for_generation", all_filenames, project_path)
         await asyncio.sleep(0.1)  # Give UI time to prepare
 
-        # --- NEW: In-memory dictionary to hold all generated code ---
         generated_files = {}
-        summarized_context = {}  # We'll still build this for the prompt, but without file I/O
+        summarized_context = {}
 
-        # Handle requirements.txt first
         if dependencies:
             self.update_status("coder", "working", "Preparing requirements.txt...")
             req_content = "\n".join(dependencies) + "\n"
             generated_files["requirements.txt"] = req_content
-            # This event updates the editor tab with the final content
             self.event_bus.emit("code_generation_complete", {"requirements.txt": req_content})
             summarized_context["requirements.txt"] = "File containing project dependencies."
 
-        # Now generate the actual code files
         code_files_to_generate = [f for f in files_to_generate if f.get("filename") != "requirements.txt"]
 
         for file_info in code_files_to_generate:
@@ -109,26 +106,19 @@ class ArchitectService:
             purpose = file_info['purpose']
             self.update_status("coder", "working", f"Writing {filename}...")
 
-            # Generate the file content using our existing helper function
             file_content = await self._generate_one_file_with_context(plan, filename, purpose, summarized_context)
 
             if file_content is None:
                 self.handle_error("coder", f"Failed to generate content for {filename}.")
                 return False
 
-            # Add the generated content to our dictionary
             generated_files[filename] = file_content
             self.log("info", f"Successfully generated content for {filename}.")
 
-            # Update the UI with the completed file content
             self.event_bus.emit("code_generation_complete", {filename: file_content})
 
-            # Update the context for the NEXT file generation, but without slow parsing.
-            # We just signal that the file exists and the plan describes its purpose.
             summarized_context[filename] = f"File '{filename}' is being generated. Purpose: {purpose}"
 
-        # --- THE BIG FINALE ---
-        # Now that ALL files are generated in memory, save and commit them in one go.
         self.log("success", "Code generation complete. Saving all files to disk...")
         self.update_status("coder", "working", "Saving files...")
 

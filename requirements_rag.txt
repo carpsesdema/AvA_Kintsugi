@@ -1,0 +1,7 @@
+# requirements_rag.txt
+
+fastapi
+uvicorn[standard]
+sentence-transformers
+chromadb
+python-multipart

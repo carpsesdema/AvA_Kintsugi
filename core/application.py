@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V11: Wires up error highlighting and clearing.
+# V12: Implements launching and terminating the external RAG server.
 
 import asyncio
 from pathlib import Path
@@ -42,11 +42,11 @@ class Application:
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow(self.event_bus)
         self.workflow_monitor = WorkflowMonitorWindow(self.event_bus)
-        self.terminals = TerminalsWindow(self.event_bus)  # This is now the Log Viewer
+        self.terminals = TerminalsWindow(self.event_bus)
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client, self.main_window)
 
         # --- Services ---
-        self.rag_manager = RAGManager(self.event_bus)
+        self.rag_manager = RAGManager(self.event_bus) # Manages the RAG server process
         self.architect_service = ArchitectService(
             self.event_bus, self.llm_client, self.project_manager, self.rag_manager.rag_service)
         self.reviewer_service = ReviewerService(self.event_bus, self.llm_client)
@@ -73,8 +73,12 @@ class Application:
 
         # Tools & Config
         self.event_bus.subscribe("configure_models_requested", self.model_config_dialog.exec)
+        # --- NEW: Event to launch the RAG server from the sidebar button ---
+        self.event_bus.subscribe("launch_rag_server_requested", self._handle_launch_rag_server)
+
+        # Placeholders for old RAG ingestion buttons
         self.event_bus.subscribe("scan_directory_requested", self.rag_manager.open_scan_directory_dialog)
-        self.event_bus.subscribe("add_active_project_to_rag_requested", self._handle_add_project_to_rag)
+        self.event_bus.subscribe("add_active_project_to_rag_requested", self.rag_manager.ingest_active_project)
 
         # Execution & Fixing
         self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
@@ -97,9 +101,9 @@ class Application:
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
 
     def show(self):
-        """Show the main application window and start background initializations."""
+        """Show the main application window."""
         self.main_window.show()
-        self.rag_manager.start_async_initialization()
+        # Automatic RAG initialization is removed. It's now user-triggered.
 
     def _handle_user_request(self, prompt, conversation_history):
         if self.ai_task and not self.ai_task.done():
@@ -118,16 +122,13 @@ class Application:
             print(f"[Application] CRITICAL ERROR IN AI TASK: {e}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self.main_window, "Workflow Error",
-                                 f"The AI workflow failed unexpectedly.\n\nError: {e}")
+            QMessageBox.critical(self.main_window, "Workflow Error", f"The AI workflow failed unexpectedly.\n\nError: {e}")
         finally:
-            # --- FIX: Ensure the fix button is reset after the task finishes ---
             self.code_viewer.hide_fix_button()
 
     async def _run_full_workflow(self, prompt: str):
-        self.event_bus.emit("log_message_received", "Application", "info", "Waiting for RAG service to be ready...")
-        await self.rag_manager.wait_for_initialization()
-        self.event_bus.emit("log_message_received", "Application", "info", "RAG is ready. Starting workflow.")
+        # The workflow no longer waits for RAG. The RAGService client will handle
+        # connection status internally and provide appropriate context or error messages.
         existing_files = self.project_manager.get_project_files() if self.project_manager.is_existing_project else None
         await self.architect_service.generate_or_modify(prompt, existing_files)
 
@@ -147,15 +148,11 @@ class Application:
     def _handle_review_and_fix(self):
         if not self._last_error_report:
             return
-
-        # --- FIX: Provide immediate user feedback ---
         self.code_viewer.terminal.show_fixing_in_progress()
-
         if self.ai_task and not self.ai_task.done():
             QMessageBox.warning(self.main_window, "AI Busy", "The AI is currently processing another request.")
-            self.code_viewer.hide_fix_button()  # Reset the button if we return early
+            self.code_viewer.hide_fix_button()
             return
-
         self.ai_task = asyncio.create_task(self.validation_service.review_and_fix_file(self._last_error_report))
         self.ai_task.add_done_callback(self._on_ai_task_done)
         self._last_error_report = None
@@ -163,8 +160,7 @@ class Application:
     def _handle_new_project(self):
         project_path = self.project_manager.new_project("New_Project")
         if not project_path:
-            QMessageBox.critical(self.main_window, "Project Creation Failed",
-                                 "Could not initialize Git. Please ensure Git is installed and in your PATH.")
+            QMessageBox.critical(self.main_window, "Project Creation Failed", "Could not initialize Git. Please ensure Git is installed and in your PATH.")
             return
         self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
         self.code_viewer.prepare_for_new_project_session()
@@ -173,8 +169,7 @@ class Application:
         self.event_bus.emit("new_session_requested")
 
     def _handle_load_project(self):
-        path = QFileDialog.getExistingDirectory(self.main_window, "Load Project",
-                                                str(self.project_manager.workspace_root))
+        path = QFileDialog.getExistingDirectory(self.main_window, "Load Project", str(self.project_manager.workspace_root))
         if path:
             project_path = self.project_manager.load_project(path)
             if project_path:
@@ -187,8 +182,9 @@ class Application:
                 elif self.project_manager.repo and self.project_manager.repo.active_branch:
                     self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
 
-    def _handle_add_project_to_rag(self):
-        self.rag_manager.ingest_active_project(self.project_manager, self.main_window)
+    # --- NEW: Method to handle the launch button click ---
+    def _handle_launch_rag_server(self):
+        self.rag_manager.launch_rag_server(self.main_window)
 
     def _handle_new_session(self):
         if self.ai_task and not self.ai_task.done():
@@ -197,13 +193,20 @@ class Application:
             self.terminal_task.cancel()
         for agent_id in ["architect", "coder", "executor", "reviewer"]:
             self.event_bus.emit("node_status_changed", agent_id, "idle", "Ready")
-
         self.code_viewer.clear_all_error_highlights()
         self.code_viewer.hide_fix_button()
         self._last_error_report = None
         print("[Application] New session state reset.")
 
     async def cancel_all_tasks(self):
+        """
+        Cleanly shuts down all background processes and tasks.
+        This is called when the application is about to quit.
+        """
+        # --- NEW: Terminate the RAG server process first ---
+        self.rag_manager.terminate_rag_server()
+
+        # Then, cancel any running asyncio tasks
         tasks_to_cancel = [self.ai_task, self.terminal_task]
         for task in tasks_to_cancel:
             if task and not task.done():

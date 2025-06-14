@@ -1,148 +1,76 @@
 # kintsugi_ava/services/rag_service.py
-# V2: Manages core RAG ops: chunking, embedding, DB interaction. Uses ChunkingService.
+# V4: Refactored to be a thin client for the external RAG server.
 
-import chromadb
-import hashlib
+import aiohttp
+import asyncio
 from pathlib import Path
-from typing import List
-
-from .chunking_service import ChunkingService
-
-try:
-    from sentence_transformers import SentenceTransformer
-
-    SENTRANS_AVAILABLE = True
-except ImportError:
-    SENTRANS_AVAILABLE = False
-    print("[RAGService] Warning: sentence-transformers is not installed. RAG functionality will be disabled.")
 
 
 class RAGService:
     """
-    Manages the core RAG operations: chunking, embedding, and database interaction.
-    Its methods are synchronous and potentially blocking; the caller is responsible
-    for running them in a separate thread if required.
+    Acts as a client for the external RAG FastAPI server.
+    This class is now lightweight and does not load any models,
+    ensuring the main application starts instantly.
     """
 
-    def __init__(self, persist_directory: str = "rag_db"):
-        if not SENTRANS_AVAILABLE:
-            self.is_initialized = False
-            return
+    def __init__(self, server_url: str = "http://127.0.0.1:8001"):
+        self.server_url = server_url
+        self.is_connected = False
+        print(f"[RAGService] Client initialized. Will connect to RAG server at {self.server_url}")
 
-        self.persist_directory = persist_directory
-        Path(self.persist_directory).mkdir(exist_ok=True)
-        self.chunking_service = ChunkingService()
-
-        self.client = None
-        self.embedding_model = None
-        self.collection = None
-        self.is_initialized = False
-        print("[RAGService] Instantiated. Initialization will be performed on first use.")
-
-    def _initialize(self):
+    async def check_connection(self) -> bool:
         """
-        Performs the heavy, one-time lifting of loading models and connecting to the DB.
-        This is a blocking operation.
-        """
-        if self.is_initialized:
-            return
-
-        print("[RAGService] Performing first-time initialization (this may take a moment)...")
-        try:
-            # Connect to the persistent ChromaDB client
-            self.client = chromadb.PersistentClient(path=self.persist_directory)
-            # Load the embedding model from HuggingFace
-            self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            # Get or create the main collection for our knowledge base
-            self.collection = self.client.get_or_create_collection(name="kintsugi_kb")
-            self.is_initialized = True
-            print("[RAGService] Initialization complete. Ready to use.")
-        except Exception as e:
-            print(f"[RAGService] FATAL: Error during initialization: {e}")
-            # Ensure we don't proceed in a broken state
-            self.is_initialized = False
-
-    def ingest_files(self, file_paths: List[Path]) -> int:
-        """
-        Reads, chunks, embeds, and ingests a list of files into the vector DB.
-        This is a long-running, blocking operation.
-
-        Args:
-            file_paths: A list of Path objects to ingest.
+        Performs a quick check to see if the RAG server is running and responding.
 
         Returns:
-            The number of files successfully ingested.
+            bool: True if the server is connected, False otherwise.
         """
-        if not self.is_initialized:
-            self._initialize()  # Ensure model is loaded before we start
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as session:
+                async with session.get(self.server_url) as response:
+                    if response.status == 200:
+                        self.is_connected = True
+                        return True
+        except (aiohttp.ClientConnectorError, asyncio.TimeoutError):
+            # These errors are expected if the server isn't running
+            pass
+        except Exception as e:
+            print(f"[RAGService] Unexpected error checking connection: {e}")
 
-        if not self.is_initialized or not self.collection or not self.embedding_model:
-            print("[RAGService] Cannot ingest: RAG service is not properly initialized.")
-            return 0
+        self.is_connected = False
+        return False
 
-        processed_count = 0
-        for file_path in file_paths:
-            try:
-                print(f"[RAGService] Processing: {file_path.name}")
-                content = file_path.read_text(encoding='utf-8', errors='ignore')
-                file_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
-                chunks = self.chunking_service.chunk_document(content, str(file_path))
-                if not chunks:
-                    continue
-
-                # Prepare data for ChromaDB
-                ids = [f"{file_hash}_{chunk['id']}" for chunk in chunks]
-                contents = [chunk['content'] for chunk in chunks]
-                metadatas = [chunk['metadata'] for chunk in chunks]
-
-                # Generate embeddings for all chunks in the file
-                embeddings = self.embedding_model.encode(contents, show_progress_bar=False)
-
-                # Add the processed chunks to the collection
-                self.collection.add(
-                    ids=ids,
-                    documents=contents,
-                    metadatas=metadatas,
-                    embeddings=embeddings.tolist()  # Ensure it's a list for ChromaDB
-                )
-                processed_count += 1
-            except Exception as e:
-                print(f"[RAGService] Failed to ingest file {file_path}. Error: {e}")
-
-        print(f"[RAGService] Ingestion task complete. Processed {processed_count}/{len(file_paths)} files.")
-        return processed_count
-
-    def query(self, query_text: str, n_results: int = 5) -> str:
+    async def query(self, query_text: str, n_results: int = 5) -> str:
         """
-        Queries the knowledge base and returns a formatted string of context.
-        This is a blocking operation.
+        Queries the external RAG server and returns a formatted string of context.
+        This is a fast, non-blocking network operation.
         """
-        if not self.is_initialized:
-            print("[RAGService] Cannot query: not initialized. Returning empty context.")
-            # Don't initialize on query, as it can cause a long delay on first user message.
-            # Initialization should be handled by an explicit startup or ingestion task.
-            return "RAG Service is not ready."
+        if not self.is_connected:
+            # Quick check before sending, in case connection was lost.
+            if not await self.check_connection():
+                return "RAG Service is not running or is unreachable. Please launch it from the sidebar."
 
-        if not self.collection or not self.embedding_model:
-            return "RAG Service is not ready."
+        print(f"[RAGService] Sending query to RAG server: '{query_text[:50]}...'")
 
-        print(f"[RAGService] Querying for: '{query_text[:50]}...'")
+        query_payload = {
+            "query_text": query_text,
+            "n_results": n_results
+        }
 
-        # Create an embedding for the user's query
-        query_embedding = self.embedding_model.encode(query_text).tolist()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{self.server_url}/query", json=query_payload, timeout=30) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get("context", "Received empty context from RAG server.")
+                    else:
+                        error_detail = await response.text()
+                        print(f"[RAGService] Error from RAG server (status {response.status}): {error_detail}")
+                        return f"Error: RAG server returned status {response.status}."
 
-        # Query the collection
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=n_results
-        )
-
-        # Format the results into a clean string for the prompt
-        context_str = ""
-        documents = results.get('documents', [[]])[0]
-        for i, doc in enumerate(documents):
-            context_str += f"--- Relevant Document Snippet {i + 1} ---\n"
-            context_str += doc
-            context_str += "\n\n"
-
-        return context_str.strip() if context_str else "No relevant documents found."
+        except aiohttp.ClientConnectorError:
+            self.is_connected = False  # Mark as not connected
+            return "Connection Error: Could not connect to the RAG server."
+        except Exception as e:
+            print(f"[RAGService] An unexpected error occurred during query: {e}")
+            return f"An unexpected error occurred: {e}"
