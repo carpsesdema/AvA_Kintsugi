@@ -1,5 +1,5 @@
 # kintsugi_ava/services/rag_manager.py
-# V5: Manages the RAGService client and launches the external server process.
+# V6: Fixed status check spam by only logging when status actually changes.
 
 import asyncio
 import subprocess
@@ -25,10 +25,14 @@ class RAGManager(QObject):
         self.rag_service = RAGService()
         self.rag_server_process = None
 
+        # Track previous status to avoid spam
+        self._last_connection_status = None
+        self._last_process_status = None
+
         # Timer to periodically check the server status
         self.status_check_timer = QTimer()
         self.status_check_timer.timeout.connect(self.check_server_status_async)
-        self.status_check_timer.start(5000)  # Check every 5 seconds
+        self.status_check_timer.start(10000)  # Check every 10 seconds (reduced frequency)
 
         self.log_message.connect(
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
@@ -40,17 +44,27 @@ class RAGManager(QObject):
         asyncio.create_task(self._check_and_log_status())
 
     async def _check_and_log_status(self):
-        """Helper to check connection and emit log messages."""
+        """Helper to check connection and emit log messages only when status changes."""
         is_now_connected = await self.rag_service.check_connection()
+        process_is_running = (self.rag_server_process and
+                              self.rag_server_process.poll() is None)
 
-        if is_now_connected:
-            self.log_message.emit("RAGManager", "success", "RAG service is running.")
-        else:
-            if self.rag_server_process and self.rag_server_process.poll() is not None:
-                self.log_message.emit("RAGManager", "error", "RAG server process has terminated.")
-                self.rag_server_process = None
+        # Only log connection status changes
+        if self._last_connection_status != is_now_connected:
+            if is_now_connected:
+                self.log_message.emit("RAGManager", "success", "RAG service is running.")
             else:
                 self.log_message.emit("RAGManager", "info", "RAG service is not running.")
+            self._last_connection_status = is_now_connected
+
+        # Only log process status changes
+        if self._last_process_status != process_is_running:
+            if not process_is_running and self.rag_server_process:
+                # Process was running but has now terminated
+                if self._last_process_status is True:  # Only log if it was previously running
+                    self.log_message.emit("RAGManager", "error", "RAG server process has terminated.")
+                self.rag_server_process = None
+            self._last_process_status = process_is_running
 
     def launch_rag_server(self, parent_widget=None):
         """
@@ -70,12 +84,13 @@ class RAGManager(QObject):
             requirements_path = Path(__file__).parent.parent / "requirements_rag.txt"
 
             if not server_script_path.exists():
-                 QMessageBox.critical(parent_widget, "Error", f"Could not find rag_server.py at {server_script_path}")
-                 return
+                QMessageBox.critical(parent_widget, "Error", f"Could not find rag_server.py at {server_script_path}")
+                return
 
             if not requirements_path.exists():
-                 QMessageBox.critical(parent_widget, "Error", f"Could not find requirements_rag.txt at {requirements_path}")
-                 return
+                QMessageBox.critical(parent_widget, "Error",
+                                     f"Could not find requirements_rag.txt at {requirements_path}")
+                return
 
             # First, ensure dependencies are installed
             print(f"Installing RAG server dependencies from {requirements_path}...")
@@ -85,7 +100,8 @@ class RAGManager(QObject):
             stdout, stderr = pip_install.communicate()
             if pip_install.returncode != 0:
                 self.log_message.emit("RAGManager", "error", f"Failed to install RAG dependencies: {stderr}")
-                QMessageBox.critical(parent_widget, "Dependency Error", f"Failed to install RAG dependencies:\n{stderr}")
+                QMessageBox.critical(parent_widget, "Dependency Error",
+                                     f"Failed to install RAG dependencies:\n{stderr}")
                 return
             self.log_message.emit("RAGManager", "success", "RAG dependencies are up to date.")
 
@@ -98,7 +114,12 @@ class RAGManager(QObject):
                 [python_executable, str(server_script_path)],
                 creationflags=creation_flags
             )
-            self.log_message.emit("RAGManager", "info", f"RAG server process started with PID: {self.rag_server_process.pid}")
+            self.log_message.emit("RAGManager", "info",
+                                  f"RAG server process started with PID: {self.rag_server_process.pid}")
+
+            # Reset status tracking so we get fresh status updates
+            self._last_connection_status = None
+            self._last_process_status = None
 
         except Exception as e:
             self.log_message.emit("RAGManager", "error", f"Failed to launch RAG server: {e}")
@@ -107,7 +128,8 @@ class RAGManager(QObject):
     def terminate_rag_server(self):
         """Terminates the RAG server process if it's running."""
         if self.rag_server_process and self.rag_server_process.poll() is None:
-            self.log_message.emit("RAGManager", "info", f"Terminating RAG server process (PID: {self.rag_server_process.pid})...")
+            self.log_message.emit("RAGManager", "info",
+                                  f"Terminating RAG server process (PID: {self.rag_server_process.pid})...")
             self.rag_server_process.terminate()
             try:
                 self.rag_server_process.wait(timeout=5)
@@ -116,3 +138,7 @@ class RAGManager(QObject):
                 self.log_message.emit("RAGManager", "warning", "RAG server did not terminate gracefully. Forcing kill.")
                 self.rag_server_process.kill()
             self.rag_server_process = None
+
+            # Reset status tracking
+            self._last_connection_status = None
+            self._last_process_status = None
