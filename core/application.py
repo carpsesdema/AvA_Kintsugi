@@ -1,6 +1,5 @@
 # kintsugi_ava/core/application.py
-# The central orchestrator for the Kintsugi AvA application.
-# This class instantiates all services and GUI components and connects them via the event bus.
+# V3: Now orchestrates the new ValidationService after the ArchitectService.
 
 import asyncio
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -22,6 +21,8 @@ from core.execution_engine import ExecutionEngine
 from services.architect_service import ArchitectService
 from services.rag_manager import RAGManager
 from services.terminal_service import TerminalService
+from services.reviewer_service import ReviewerService
+from services.validation_service import ValidationService
 
 
 class Application:
@@ -43,19 +44,25 @@ class Application:
         self.terminals = TerminalsWindow()
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client, self.main_window)
 
-        # --- Services ---
-        # The RAGManager orchestrates scanning and ingestion, and owns the core RAGService
+        # --- Services (instantiated with dependency injection in mind) ---
         self.rag_manager = RAGManager(self.event_bus)
 
-        # The ArchitectService handles the main AI logic loop
         self.architect_service = ArchitectService(
             self.event_bus,
             self.llm_client,
             self.project_manager,
-            self.rag_manager.rag_service  # Pass the actual RAG service instance
+            self.rag_manager.rag_service
         )
 
-        # The TerminalService handles commands from the integrated terminal
+        self.reviewer_service = ReviewerService(self.event_bus, self.llm_client)
+
+        self.validation_service = ValidationService(
+            self.event_bus,
+            self.execution_engine,
+            self.project_manager,
+            self.reviewer_service
+        )
+
         self.terminal_service = TerminalService(
             self.event_bus,
             self.project_manager,
@@ -64,7 +71,6 @@ class Application:
         )
 
         # --- Task Tracking ---
-        # Keep track of long-running background tasks
         self.ai_task = None
         self.terminal_task = None
 
@@ -74,8 +80,6 @@ class Application:
 
     def _connect_events(self):
         """Subscribe handlers to events on the central event bus."""
-
-        # --- User Actions from GUI ---
         self.event_bus.subscribe("user_request_submitted", self._handle_user_request)
         self.event_bus.subscribe("new_project_requested", self._handle_new_project)
         self.event_bus.subscribe("load_project_requested", self._handle_load_project)
@@ -84,28 +88,20 @@ class Application:
         self.event_bus.subscribe("add_active_project_to_rag_requested", self._handle_add_project_to_rag)
         self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
         self.event_bus.subscribe("new_session_requested", self._handle_new_session)
+        self.event_bus.subscribe("project_creation_finished", self._handle_project_created)
 
-        # --- Window Visibility ---
+        # Window Visibility & UI Updates
         self.event_bus.subscribe("show_code_viewer_requested", self.code_viewer.show_window)
         self.event_bus.subscribe("show_workflow_monitor_requested", self.workflow_monitor.show)
         self.event_bus.subscribe("show_terminals_requested", self.terminals.show)
-
-        # --- AI & System Feedback to GUI ---
         self.event_bus.subscribe("ai_response_ready", self.main_window.chat_interface._add_ai_response)
         self.event_bus.subscribe("log_message_received", self.terminals.add_log_message)
         self.event_bus.subscribe("node_status_changed", self.workflow_monitor.update_node_status)
         self.event_bus.subscribe("branch_updated", self.code_viewer.statusBar().on_branch_updated)
-
-        # --- Code Generation/Modification UI Updates ---
         self.event_bus.subscribe("prepare_for_generation", self.code_viewer.prepare_for_generation)
         self.event_bus.subscribe("stream_code_chunk", self.code_viewer.stream_code_chunk)
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
         self.event_bus.subscribe("code_patched", self.code_viewer.apply_diff_highlighting)
-
-        # --- THE FIX ---
-        # Connect the new event to refresh the code viewer's project tree
-        self.event_bus.subscribe("project_creation_finished", self._handle_project_created)
-        # --- END FIX ---
 
     def show(self):
         """Show the main application window and start background initializations."""
@@ -113,17 +109,22 @@ class Application:
         self.rag_manager.start_async_initialization()
 
     def _handle_user_request(self, prompt, conversation_history):
-        """Handle the main user prompt to generate or modify code."""
+        """Kicks off the main AI workflow as a single, orchestrated task."""
         if self.ai_task and not self.ai_task.done():
             QMessageBox.warning(self.main_window, "AI Busy", "The AI is currently processing another request.")
             return
+        self.ai_task = asyncio.create_task(self._run_full_workflow(prompt))
 
-        # Pass existing files only if we're modifying a loaded project
+    async def _run_full_workflow(self, prompt: str):
+        """Orchestrates the two-phase workflow: Generation then Validation."""
         existing_files = self.project_manager.get_project_files() if self.project_manager.is_existing_project else None
 
-        self.ai_task = asyncio.create_task(
-            self.architect_service.generate_or_modify(prompt, existing_files)
-        )
+        # Phase 1: Generation
+        generation_succeeded = await self.architect_service.generate_or_modify(prompt, existing_files)
+
+        # Phase 2: Validation (only if generation succeeded)
+        if generation_succeeded:
+            await self.validation_service.run_validation_loop()
 
     def _handle_terminal_command(self, command: str):
         """Execute a command from the integrated terminal."""
@@ -133,10 +134,8 @@ class Application:
         self.terminal_task = asyncio.create_task(self.terminal_service.execute_command(command))
 
     def _handle_new_project(self):
-        """Create a new, empty project."""
+        """Handles the user's request to create a new project."""
         project_path = self.project_manager.new_project("New_Project")
-        self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
-        # We no longer load the project here; we wait for the generation to finish
         self.event_bus.emit("new_session_requested")
 
     def _handle_load_project(self):
@@ -164,14 +163,11 @@ class Application:
         if self.ai_task and not self.ai_task.done():
             self.ai_task.cancel()
             print("[Application] Canceled active AI task for new session.")
-
         if self.terminal_task and not self.terminal_task.done():
             self.terminal_task.cancel()
             print("[Application] Canceled active terminal task for new session.")
-
         for agent_id in ["architect", "coder", "executor", "reviewer"]:
             self.event_bus.emit("node_status_changed", agent_id, "idle", "Ready")
-
         print("[Application] New session state reset.")
 
     def _handle_project_created(self, project_path: str):
