@@ -1,3 +1,4 @@
+# kintsugi_ava/services/architect_service.py
 import asyncio
 import json
 from core.event_bus import EventBus
@@ -53,30 +54,26 @@ class ArchitectService:
         dependencies = plan.get("dependencies", [])
         generated_code_map = {}
 
-        # Handle requirements.txt separately
         if dependencies:
             req_content = "\n".join(dependencies) + "\n"
             generated_code_map["requirements.txt"] = req_content
 
-        # Prepare UI for all code files
-        code_files_to_generate = [f for f in files_to_generate if f['filename'] != 'requirements.txt']
-        filenames = [f['filename'] for f in code_files_to_generate]
-        self.event_bus.emit("prepare_for_generation", filenames)
+        code_files_to_generate = [f for f in files_to_generate if f.get("filename") != "requirements.txt"]
+        self.event_bus.emit("prepare_for_generation", [f['filename'] for f in code_files_to_generate])
         await asyncio.sleep(0.1)
 
-        # Create concurrent generation tasks
+        # --- FIX: Call the correct function that returns the expected tuple ---
         generation_tasks = [
-            self._generate_new_file(
+            self._generate_and_return_file(
                 file_info['filename'],
                 file_info['purpose'],
                 plan
             ) for file_info in code_files_to_generate
         ]
+        # --- END FIX ---
 
-        # Run all generation tasks in parallel
         results = await asyncio.gather(*generation_tasks, return_exceptions=True)
 
-        # Process results and check for failures
         all_successful = True
         for res in results:
             if isinstance(res, Exception):
@@ -89,11 +86,9 @@ class ArchitectService:
         if not all_successful:
             return False
 
-        # --- THE FIX: Commit all generated files in a single transaction ---
         self.log("info", "All files generated. Committing project foundation...")
         self.project_manager.save_and_commit_files(generated_code_map, user_prompt_summary)
         self.log("success", "Project foundation committed successfully.")
-        # --- END OF FIX ---
 
         return True
 
@@ -113,7 +108,6 @@ class ArchitectService:
             self.update_status("architect", "working", "Creating modification plan...")
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt,
                                                              existing_files_json=json.dumps(existing_files, indent=2))
-
             provider, model = self.llm_client.get_model_for_role("coder")
             if not provider or not model:
                 self.handle_error("architect", "No model configured.")
@@ -139,10 +133,12 @@ class ArchitectService:
                 purpose = file_info['purpose']
                 original_code = existing_files.get(filename)
                 if original_code is None:
+                    # In modification, a "new" file is generated one by one and committed.
                     single_file_plan = {"files": [{"filename": filename, "purpose": purpose}], "dependencies": []}
-                    success = await self._generate_and_return_file(filename, purpose, single_file_plan)
-                    if success:
-                        self.project_manager.save_and_commit_files({success[0]: success[1]}, f"feat: Create {filename}")
+                    content_tuple = await self._generate_and_return_file(filename, purpose, single_file_plan)
+                    if content_tuple:
+                        self.project_manager.save_and_commit_files({content_tuple[0]: content_tuple[1]},
+                                                                   f"feat: Create {filename}")
                     else:
                         all_steps_succeeded = False
                 else:
@@ -160,7 +156,7 @@ class ArchitectService:
         await self._validate_and_refine_loop()
 
     async def _generate_and_return_file(self, filename: str, purpose: str, file_plan: dict) -> tuple[str, str] | None:
-        """Generates a single new file and returns its content, does not commit."""
+        """Generates content for a single file and returns it, but does not save or commit."""
         self.update_status("coder", "working", f"Writing {filename}...")
         provider, model = self.llm_client.get_model_for_role("coder")
         code_prompt = CODER_PROMPT.format(file_plan_json=json.dumps(file_plan, indent=2), filename=filename,
@@ -175,13 +171,6 @@ class ArchitectService:
         self.event_bus.emit("code_generation_complete", {filename: cleaned_code})
         self.log("info", f"Successfully generated content for {filename}")
         return (filename, cleaned_code)
-
-    # This wrapper is needed for the modification flow to maintain the same return signature
-    async def _generate_new_file(self, filename: str, purpose: str, file_plan: dict, commit_message: str) -> bool:
-        result = await self._generate_and_return_file(filename, purpose, file_plan)
-        # This function is now only used in the concurrent flow where commit happens later.
-        # So we just check if it returned content.
-        return result is not None
 
     async def _generate_and_apply_patch(self, filename: str, purpose: str, original_code: str,
                                         commit_message: str) -> bool:
