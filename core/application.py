@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V3: Now orchestrates the new ValidationService after the ArchitectService.
+# V5: Restores immediate UI updates for new project creation.
 
 import asyncio
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -134,9 +134,28 @@ class Application:
         self.terminal_task = asyncio.create_task(self.terminal_service.execute_command(command))
 
     def _handle_new_project(self):
-        """Handles the user's request to create a new project."""
+        """Handles the user's request to create a new project and updates the UI immediately."""
         project_path = self.project_manager.new_project("New_Project")
-        self.event_bus.emit("new_session_requested")
+
+        if not project_path:
+            QMessageBox.critical(
+                self.main_window,
+                "Project Creation Failed",
+                "Could not initialize a new project.\n\n"
+                "This usually means that **Git is not installed** or not available in your system's PATH.\n\n"
+                "Please install Git and ensure it can be run from your command line, then restart Ava."
+            )
+            return
+
+        # --- THE FIX ---
+        # The UI must be updated immediately upon project creation.
+        self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
+        self.code_viewer.load_project(project_path)
+        if self.project_manager.repo and self.project_manager.repo.active_branch:
+            self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
+        # --- END FIX ---
+
+        self.event_bus.emit("new_session_requested")  # Clear chat and reset workflow for the new project
 
     def _handle_load_project(self):
         """Open a dialog to load an existing project."""
@@ -172,7 +191,9 @@ class Application:
 
     def _handle_project_created(self, project_path: str):
         """Handles the finalization of a new project's creation."""
-        print(f"[Application] Project creation finished. Loading final view from: {project_path}")
+        # This handler is still useful for refreshing the UI after the code generation completes,
+        # ensuring the file tree is up-to-date with any generated files.
+        print(f"[Application] Code generation finished. Refreshing view from: {project_path}")
         self.code_viewer.load_project(project_path)
         self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
         if self.project_manager.repo and self.project_manager.repo.active_branch:

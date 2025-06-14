@@ -1,11 +1,13 @@
 # kintsugi_ava/core/project_manager.py
-# V9: Resolves all project paths to be absolute, fixing path comparison errors.
+# V12: Fixes venv creation by using the base system Python interpreter.
 
 import os
 import sys
 import subprocess
+import shutil
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
 
 try:
     import git
@@ -30,20 +32,17 @@ class ProjectManager:
     """
 
     def __init__(self, workspace_path: str = "workspace"):
+        load_dotenv()
         if not GIT_AVAILABLE: raise ImportError("GitPython not installed. Run 'pip install GitPython'.")
         if not UNIDIFF_AVAILABLE: raise ImportError("unidiff not installed. Run 'pip install unidiff'.")
 
-        # --- THE FIX (PART 1) ---
-        # We resolve the workspace path to get a full, absolute path.
-        # This prevents mix-ups between relative and absolute paths later on.
         self.workspace_root = Path(workspace_path).resolve()
-        # --- END OF FIX ---
-
         self.workspace_root.mkdir(exist_ok=True)
         self.active_project_path: Path | None = None
         self.repo: git.Repo | None = None
         self.active_dev_branch: git.Head | None = None
         self.is_existing_project: bool = False
+        self.git_executable_path = os.getenv("GIT_EXECUTABLE_PATH")
 
     @property
     def active_project_name(self) -> str:
@@ -56,39 +55,63 @@ class ProjectManager:
         python_exe = venv_dir / "Scripts" / "python.exe" if sys.platform == "win32" else venv_dir / "bin" / "python"
         return python_exe if python_exe.exists() else None
 
-    def new_project(self, project_name: str = "New_Project") -> str:
+    def _get_base_python_executable(self) -> str:
+        """
+        Determines the path to the base Python executable, not the venv one.
+        This is crucial for robustly creating new virtual environments.
+        """
+        # When running in a venv, sys.prefix != sys.base_prefix
+        if sys.prefix == sys.base_prefix:
+            # We are in a system-wide Python installation
+            return sys.executable
+        else:
+            # We are in a virtual environment
+            # Construct the path to the python.exe in the base installation
+            if sys.platform == "win32":
+                return str(Path(sys.base_prefix) / "python.exe")
+            else:
+                return str(Path(sys.base_prefix) / "bin" / "python")
+
+    def new_project(self, project_name: str = "New_Project") -> str | None:
+        """
+        Creates a new project. Returns the project path on success, or None on failure.
+        """
         timestamp = datetime.now().strftime("%Ym%d_%H%M%S")
         dir_name = f"{''.join(c for c in project_name if c.isalnum())}_{timestamp}"
         project_path = self.workspace_root / dir_name
         project_path.mkdir()
-        self.active_project_path = project_path
-        self.is_existing_project = False
-        self.active_dev_branch = None
+
         try:
-            self.repo = git.Repo.init(self.active_project_path)
+            self.active_project_path = project_path
+            self.is_existing_project = False
+            self.active_dev_branch = None
+
+            self.repo = git.Repo.init(self.active_project_path, git_executable=self.git_executable_path)
             self._create_gitignore_if_needed()
             self.repo.index.add([".gitignore"])
             self.repo.index.commit("Initial commit by Kintsugi AvA")
             self._create_virtual_environment()
-        except (GitCommandError, subprocess.CalledProcessError) as e:
-            print(f"[ProjectManager] Error during new project creation: {e}")
+
+            print(f"[ProjectManager] Successfully created new project at: {self.active_project_path}")
+            return str(self.active_project_path)
+
+        except (GitCommandError, subprocess.CalledProcessError, FileNotFoundError, Exception) as e:
+            print(f"[ProjectManager] CRITICAL ERROR during new project creation: {e}")
+            self.active_project_path = None
             self.repo = None
-        return str(self.active_project_path)
+            shutil.rmtree(project_path, ignore_errors=True)
+            return None
 
     def load_project(self, path: str) -> str | None:
-        # --- THE FIX (PART 2) ---
-        # We also resolve the path here to ensure consistency.
         project_path = Path(path).resolve()
-        # --- END OF FIX ---
-
         if not project_path.is_dir(): return None
         self.active_project_path = project_path
         self.is_existing_project = True
         self.active_dev_branch = None
         try:
-            self.repo = git.Repo(self.active_project_path)
+            self.repo = git.Repo(self.active_project_path, git_executable=self.git_executable_path)
         except InvalidGitRepositoryError:
-            self.repo = git.Repo.init(self.active_project_path)
+            self.repo = git.Repo.init(self.active_project_path, git_executable=self.git_executable_path)
             self._create_gitignore_if_needed()
             self.repo.index.add(all=True)
             if self.repo.index.diff(None): self.repo.index.commit("Baseline commit by Kintsugi AvA")
@@ -133,7 +156,6 @@ class ProjectManager:
             print(f"[ProjectManager] Failed to commit changes. Error: {e}")
 
     def patch_file(self, filename: str, patch_content: str, commit_message: str) -> bool:
-        """Applies a diff patch to a file using unidiff, then stages and commits it."""
         if not self.repo or not self.active_project_path:
             print("[ProjectManager] Error: No active project to patch.")
             return False
@@ -143,10 +165,7 @@ class ProjectManager:
             print(f"[ProjectManager] Error: Cannot patch non-existent file: {filename}")
             return False
 
-        # unidiff needs the original file content to apply the patch correctly.
         original_content = file_to_patch.read_text(encoding='utf-8').splitlines(keepends=True)
-
-        # We must add the diff headers for unidiff to work
         patch_str = f"--- a/{filename}\n+++ b/{filename}\n{patch_content}"
 
         try:
@@ -156,14 +175,11 @@ class ProjectManager:
                 return False
 
             print(f"[ProjectManager] Applying patch to {filename}...")
-            # Apply the patch in memory
             patched_file = next(patch_set.patch(original=original_content, target=None))
 
-            # Write the patched content back to the file
             with open(file_to_patch, 'w', encoding='utf-8', newline='\n') as f:
                 f.writelines(str(line) for line in patched_file)
 
-            # Stage and commit the change
             self.repo.index.add([filename])
             if self.repo.index.diff("HEAD"):
                 self.repo.index.commit(commit_message)
@@ -224,8 +240,16 @@ class ProjectManager:
     def _create_virtual_environment(self):
         if not self.active_project_path: return
         venv_path = self.active_project_path / ".venv"
+
+        # --- THE REAL FIX ---
+        # Find the true system Python to avoid nested venv issues.
+        base_python = self._get_base_python_executable()
+        print(f"[ProjectManager] Using base Python for venv creation: {base_python}")
+        # --- END REAL FIX ---
+
         try:
-            subprocess.run([sys.executable, "-m", "venv", str(venv_path)], check=True, capture_output=True)
+            subprocess.run([base_python, "-m", "venv", str(venv_path)], check=True, capture_output=True, text=True)
             print(f"[ProjectManager] Virtual environment created in {venv_path}.")
         except (subprocess.CalledProcessError, Exception) as e:
             print(f"[ProjectManager] Failed to create virtual environment: {e}")
+            raise

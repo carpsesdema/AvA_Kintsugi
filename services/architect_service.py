@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V3: Refactored to delegate validation to the new ValidationService.
+# V5: Implements the "Artisan's Assembly Line" model for sequential, context-aware generation with live commits.
 
 import asyncio
 import json
@@ -53,53 +53,50 @@ class ArchitectService:
             self.handle_error("architect", f"Hierarchical plan creation failed: {e}", raw_plan_response)
             return None
 
-    async def _execute_concurrent_generation(self, plan: dict, user_prompt_summary: str) -> bool:
-        """Generates all files in a plan concurrently and commits them in one go."""
+    async def _execute_artisanal_generation(self, plan: dict) -> bool:
+        """
+        Generates files one by one, committing each one to provide maximum context
+        for the next, ensuring the highest quality code.
+        """
         files_to_generate = plan.get("files", [])
         dependencies = plan.get("dependencies", [])
-        generated_code_map = {}
 
-        if dependencies:
-            req_content = "\n".join(dependencies) + "\n"
-            generated_code_map["requirements.txt"] = req_content
-
-        code_files_to_generate = [f for f in files_to_generate if f.get("filename") != "requirements.txt"]
-        self.event_bus.emit("prepare_for_generation", [f['filename'] for f in code_files_to_generate])
+        # Prepare UI for all files that will be generated
+        self.event_bus.emit("prepare_for_generation", [f['filename'] for f in files_to_generate])
         await asyncio.sleep(0.1)
 
-        self.update_status("coder", "working", f"Writing {len(code_files_to_generate)} files...")
+        # Handle requirements.txt first if it exists
+        if dependencies:
+            self.update_status("coder", "working", "Writing requirements.txt...")
+            req_content = "\n".join(dependencies) + "\n"
+            self.project_manager.save_and_commit_files({"requirements.txt": req_content}, "feat: Add dependencies")
+            self.event_bus.emit("code_generation_complete", {"requirements.txt": req_content})
 
-        generation_tasks = [
-            self._generate_and_return_file(
-                file_info['filename'],
-                file_info['purpose'],
-                plan
-            ) for file_info in code_files_to_generate
-        ]
+        # Loop through each code file and generate it sequentially
+        code_files_to_generate = [f for f in files_to_generate if f.get("filename") != "requirements.txt"]
+        for file_info in code_files_to_generate:
+            filename = file_info['filename']
+            purpose = file_info['purpose']
 
-        results = await asyncio.gather(*generation_tasks, return_exceptions=True)
+            self.update_status("coder", "working", f"Writing {filename}...")
 
-        all_successful = True
-        for res in results:
-            if isinstance(res, Exception):
-                self.handle_error("coder", f"A sub-task failed during concurrent generation: {res}")
-                all_successful = False
-            elif res:
-                filename, content = res
-                generated_code_map[filename] = content
+            # Get the current state of the project for context
+            completed_files_context = self.project_manager.get_project_files()
 
-        if not all_successful:
-            return False
+            file_content = await self._generate_one_file_with_context(plan, filename, purpose, completed_files_context)
 
-        self.event_bus.emit("code_generation_complete", generated_code_map)
+            if file_content is None:
+                self.handle_error("coder", f"Failed to generate content for {filename}.")
+                return False
 
-        self.log("info", "All files generated. Committing project foundation...")
-        self.project_manager.save_and_commit_files(generated_code_map, user_prompt_summary)
+            # Immediately save and commit the newly created file
+            self.project_manager.save_and_commit_files({filename: file_content}, f"feat: Create {filename}")
+            self.event_bus.emit("code_generation_complete", {filename: file_content})
+            self.log("info", f"Successfully generated and committed {filename}.")
+
         self.log("success", "Project foundation committed successfully.")
-
         if self.project_manager.active_project_path:
             self.event_bus.emit("project_creation_finished", str(self.project_manager.active_project_path))
-
         return True
 
     async def generate_or_modify(self, prompt: str, existing_files: dict | None) -> bool:
@@ -107,14 +104,14 @@ class ArchitectService:
         The main entry point for the architect's workflow. Returns True on success.
         """
         self.log("info", f"Task received: '{prompt}'")
-        user_prompt_summary = f'AI generation for: "{prompt[:50]}..."'
         success = False
 
         if not existing_files:
             plan = await self._generate_hierarchical_plan(prompt)
             if plan:
-                success = await self._execute_concurrent_generation(plan, user_prompt_summary)
+                success = await self._execute_artisanal_generation(plan)
         else:
+            user_prompt_summary = f'AI generation for: "{prompt[:50]}..."'
             success = await self._handle_modification(prompt, existing_files, user_prompt_summary)
 
         if success:
@@ -149,41 +146,48 @@ class ArchitectService:
         for file_info in file_plan:
             filename = file_info['filename']
             purpose = file_info['purpose']
-            original_code = existing_files.get(filename)
+            original_code = self.project_manager.get_project_files().get(filename)
 
             step_succeeded = False
             if original_code is None:  # New file in existing project
                 self.update_status("coder", "working", f"Writing new file: {filename}...")
-                single_file_plan = {"files": [{"filename": filename, "purpose": purpose}], "dependencies": []}
-                content_tuple = await self._generate_and_return_file(filename, purpose, single_file_plan)
-                if content_tuple:
-                    self.project_manager.save_and_commit_files({content_tuple[0]: content_tuple[1]},
-                                                               f"feat: Create {filename}")
-                    self.event_bus.emit("code_generation_complete", {content_tuple[0]: content_tuple[1]})
+                completed_files_context = self.project_manager.get_project_files()
+                file_content = await self._generate_one_file_with_context(file_plan, filename, purpose,
+                                                                          completed_files_context)
+                if file_content:
+                    self.project_manager.save_and_commit_files({filename: file_content}, f"feat: Create {filename}")
+                    self.event_bus.emit("code_generation_complete", {filename: file_content})
                     step_succeeded = True
             else:  # Modifying existing file
                 step_succeeded = await self._generate_and_apply_patch(filename, purpose, original_code,
                                                                       user_prompt_summary)
             if not step_succeeded:
                 self.handle_error("coder", f"Failed to process file: {filename}")
-                return False  # Halt on first failure
+                return False
 
         return True
 
-    async def _generate_and_return_file(self, filename: str, purpose: str, file_plan: dict) -> tuple[str, str] | None:
-        """Generates content for a single file and returns it."""
+    async def _generate_one_file_with_context(self, plan: dict, filename: str, purpose: str,
+                                              completed_files: dict) -> str | None:
+        """Generates a single file, streaming its content, using context from other files."""
         provider, model = self.llm_client.get_model_for_role("coder")
-        code_prompt = CODER_PROMPT.format(file_plan_json=json.dumps(file_plan, indent=2), filename=filename,
-                                          purpose=purpose)
+        if not provider or not model:
+            self.handle_error("coder", "No model configured.")
+            return None
+
+        code_prompt = CODER_PROMPT.format(
+            file_plan_json=json.dumps(plan, indent=2),
+            completed_files_json=json.dumps(completed_files, indent=2),
+            filename=filename,
+            purpose=purpose
+        )
 
         file_content = ""
         async for chunk in self.llm_client.stream_chat(provider, model, code_prompt):
             file_content += chunk
             self.event_bus.emit("stream_code_chunk", filename, chunk)
 
-        cleaned_code = self._clean_code_output(file_content)
-        self.log("info", f"Successfully generated content for {filename}")
-        return (filename, cleaned_code)
+        return self._clean_code_output(file_content)
 
     async def _generate_and_apply_patch(self, filename: str, purpose: str, original_code: str,
                                         commit_message: str) -> bool:

@@ -93,6 +93,12 @@ This is the complete plan for the application you are helping to build. Use it t
 {file_plan_json}
 ```
 
+**CONTEXT: ALREADY COMPLETED FILES**
+The following files have already been written. You can use them as context for writing your assigned file, especially for getting `import` statements correct.
+```json
+{completed_files_json}
+```
+
 **YOUR ASSIGNED TASK**
 - **File to Write:** `{filename}`
 - **Purpose of this File:** `{purpose}`
@@ -102,7 +108,7 @@ This is the complete plan for the application you are helping to build. Use it t
 2.  **DO NOT** include code from other files.
 3.  **DO NOT** include any explanations, comments, or markdown formatting like ```python.
 4.  Ensure the code is robust, clean, and professional.
-5.  Use the "FULL PROJECT PLAN" to write correct import statements (e.g., `from models import User`).
+5.  Use the "FULL PROJECT PLAN" and "ALREADY COMPLETED FILES" to write correct import statements.
 """
 
 CODE_MODIFIER_PROMPT = """
