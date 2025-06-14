@@ -73,12 +73,13 @@ class Application:
 
         # Tools & Config
         self.event_bus.subscribe("configure_models_requested", self.model_config_dialog.exec)
-        # --- NEW: Event to launch the RAG server from the sidebar button ---
         self.event_bus.subscribe("launch_rag_server_requested", self._handle_launch_rag_server)
 
-        # Placeholders for old RAG ingestion buttons
-        self.event_bus.subscribe("scan_directory_requested", self.rag_manager.open_scan_directory_dialog)
-        self.event_bus.subscribe("add_active_project_to_rag_requested", self.rag_manager.ingest_active_project)
+        # --- THE FIX: Removing subscriptions to methods that no longer exist ---
+        # The following buttons are now placeholders and their events are removed to prevent crashes.
+        # self.event_bus.subscribe("scan_directory_requested", self.rag_manager.open_scan_directory_dialog)
+        # self.event_bus.subscribe("add_active_project_to_rag_requested", self.rag_manager.ingest_active_project)
+        # --- END OF FIX ---
 
         # Execution & Fixing
         self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
@@ -103,7 +104,6 @@ class Application:
     def show(self):
         """Show the main application window."""
         self.main_window.show()
-        # Automatic RAG initialization is removed. It's now user-triggered.
 
     def _handle_user_request(self, prompt, conversation_history):
         if self.ai_task and not self.ai_task.done():
@@ -127,8 +127,6 @@ class Application:
             self.code_viewer.hide_fix_button()
 
     async def _run_full_workflow(self, prompt: str):
-        # The workflow no longer waits for RAG. The RAGService client will handle
-        # connection status internally and provide appropriate context or error messages.
         existing_files = self.project_manager.get_project_files() if self.project_manager.is_existing_project else None
         await self.architect_service.generate_or_modify(prompt, existing_files)
 
@@ -182,7 +180,6 @@ class Application:
                 elif self.project_manager.repo and self.project_manager.repo.active_branch:
                     self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
 
-    # --- NEW: Method to handle the launch button click ---
     def _handle_launch_rag_server(self):
         self.rag_manager.launch_rag_server(self.main_window)
 
@@ -203,10 +200,8 @@ class Application:
         Cleanly shuts down all background processes and tasks.
         This is called when the application is about to quit.
         """
-        # --- NEW: Terminate the RAG server process first ---
         self.rag_manager.terminate_rag_server()
 
-        # Then, cancel any running asyncio tasks
         tasks_to_cancel = [self.ai_task, self.terminal_task]
         for task in tasks_to_cancel:
             if task and not task.done():
