@@ -4,6 +4,7 @@
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
 from prompts.prompts import REFINEMENT_PROMPT
+import json
 
 
 class ReviewerService:
@@ -17,7 +18,7 @@ class ReviewerService:
         self.llm_client = llm_client
 
     async def review_and_correct_code(self, filename: str, broken_code: str, error_message: str,
-                                      line_number: int) -> str | None:
+                                      line_number: int, summarized_context: dict) -> str | None:
         """
         Takes broken code and an error, and gets a fully rewritten, corrected version of the file from an LLM.
 
@@ -30,11 +31,17 @@ class ReviewerService:
         self.log("info", f"Reviewer received task to fix '{filename}' near line {line_number}.")
         self.log("info", f"Error was: {error_message.strip().splitlines()[-1]}")
 
+        # Remove the file being fixed from the context to avoid confusion
+        context_for_prompt = summarized_context.copy()
+        if filename in context_for_prompt:
+            del context_for_prompt[filename]
+
         prompt = REFINEMENT_PROMPT.format(
             filename=filename,
             line_number=line_number,
             code=broken_code,
-            error=error_message
+            error=error_message,
+            code_summaries_json=json.dumps(context_for_prompt, indent=2)
         )
 
         provider, model = self.llm_client.get_model_for_role("reviewer")
@@ -42,7 +49,7 @@ class ReviewerService:
             self.log("error", "No model assigned for the 'reviewer' role.")
             return None
 
-        self.log("ai_call", f"Asking {provider}/{model} to generate a corrected version of {filename}...")
+        self.log("ai_call", f"Asking {provider}/{model} to generate a context-aware correction for {filename}...")
 
         # The LLM is now expected to return the full file content.
         corrected_code = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt)])

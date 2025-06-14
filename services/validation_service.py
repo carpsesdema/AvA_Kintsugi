@@ -1,5 +1,5 @@
 # kintsugi_ava/services/validation_service.py
-# V5: Enhanced workflow monitor integration with detailed event emissions
+# V9: Truly robust traceback parsing. Excludes .venv directory explicitly.
 
 import re
 import asyncio
@@ -9,6 +9,7 @@ from core.event_bus import EventBus
 from core.execution_engine import ExecutionEngine
 from core.project_manager import ProjectManager
 from services.reviewer_service import ReviewerService
+from utils.code_summarizer import CodeSummarizer
 
 
 class ValidationService:
@@ -55,24 +56,45 @@ class ValidationService:
             return False, error_output
 
     def _parse_error_traceback(self, error_str: str) -> tuple[str, int]:
-        """Parses a traceback string to find the file and line number within the project."""
-        if not self.project_manager.active_project_path: return "main.py", 1
+        """
+        Parses a traceback string to find the file and line number *within the project*,
+        ignoring errors from external libraries (like those in .venv).
+        """
+        project_root = self.project_manager.active_project_path
+        if not project_root:
+            return "main.py", 1
+
+        venv_path = project_root / ".venv"
         traceback_lines = re.findall(r'File "([^"]+)", line (\d+)', error_str)
+
         for file_path_str, line_num_str in reversed(traceback_lines):
-            file_path = Path(file_path_str)
             try:
-                if self.project_manager.active_project_path in file_path.resolve().parents:
-                    relative_path_str = str(file_path.relative_to(self.project_manager.active_project_path))
-                    self.log("info", f"Pinpointed error in project file: {relative_path_str} at line {line_num_str}")
-                    return relative_path_str, int(line_num_str)
+                # Resolve the path to make it absolute and clean
+                file_path = Path(file_path_str).resolve()
+
+                # --- THE TRULY ROBUST FIX ---
+                # Condition 1: Is the file inside the project directory?
+                is_in_project = project_root in file_path.parents
+                # Condition 2: Is the file *NOT* inside the project's venv directory?
+                is_in_venv = venv_path in file_path.parents
+
+                if is_in_project and not is_in_venv:
+                    relative_path = file_path.relative_to(project_root)
+                    posix_path_str = relative_path.as_posix()
+                    self.log("info",
+                             f"Pinpointed error in project source file: {posix_path_str} at line {line_num_str}")
+                    return posix_path_str, int(line_num_str)
+                # --- END OF FIX ---
+
             except (ValueError, FileNotFoundError):
+                # This can happen if the path is weird or doesn't exist. Just skip it.
                 continue
-        self.log("warning", "Could not pinpoint error to a specific project file. Defaulting to main.py.")
+
+        self.log("warning", "Could not pinpoint error to a project source file. Defaulting to main.py.")
         return "main.py", 1
 
     async def run_validation_loop(self):
         """The self-correction loop that runs and fixes the code by replacing faulty files."""
-        # Emit validation started event for enhanced workflow monitor
         self.event_bus.emit("validation_started")
 
         self.update_status("executor", "working", "Preparing environment...")
@@ -89,8 +111,6 @@ class ValidationService:
             if exec_result.success:
                 self.update_status("executor", "success", "Validation passed!")
                 success_message = "Modifications complete and successfully tested!" if self.project_manager.is_existing_project else "Application generated and successfully tested!"
-
-                # Emit workflow completed event
                 self.event_bus.emit("workflow_completed")
                 self.event_bus.emit("ai_response_ready", success_message)
                 return
@@ -100,30 +120,35 @@ class ValidationService:
             file_to_fix, line_number = self._parse_error_traceback(exec_result.error)
 
             if not file_to_fix or file_to_fix not in all_project_files:
-                self.handle_error("executor", f"Could not find file '{file_to_fix}' to apply fix.")
+                self.log("error",
+                         f"DEBUG: File to fix '{file_to_fix}' not found in project files: {list(all_project_files.keys())}")
+                self.handle_error("executor",
+                                  f"Could not find file '{file_to_fix}' in the project file list to apply fix.")
                 return
 
-            # Emit validation failed event with specific files
-            failed_files = [file_to_fix] if file_to_fix else []
-            self.event_bus.emit("validation_failed", failed_files)
+            self.event_bus.emit("validation_failed", [file_to_fix])
 
             self.update_status("reviewer", "working", f"Attempting to fix {file_to_fix}...")
             broken_code = all_project_files.get(file_to_fix, "")
 
-            # Get full corrected code instead of a patch
+            summarized_context = {}
+            for fname, content in all_project_files.items():
+                if fname.endswith('.py'):
+                    summarizer = CodeSummarizer(content)
+                    summarized_context[fname] = summarizer.summarize()
+                else:
+                    summarized_context[fname] = f"File exists: {fname}"
+
             corrected_content = await self.reviewer_service.review_and_correct_code(
-                file_to_fix, broken_code, exec_result.error, line_number
+                file_to_fix, broken_code, exec_result.error, line_number, summarized_context
             )
 
             if not corrected_content:
                 self.handle_error("reviewer", f"Could not generate a fix for {file_to_fix}.")
                 break
 
-            # Save the entire corrected file, which is more robust than patching.
             fix_commit_message = f"fix: AI Reviewer rewrite for {file_to_fix} after error"
             self.project_manager.save_and_commit_files({file_to_fix: corrected_content}, fix_commit_message)
-
-            # Update the UI by treating it as a new code generation for that file
             self.event_bus.emit("code_generation_complete", {file_to_fix: corrected_content})
             self.update_status("reviewer", "success", "Fix implemented. Re-validating...")
 

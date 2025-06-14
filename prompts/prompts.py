@@ -1,5 +1,5 @@
 # kintsugi_ava/prompts/prompts.py
-# V4: Simplified with diff/patch system removed - only full file generation prompts remain.
+# V5: A much more robust REFINEMENT_PROMPT to fix logical loops.
 
 import textwrap
 
@@ -115,24 +115,36 @@ CODER_PROMPT = textwrap.dedent("""
     5.  Use the "FULL PROJECT PLAN" and "SUMMARIES OF COMPLETED FILES" to write correct import statements.
     """)
 
+# V5: This new prompt encourages a holistic review of the file, not just a line-by-line fix.
 REFINEMENT_PROMPT = textwrap.dedent("""
-    You are a senior software engineer acting as a code reviewer. Your task is to fix a Python script that failed to run by rewriting it completely.
+    You are a senior software engineer acting as a master debugger. Your task is to fix a Python script that failed to run by rewriting it completely.
+
+    **THE GOAL:**
+    Rewrite the file `{filename}` to fix the bug reported below. The entire file should be analyzed and corrected to ensure it is logically sound and works correctly within the project. Do not just fix the single line of the error; fix the underlying logical problem.
+
+    **CONTEXT: SUMMARIES OF OTHER PROJECT FILES**
+    Use these summaries to understand how to correctly call functions and instantiate classes from other modules.
+    ```json
+    {{code_summaries_json}}
+    ```
 
     **FILE TO FIX:** `{filename}`
-    **ISSUE DESCRIPTION (near line {line_number}):**
-    ```
-    {error}
-    ```
 
-    **ORIGINAL FILE CONTENT for `{filename}`:**
+    **ORIGINAL (BROKEN) CODE for `{filename}`:**
     ```python
     {code}
     ```
 
+    **THE ERROR THAT OCCURRED WHEN RUNNING THE CODE:**
+    This is the error that you must fix. It may point to a specific line, but the root cause might be the logical interaction between multiple parts of the file.
+    ```
+    {error}
+    ```
+
     **CRITICAL INSTRUCTIONS:**
-    1.  Analyze the issue and the original code to determine the precise changes needed.
+    1.  Analyze the error and the entire original file. Identify the root cause of the bug.
     2.  Your response **MUST** be only the **complete, corrected, and full source code** for the file `{filename}`.
-    3.  **DO NOT** include explanations, comments, or markdown formatting like ```python.
-    4.  Just return the raw, fixed code that will work properly.
-    5.  Make sure to preserve the original intent while fixing the specific issue.
+    3.  Rewrite the file to be robust and correct. Pay attention to the order of initializations and dependencies between objects and functions within the file.
+    4.  **DO NOT** include explanations, comments, or markdown formatting like ```python.
+    5.  Just return the raw, fixed code that will run without errors.
     """)
