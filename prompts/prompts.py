@@ -1,5 +1,5 @@
 # kintsugi_ava/prompts/prompts.py
-# V3: Adds a new full-file refinement prompt for reliability.
+# V4: Simplified with diff/patch system removed - only full file generation prompts remain.
 
 import textwrap
 
@@ -115,41 +115,11 @@ CODER_PROMPT = textwrap.dedent("""
     5.  Use the "FULL PROJECT PLAN" and "SUMMARIES OF COMPLETED FILES" to write correct import statements.
     """)
 
-CODE_MODIFIER_PROMPT = textwrap.dedent("""
-    You are an expert Python developer specializing in surgical code modification.
-    Your task is to generate a diff patch to apply to an existing file based on a user's request.
-
-    **USER'S MODIFICATION REQUEST:** {purpose}
-
-    **ORIGINAL FILE CONTENT for `{filename}`:**
-    ```python
-    {original_code}
-    ```
-
-    **CRITICAL INSTRUCTIONS:**
-    1.  Your response **MUST** be only a standard, unified format diff patch.
-    2.  **Do NOT include the file headers** (`--- a/...` or `+++ b/...`).
-    3.  Do NOT include any other text, explanations, or markdown. Start the diff directly with `@@ ... @@`.
-
-    **EXAMPLE DIFF RESPONSE:**
-    ```diff
-    @@ -15,7 +15,8 @@
-     class MainWindow(QMainWindow):
-         def __init__(self, event_bus: EventBus):
-             super().__init__()
--            self.setWindowTitle("My App")
-+            # Set a more descriptive window title
-+            self.setWindowTitle("My Awesome App")
-             self.setGeometry(100, 100, 800, 600)
-             self.setup_ui()
-    ```
-    """)
-
 REFINEMENT_PROMPT = textwrap.dedent("""
-    You are a senior software engineer acting as a code reviewer. Your task is to fix a Python script that failed to run by rewriting it.
+    You are a senior software engineer acting as a code reviewer. Your task is to fix a Python script that failed to run by rewriting it completely.
 
-    **FAILED FILE:** `{filename}`
-    **ERROR MESSAGE (originating near line {line_number}):**
+    **FILE TO FIX:** `{filename}`
+    **ISSUE DESCRIPTION (near line {line_number}):**
     ```
     {error}
     ```
@@ -160,8 +130,9 @@ REFINEMENT_PROMPT = textwrap.dedent("""
     ```
 
     **CRITICAL INSTRUCTIONS:**
-    1.  Analyze the error message and the original code to determine the precise changes needed to fix the bug.
+    1.  Analyze the issue and the original code to determine the precise changes needed.
     2.  Your response **MUST** be only the **complete, corrected, and full source code** for the file `{filename}`.
-    3.  **DO NOT** include a diff, a patch, or any explanations.
-    4.  **DO NOT** use markdown formatting like ```python. Just return the raw code.
+    3.  **DO NOT** include explanations, comments, or markdown formatting like ```python.
+    4.  Just return the raw, fixed code that will work properly.
+    5.  Make sure to preserve the original intent while fixing the specific issue.
     """)

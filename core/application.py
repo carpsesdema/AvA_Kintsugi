@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V7: Updates event subscription to handle consistent payload.
+# V8: Cleaned up diff system removal - no more patch/diff event handling.
 
 import asyncio
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -97,11 +97,11 @@ class Application:
         self.event_bus.subscribe("log_message_received", self.terminals.add_log_message)
         self.event_bus.subscribe("node_status_changed", self.workflow_monitor.update_node_status)
         self.event_bus.subscribe("branch_updated", self.code_viewer.statusBar().on_branch_updated)
-        # --- THE FIX: The subscriber now correctly handles the consistent event payload ---
+
+        # Clean code generation events (no more diff/patch complexity)
         self.event_bus.subscribe("prepare_for_generation", self.code_viewer.prepare_for_generation)
         self.event_bus.subscribe("stream_code_chunk", self.code_viewer.stream_code_chunk)
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
-        self.event_bus.subscribe("code_patched", self.code_viewer.apply_diff_highlighting)
 
     def show(self):
         """Show the main application window and start background initializations."""

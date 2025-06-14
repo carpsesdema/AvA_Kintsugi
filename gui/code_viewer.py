@@ -1,26 +1,22 @@
 # kintsugi_ava/gui/code_viewer.py
-# V12: Fixes file tree display for new projects with explicit state handling.
+# V14: Clean refactored version using SRP managers, with diff system removed for reliability.
 
 from pathlib import Path
-from unidiff import PatchSet
-
-from PySide6.QtGui import QTextCursor, QTextBlockFormat, QColor
-from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QSplitter,
-    QTabWidget, QTextEdit, QTreeWidget, QTreeWidgetItem, QLabel
-)
+from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, Slot
 
-from .components import Colors, Typography
-from .code_viewer_helpers import PythonHighlighter
+from .components import Colors
+from .project_context_manager import ProjectContextManager
+from .editor_tab_manager import EditorTabManager
+from .file_tree_manager import FileTreeManager
 from .integrated_terminal import IntegratedTerminal
 from .status_bar import StatusBar
 
 
 class CodeViewerWindow(QMainWindow):
     """
-    A window for displaying a file tree, tabbed code editors, and an
-    integrated terminal, styled for a seamless IDE-like experience.
+    Clean, focused code viewer using SRP-based managers.
+    Single responsibility: Orchestrate the code viewing experience.
     """
 
     def __init__(self, event_bus):
@@ -34,281 +30,166 @@ class CodeViewerWindow(QMainWindow):
             QSplitter::handle:horizontal {{ width: 1px; }}
             QSplitter::handle:vertical {{ height: 1px; }}
         """)
-        self.editors = {}
-        self.project_root_for_load = None
 
+        # Initialize managers
+        self.project_context = ProjectContextManager()
+        self.editor_manager = None  # Initialized after UI setup
+        self.file_tree_manager = None  # Initialized after UI setup
+
+        self._setup_ui()
+        self._connect_events()
+
+    def _setup_ui(self):
+        """Sets up the user interface layout."""
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(main_splitter)
+
+        # File tree panel
         file_tree_panel = self._create_file_tree_panel()
+
+        # Editor and terminal panel
         right_splitter = self._create_editor_terminal_splitter()
+
         main_splitter.addWidget(file_tree_panel)
         main_splitter.addWidget(right_splitter)
         main_splitter.setSizes([250, 950])
+
+        # Status bar
         self.setStatusBar(StatusBar(self.event_bus))
 
-    def get_active_file_path(self) -> str | None:
-        """Returns the path key of the currently visible editor tab."""
-        current_index = self.tab_widget.currentIndex()
-        if current_index == -1:
-            return None
-        return self.tab_widget.tabToolTip(current_index)
-
     def _create_file_tree_panel(self) -> QWidget:
+        """Creates the file tree panel."""
+        from PySide6.QtWidgets import QTreeWidget
+
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.file_tree = QTreeWidget()
-        self.file_tree.setHeaderLabel("Project Files")
-        self.file_tree.setStyleSheet(f"""
-            QTreeWidget {{ border: none; background-color: {Colors.SECONDARY_BG.name()}; }}
-            QHeaderView::section {{ background-color: {Colors.SECONDARY_BG.name()}; color: {Colors.TEXT_SECONDARY.name()}; border: none; padding: 4px; }}
-        """)
-        self.file_tree.itemDoubleClicked.connect(self._on_file_selected)
-        layout.addWidget(self.file_tree)
+
+        tree_widget = QTreeWidget()
+        self.file_tree_manager = FileTreeManager(tree_widget)
+        self.file_tree_manager.set_file_selection_callback(self._on_file_selected)
+
+        layout.addWidget(tree_widget)
         return panel
 
     def _create_editor_terminal_splitter(self) -> QSplitter:
+        """Creates the editor and terminal panel."""
+        from PySide6.QtWidgets import QTabWidget
+
         right_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setTabsClosable(True)
-        self.tab_widget.setMovable(True)
-        self.tab_widget.tabCloseRequested.connect(self._close_tab)
-        welcome_label = QLabel("Code will appear here when generated.")
-        welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        welcome_label.setFont(Typography.get_font(18))
-        welcome_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
-        self.tab_widget.addTab(welcome_label, "Welcome")
+
+        # Tab widget for editors
+        tab_widget = QTabWidget()
+        tab_widget.setTabsClosable(True)
+        tab_widget.setMovable(True)
+        tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
+
+        self.editor_manager = EditorTabManager(tab_widget)
+
+        # Terminal
         self.terminal = IntegratedTerminal(self.event_bus)
-        self.terminal.command_entered.connect(lambda cmd: self.event_bus.emit("terminal_command_entered", cmd))
-        self.event_bus.subscribe("terminal_output_received", self.terminal.append_output)
-        right_splitter.addWidget(self.tab_widget)
+        self.terminal.command_entered.connect(
+            lambda cmd: self.event_bus.emit("terminal_command_entered", cmd)
+        )
+
+        right_splitter.addWidget(tab_widget)
         right_splitter.addWidget(self.terminal)
         right_splitter.setSizes([600, 200])
+
         return right_splitter
 
+    def _connect_events(self):
+        """Connects to event bus events."""
+        self.event_bus.subscribe("terminal_output_received", self.terminal.append_output)
+
+    def get_active_file_path(self) -> str | None:
+        """Returns the path of the currently active editor tab."""
+        return self.editor_manager.get_active_file_path()
+
     def prepare_for_new_project_session(self):
-        """Resets the Code Viewer to a clean state for a new project, without loading anything."""
-        self.file_tree.clear()
-        self.editors.clear()
-        self.project_root_for_load = None
+        """Resets for a new project session."""
+        self.project_context.clear_context()
+        self.file_tree_manager.clear_tree()
+        self.editor_manager.prepare_for_new_project()
+        self.terminal.clear_output()
+        print("[CodeViewer] Prepared for new project session")
 
-        while self.tab_widget.count() > 0:
-            self.tab_widget.removeTab(0)
+    @Slot(list)  # Fixed: removed the str parameter that was causing event signature issues
+    def prepare_for_generation(self, filenames: list, project_path: str = None):
+        """
+        Prepares the UI for code generation.
+        Handles both new projects and modifications.
+        """
+        self.terminal.clear_output()
 
-        welcome_label = QLabel("Ready for new project generation...")
-        welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        welcome_label.setFont(Typography.get_font(18))
-        welcome_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
-        self.tab_widget.addTab(welcome_label, "Welcome")
-        print("[CodeViewer] State reset for new project session.")
-
-    def _setup_new_project_view(self, filenames: list, project_path_str: str):
-        """Sets up the file tree and internal state for a new project being generated."""
-        print(f"[CodeViewer] Setting up new project view for: {project_path_str}")
-        project_path = Path(project_path_str)
-        self.project_root_for_load = project_path
-
-        self.file_tree.clear()
-        self.editors.clear()
-
-        while self.tab_widget.count() > 0:
-            self.tab_widget.removeTab(0)
-
-        project_root_item = QTreeWidgetItem([project_path.name])
-        project_root_item.setData(0, Qt.ItemDataRole.UserRole, str(project_path))
-        self.file_tree.addTopLevelItem(project_root_item)
-        project_root_item.setExpanded(True)
-
-        for filename in filenames:
-            self._add_file_to_tree(project_root_item, filename.split('/'))
-            # Note: We create placeholders in the file tree, but editor tabs are created on-the-fly by streaming.
-
-        self.show_window()
-
-    def _add_file_to_tree(self, parent_item, path_parts):
-        if not path_parts: return
-        part = path_parts[0]
-        child_item = next(
-            (parent_item.child(i) for i in range(parent_item.childCount()) if parent_item.child(i).text(0) == part),
-            None)
-        if not child_item:
-            child_item = QTreeWidgetItem([part])
-            # For new projects, the full path is constructed relative to the root.
-            if self.project_root_for_load:
-                full_path = self.project_root_for_load / part
-                child_item.setData(0, Qt.ItemDataRole.UserRole, str(full_path))
-            parent_item.addChild(child_item)
-
-        # Pass the newly created/found child item for recursion
-        if len(path_parts) > 1:
-            self._add_file_to_tree(child_item, path_parts[1:])
-
-    @Slot(dict)
-    def display_code(self, files: dict):
-        for filename, content in files.items():
-            path_key = str(self.project_root_for_load / filename) if self.project_root_for_load else filename
-            if path_key in self.editors:
-                editor = self.editors[path_key]
-                editor.setPlainText(content)
-            else:
-                print(f"[CodeViewer] Warning: Received completed code for an untracked file: {path_key}")
-                self._create_editor_tab(path_key)
-                self.editors[path_key].setPlainText(content)
+        if project_path:
+            # New project generation
+            if self.project_context.set_new_project_context(project_path):
+                self.file_tree_manager.setup_new_project_tree(
+                    self.project_context.project_root, filenames
+                )
+                print(f"[CodeViewer] Prepared for new project generation: {len(filenames)} files")
+                self.show_window()
+        else:
+            # Modification of existing project
+            if self.project_context.validate_existing_context():
+                self._prepare_tabs_for_modification(filenames)
+                print(f"[CodeViewer] Prepared for modification: {len(filenames)} files")
+                self.show_window()
 
     def _prepare_tabs_for_modification(self, filenames: list):
-        """Prepares editor tabs for files that will be modified by opening them if not already open."""
-        if not self.project_root_for_load: return
+        """Opens tabs for files that will be modified."""
+        if not self.project_context.is_valid:
+            return
 
         for filename in filenames:
-            abs_path_str = str(self.project_root_for_load / filename)
-            is_open = False
-            for i in range(self.tab_widget.count()):
-                if self.tab_widget.tabToolTip(i) == abs_path_str:
-                    self.tab_widget.setCurrentIndex(i)
-                    is_open = True
-                    break
-
-            if not is_open:
-                file_path = Path(abs_path_str)
-                if file_path.is_file():
-                    try:
-                        content = file_path.read_text(encoding='utf-8')
-                        self._create_editor_tab(abs_path_str)
-                        self.editors[abs_path_str].setPlainText(content)
-                        self.tab_widget.setCurrentIndex(self.tab_widget.count() - 1)
-                    except Exception as e:
-                        print(f"[CodeViewer] Error opening file tab for modification: {e}")
-        self.show_window()
-
-    @Slot(str, str, str)
-    def apply_diff_highlighting(self, filename: str, new_content: str, patch_content: str):
-        if not self.project_root_for_load: return
-        abs_path_key = str(self.project_root_for_load / filename)
-
-        if abs_path_key not in self.editors: return
-
-        editor = self.editors[abs_path_key]
-        document = editor.document()
-        editor.setPlainText(new_content)
-
-        add_block_format = QTextBlockFormat()
-        add_block_format.setBackground(QColor(Colors.DIFF_ADD_BG))
-
-        patch_str = f"--- a/{filename}\n+++ b/{filename}\n{patch_content}"
-        try:
-            patch_set = PatchSet(patch_str)
-            if not patch_set: return
-
-            patched_file = patch_set[0]
-            cursor = QTextCursor(document)
-
-            for hunk in patched_file:
-                current_target_line = hunk.target_start
-                for line in hunk:
-                    if line.is_added:
-                        cursor.movePosition(QTextCursor.MoveOperation.Start)
-                        cursor.movePosition(QTextCursor.MoveOperation.NextBlock,
-                                            QTextCursor.MoveMode.MoveAnchor,
-                                            current_target_line - 1)
-                        cursor.setBlockFormat(add_block_format)
-                        current_target_line += 1
-                    elif line.is_context:
-                        current_target_line += 1
-        except Exception as e:
-            print(f"[CodeViewer] Error applying diff highlighting: {e}")
-
-    @Slot(list, str)
-    def prepare_for_generation(self, filenames: list, project_path: str = None):
-        """Prepares the UI for code generation, routing to new or modification setup."""
-        self.terminal.clear_output()
-        if project_path:
-            self._setup_new_project_view(filenames, project_path)
-        else:
-            self._prepare_tabs_for_modification(filenames)
+            abs_path = self.project_context.get_absolute_path(filename)
+            if abs_path and abs_path.is_file():
+                self.editor_manager.open_file_in_tab(abs_path)
 
     @Slot(str, str)
     def stream_code_chunk(self, filename: str, chunk: str):
-        path_key = str(self.project_root_for_load / filename) if self.project_root_for_load else filename
+        """Streams a chunk of code to the appropriate editor."""
+        if self.project_context.is_valid:
+            abs_path = self.project_context.get_absolute_path(filename)
+            if abs_path:
+                self.editor_manager.stream_content_to_editor(str(abs_path), chunk)
 
-        if path_key not in self.editors:
-            if self.tab_widget.count() == 1 and self.tab_widget.tabText(0) == "Welcome":
-                self.tab_widget.removeTab(0)
-            self._create_editor_tab(path_key)
-            self.tab_widget.setCurrentIndex(self.tab_widget.count() - 1)
-
-        if path_key in self.editors:
-            editor = self.editors[path_key]
-            cursor = editor.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            cursor.insertText(chunk)
-            editor.ensureCursorVisible()
-
-    def _create_editor_tab(self, path_key: str):
-        if path_key in self.editors: return
-
-        editor = QTextEdit()
-        editor.setFont(Typography.get_font(11, family="JetBrains Mono"))
-        PythonHighlighter(editor.document())
-
-        if self.tab_widget.count() == 1 and self.tab_widget.tabText(0) == "Welcome":
-            self.tab_widget.removeTab(0)
-
-        tab_index = self.tab_widget.addTab(editor, Path(path_key).name)
-        self.tab_widget.setTabToolTip(tab_index, path_key)
-        self.editors[path_key] = editor
+    @Slot(dict)
+    def display_code(self, files: dict):
+        """Displays completed code files in editors."""
+        for filename, content in files.items():
+            if self.project_context.is_valid:
+                abs_path = self.project_context.get_absolute_path(filename)
+                if abs_path:
+                    path_key = str(abs_path)
+                    if not self.editor_manager.create_editor_tab(path_key):
+                        # Tab already exists, just update content
+                        self.editor_manager.set_editor_content(path_key, content)
+                    else:
+                        # New tab created, set content
+                        self.editor_manager.set_editor_content(path_key, content)
 
     @Slot(str)
     def load_project(self, project_path_str: str):
-        self.file_tree.clear()
+        """Loads an existing project into the viewer."""
         project_path = Path(project_path_str)
-        if not project_path.is_dir(): return
-        self.project_root_for_load = project_path
-        root_item = QTreeWidgetItem([project_path.name])
-        root_item.setData(0, Qt.ItemDataRole.UserRole, str(project_path))
-        self.file_tree.addTopLevelItem(root_item)
-        root_item.setExpanded(True)
-        self._populate_tree_from_disk(root_item, project_path)
+        if self.project_context.set_new_project_context(project_path_str):
+            self.file_tree_manager.load_existing_project_tree(project_path)
+            print(f"[CodeViewer] Loaded project: {project_path.name}")
 
-    def _populate_tree_from_disk(self, parent_item, path):
-        ignore_list = {'.git', '__pycache__', 'venv', '.venv', 'node_modules', 'rag_db'}
-        try:
-            for p in sorted(path.iterdir()):
-                if p.name in ignore_list: continue
-                child_item = QTreeWidgetItem([p.name])
-                child_item.setData(0, Qt.ItemDataRole.UserRole, str(p))
-                parent_item.addChild(child_item)
-                if p.is_dir(): self._populate_tree_from_disk(child_item, p)
-        except PermissionError:
-            pass
+    def _on_file_selected(self, file_path: Path):
+        """Handles file selection from the tree."""
+        self.editor_manager.open_file_in_tab(file_path)
 
-    @Slot(QTreeWidgetItem, int)
-    def _on_file_selected(self, item: QTreeWidgetItem, column: int):
-        abs_path_str = item.data(0, Qt.ItemDataRole.UserRole)
-        if not abs_path_str: return
-        file_path = Path(abs_path_str)
-        if file_path.is_file():
-            if abs_path_str in self.editors:
-                for i in range(self.tab_widget.count()):
-                    if self.tab_widget.tabToolTip(i) == abs_path_str:
-                        self.tab_widget.setCurrentIndex(i)
-                        return
-                return
-            try:
-                content = file_path.read_text(encoding='utf-8')
-                self._create_editor_tab(abs_path_str)
-                self.editors[abs_path_str].setPlainText(content)
-                self.tab_widget.setCurrentIndex(self.tab_widget.count() - 1)
-            except Exception as e:
-                print(f"Error reading file {file_path}: {e}")
-
-    def _close_tab(self, index):
-        tooltip = self.tab_widget.tabToolTip(index)
-        if tooltip in self.editors: del self.editors[tooltip]
-        self.tab_widget.removeTab(index)
+    def _on_tab_close_requested(self, index: int):
+        """Handles tab close requests."""
+        self.editor_manager.close_tab(index)
 
     def show_window(self):
+        """Shows the window and brings it to front."""
         if not self.isVisible():
             self.show()
         else:
-            self.activateWindow();
+            self.activateWindow()
             self.raise_()
