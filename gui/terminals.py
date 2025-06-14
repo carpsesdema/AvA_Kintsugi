@@ -1,49 +1,28 @@
 # kintsugi_ava/gui/terminals.py
-# V2: Plumbing update to pass EventBus down to the IntegratedTerminal.
+# V3: Refactored to be a dedicated, read-only Log Viewer.
 
-from PySide6.QtWidgets import QMainWindow, QTextEdit, QTabWidget, QVBoxLayout, QWidget
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QTextCursor, QColor
+from PySide6.QtWidgets import QMainWindow, QTextEdit
+from PySide6.QtGui import QTextCursor
 from datetime import datetime
 import html
 
 from .components import Colors, Typography
-from .integrated_terminal import IntegratedTerminal
 
 
 class TerminalsWindow(QMainWindow):
     """
-    A window that holds multiple terminal-like views.
-    - The Log View shows formatted, real-time log messages from the application.
-    - The Integrated Terminal provides an interactive command line.
+    A window that acts as a dedicated Log Viewer, showing formatted,
+    real-time log messages from the application's various services.
+    It contains no interactive elements.
     """
 
     def __init__(self, event_bus):
         super().__init__()
         self.event_bus = event_bus
-        self.setWindowTitle("Kintsugi AvA - Terminals")
+        self.setWindowTitle("Kintsugi AvA - Log Viewer")
         self.setGeometry(250, 250, 900, 600)
 
-        # Main Tab Widget
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet(f"""
-            QTabWidget::pane {{
-                border-top: 1px solid {Colors.BORDER_DEFAULT.name()};
-            }}
-            QTabBar::tab {{
-                background: {Colors.SECONDARY_BG.name()};
-                color: {Colors.TEXT_SECONDARY.name()};
-                padding: 8px 15px;
-                border: 1px solid {Colors.BORDER_DEFAULT.name()};
-                border-bottom: none;
-            }}
-            QTabBar::tab:selected, QTabBar::tab:hover {{
-                background: {Colors.PRIMARY_BG.name()};
-                color: {Colors.TEXT_PRIMARY.name()};
-            }}
-        """)
-
-        # --- Log Viewer Tab ---
+        # The Log View is now the central widget. No tabs, no IntegratedTerminal.
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setFont(Typography.get_font(10, family="JetBrains Mono"))
@@ -55,17 +34,9 @@ class TerminalsWindow(QMainWindow):
                 padding: 10px;
             }}
         """)
-        self.log_view.setPlainText("--- Kintsugi AvA Log Terminal Initialized ---")
+        self.log_view.setHtml("<h3>Kintsugi AvA Log Viewer Initialized</h3>")
 
-        # --- Integrated Terminal Tab ---
-        self.integrated_terminal = IntegratedTerminal(self.event_bus)
-        self.event_bus.subscribe("terminal_output_received", self.integrated_terminal.append_output)
-
-        # Add tabs
-        self.tab_widget.addTab(self.integrated_terminal, "Interactive Terminal")
-        self.tab_widget.addTab(self.log_view, "Log Viewer")
-
-        self.setCentralWidget(self.tab_widget)
+        self.setCentralWidget(self.log_view)
 
     def add_log_message(self, source: str, message_type: str, content: str):
         """A public slot that receives log data and displays it in the log viewer."""
@@ -80,6 +51,7 @@ class TerminalsWindow(QMainWindow):
         }
         log_color = type_colors.get(message_type, Colors.TEXT_SECONDARY.name())
 
+        # Escape content to prevent HTML injection issues from logs
         escaped_content = html.escape(content).replace('\n', '<br>')
 
         log_html = (
@@ -91,11 +63,8 @@ class TerminalsWindow(QMainWindow):
         self.log_view.append(log_html)
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
-    def show_fix_button(self):
-        """Shows the fix button on the interactive terminal."""
-        self.integrated_terminal.show_fix_button()
-        self.tab_widget.setCurrentWidget(self.integrated_terminal)  # Switch to terminal tab
-
-    def hide_fix_button(self):
-        """Hides the fix button on the interactive terminal."""
-        self.integrated_terminal.hide_fix_button()
+    def show(self):
+        """Overridden show method to ensure window comes to front."""
+        super().show()
+        self.activateWindow()
+        self.raise_()

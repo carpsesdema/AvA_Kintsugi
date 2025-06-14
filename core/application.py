@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V9: Decommissioned autonomous loop. Preparing for user-driven co-pilot workflow.
+# V10: Finalized UI refactoring and fixed crash.
 
 import asyncio
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -41,47 +41,30 @@ class Application:
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow(self.event_bus)
         self.workflow_monitor = WorkflowMonitorWindow(self.event_bus)
-        self.terminals = TerminalsWindow(self.event_bus)  # Pass event bus
+        self.terminals = TerminalsWindow(self.event_bus) # This is now the Log Viewer
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client, self.main_window)
 
-        # --- Services (instantiated with dependency injection in mind) ---
+        # --- Services ---
         self.rag_manager = RAGManager(self.event_bus)
-
         self.architect_service = ArchitectService(
-            self.event_bus,
-            self.llm_client,
-            self.project_manager,
-            self.rag_manager.rag_service
-        )
-
+            self.event_bus, self.llm_client, self.project_manager, self.rag_manager.rag_service)
         self.reviewer_service = ReviewerService(self.event_bus, self.llm_client)
-
         self.validation_service = ValidationService(
-            self.event_bus,
-            self.execution_engine,
-            self.project_manager,
-            self.reviewer_service
-        )
-
+            self.event_bus, self.execution_engine, self.project_manager, self.reviewer_service)
         self.terminal_service = TerminalService(
-            self.event_bus,
-            self.project_manager,
-            self.execution_engine,
-            self.code_viewer
-        )
+            self.event_bus, self.project_manager, self.execution_engine, self.code_viewer)
 
-        # --- Task Tracking & State ---
+        # --- State ---
         self.ai_task = None
         self.terminal_task = None
-        self._last_error_report = None  # For the new co-pilot workflow
+        self._last_error_report = None
 
-        # --- Connect Events ---
         self._connect_events()
         print("[Application] Core components initialized and events connected.")
 
     def _connect_events(self):
         """Subscribe handlers to events on the central event bus."""
-        # Project & Session Management
+        # Project & Session
         self.event_bus.subscribe("user_request_submitted", self._handle_user_request)
         self.event_bus.subscribe("new_project_requested", self._handle_new_project)
         self.event_bus.subscribe("load_project_requested", self._handle_load_project)
@@ -92,21 +75,21 @@ class Application:
         self.event_bus.subscribe("scan_directory_requested", self.rag_manager.open_scan_directory_dialog)
         self.event_bus.subscribe("add_active_project_to_rag_requested", self._handle_add_project_to_rag)
 
-        # Terminal and Execution
+        # Execution & Fixing (Handled by CodeViewer's terminal)
         self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
         self.event_bus.subscribe("execution_failed", self._handle_execution_failed)
         self.event_bus.subscribe("review_and_fix_requested", self._handle_review_and_fix)
 
-        # Window Visibility & UI Updates
+        # UI Updates & Window Visibility
         self.event_bus.subscribe("show_code_viewer_requested", self.code_viewer.show_window)
         self.event_bus.subscribe("show_workflow_monitor_requested", self.workflow_monitor.show)
-        self.event_bus.subscribe("show_terminals_requested", self.terminals.show)
+        self.event_bus.subscribe("show_terminals_requested", self.terminals.show) # Correctly shows Log Viewer now
         self.event_bus.subscribe("ai_response_ready", self.main_window.chat_interface._add_ai_response)
         self.event_bus.subscribe("log_message_received", self.terminals.add_log_message)
-        self.event_bus.subscribe("node_status_changed", self.workflow_monitor.update_node_status)
+        self.event_bus.subscribe("node_status_changed", self.workflow_monitor.scene.update_node_status)
         self.event_bus.subscribe("branch_updated", self.code_viewer.statusBar().on_branch_updated)
 
-        # Clean code generation events
+        # Code Generation
         self.event_bus.subscribe("prepare_for_generation", self.code_viewer.prepare_for_generation)
         self.event_bus.subscribe("stream_code_chunk", self.code_viewer.stream_code_chunk)
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
@@ -121,100 +104,61 @@ class Application:
         if self.ai_task and not self.ai_task.done():
             QMessageBox.warning(self.main_window, "AI Busy", "The AI is currently processing another request.")
             return
-
         self.ai_task = asyncio.create_task(self._run_full_workflow(prompt))
         self.ai_task.add_done_callback(self._on_ai_task_done)
 
     def _on_ai_task_done(self, task: asyncio.Task):
-        """Callback executed when the main AI task is finished to catch silent errors."""
         try:
             task.result()
-            print("[Application] AI generation task finished successfully.")
-            self.event_bus.emit("ai_response_ready",
-                                "Code generation complete. You can now run the code or ask for modifications.")
+            self.event_bus.emit("ai_response_ready", "Code generation complete. Run the code or ask for modifications.")
         except asyncio.CancelledError:
             print("[Application] AI task was cancelled.")
         except Exception as e:
             print(f"[Application] CRITICAL ERROR IN AI TASK: {e}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(
-                self.main_window,
-                "Workflow Error",
-                f"The AI workflow failed unexpectedly.\n\nError: {e}\n\nPlease check the console output for details."
-            )
+            QMessageBox.critical(self.main_window, "Workflow Error", f"The AI workflow failed unexpectedly.\n\nError: {e}")
 
     async def _run_full_workflow(self, prompt: str):
-        """Orchestrates the code generation workflow. The autonomous validation loop has been removed."""
         existing_files = self.project_manager.get_project_files() if self.project_manager.is_existing_project else None
-
-        # --- The autonomous loop is now disabled ---
-        # The ArchitectService will run, and then the workflow will stop, awaiting user command.
-        generation_succeeded = await self.architect_service.generate_or_modify(prompt, existing_files)
-        # The line below has been removed.
-        # await self.validation_service.run_validation_loop()
+        await self.architect_service.generate_or_modify(prompt, existing_files)
 
     def _handle_terminal_command(self, command: str):
-        """Execute a command from the integrated terminal."""
         if self.terminal_task and not self.terminal_task.done():
             self.event_bus.emit("terminal_output_received", "A command is already running.\n")
             return
-
-        # Clear the "fix this" state before running a new command
         self._last_error_report = None
-        self.terminals.hide_fix_button()
-
+        self.code_viewer.hide_fix_button()
         self.terminal_task = asyncio.create_task(self.terminal_service.execute_command(command))
 
     def _handle_execution_failed(self, error_report: str):
-        """Handles the new event for when a command execution fails."""
-        print("[Application] Execution failed. Storing error report and showing fix button.")
         self._last_error_report = error_report
-        self.terminals.show_fix_button()
+        self.code_viewer.show_fix_button()
 
     async def _handle_review_and_fix(self):
-        """Handles the user clicking the new 'Review & Fix' button."""
         if not self._last_error_report:
-            print("[Application] 'Review & Fix' clicked, but no recent error report found.")
             return
-
-        print("[Application] Kicking off review and fix task...")
-        self.terminals.hide_fix_button()
-
-        # This will become our new AI task, replacing the main generation task.
+        self.code_viewer.hide_fix_button()
         if self.ai_task and not self.ai_task.done():
             QMessageBox.warning(self.main_window, "AI Busy", "The AI is currently processing another request.")
             return
-
         self.ai_task = asyncio.create_task(self.validation_service.review_and_fix_file(self._last_error_report))
         self.ai_task.add_done_callback(self._on_ai_task_done)
-        self._last_error_report = None  # Consume the error report
+        self._last_error_report = None
 
     def _handle_new_project(self):
-        """Handles the user's request to create a new project."""
         project_path = self.project_manager.new_project("New_Project")
-
         if not project_path:
-            QMessageBox.critical(
-                self.main_window,
-                "Project Creation Failed",
-                "Could not initialize a new project.\n\n"
-                "This usually means that **Git is not installed** or not available in your system's PATH.\n\n"
-                "Please install Git and ensure it can be run from your command line, then restart Ava."
-            )
+            QMessageBox.critical(self.main_window, "Project Creation Failed", "Could not initialize Git. Please ensure Git is installed and in your PATH.")
             return
-
         self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
         self.code_viewer.prepare_for_new_project_session()
         if self.project_manager.repo and self.project_manager.repo.active_branch:
             self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
-
         self.event_bus.emit("new_session_requested")
 
     def _handle_load_project(self):
-        """Open a dialog to load an existing project."""
-        path = QFileDialog.getExistingDirectory(self.main_window, "Load Project",
-                                                str(self.project_manager.workspace_root))
+        path = QFileDialog.getExistingDirectory(self.main_window, "Load Project", str(self.project_manager.workspace_root))
         if path:
             project_path = self.project_manager.load_project(path)
             if project_path:
@@ -228,27 +172,20 @@ class Application:
                     self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
 
     def _handle_add_project_to_rag(self):
-        """Adds all files from the active project to the RAG knowledge base."""
         self.rag_manager.ingest_active_project(self.project_manager, self.main_window)
 
     def _handle_new_session(self):
-        """Resets the state for a new conversation."""
         if self.ai_task and not self.ai_task.done():
             self.ai_task.cancel()
-            print("[Application] Canceled active AI task for new session.")
         if self.terminal_task and not self.terminal_task.done():
             self.terminal_task.cancel()
-            print("[Application] Canceled active terminal task for new session.")
         for agent_id in ["architect", "coder", "executor", "reviewer"]:
             self.event_bus.emit("node_status_changed", agent_id, "idle", "Ready")
-
-        self.terminals.hide_fix_button()
+        self.code_viewer.hide_fix_button()
         self._last_error_report = None
-
         print("[Application] New session state reset.")
 
     async def cancel_all_tasks(self):
-        """Safely cancel any running background tasks on shutdown."""
         tasks_to_cancel = [self.ai_task, self.terminal_task]
         for task in tasks_to_cancel:
             if task and not task.done():

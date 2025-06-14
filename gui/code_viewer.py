@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/code_viewer.py
-# V14: Clean refactored version using SRP managers, with diff system removed for reliability.
+# V15: Added methods to control the integrated terminal's fix button.
 
 from pathlib import Path
 from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout
@@ -33,8 +33,9 @@ class CodeViewerWindow(QMainWindow):
 
         # Initialize managers
         self.project_context = ProjectContextManager()
-        self.editor_manager = None  # Initialized after UI setup
-        self.file_tree_manager = None  # Initialized after UI setup
+        self.editor_manager = None
+        self.file_tree_manager = None
+        self.terminal = None
 
         self._setup_ui()
         self._connect_events()
@@ -44,58 +45,40 @@ class CodeViewerWindow(QMainWindow):
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(main_splitter)
 
-        # File tree panel
         file_tree_panel = self._create_file_tree_panel()
-
-        # Editor and terminal panel
         right_splitter = self._create_editor_terminal_splitter()
 
         main_splitter.addWidget(file_tree_panel)
         main_splitter.addWidget(right_splitter)
         main_splitter.setSizes([250, 950])
 
-        # Status bar
         self.setStatusBar(StatusBar(self.event_bus))
 
     def _create_file_tree_panel(self) -> QWidget:
         """Creates the file tree panel."""
         from PySide6.QtWidgets import QTreeWidget
-
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-
         tree_widget = QTreeWidget()
         self.file_tree_manager = FileTreeManager(tree_widget)
         self.file_tree_manager.set_file_selection_callback(self._on_file_selected)
-
         layout.addWidget(tree_widget)
         return panel
 
     def _create_editor_terminal_splitter(self) -> QSplitter:
         """Creates the editor and terminal panel."""
         from PySide6.QtWidgets import QTabWidget
-
         right_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Tab widget for editors
         tab_widget = QTabWidget()
         tab_widget.setTabsClosable(True)
         tab_widget.setMovable(True)
         tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
-
         self.editor_manager = EditorTabManager(tab_widget)
-
-        # Terminal
         self.terminal = IntegratedTerminal(self.event_bus)
-        self.terminal.command_entered.connect(
-            lambda cmd: self.event_bus.emit("terminal_command_entered", cmd)
-        )
-
         right_splitter.addWidget(tab_widget)
         right_splitter.addWidget(self.terminal)
         right_splitter.setSizes([600, 200])
-
         return right_splitter
 
     def _connect_events(self):
@@ -114,38 +97,27 @@ class CodeViewerWindow(QMainWindow):
         self.terminal.clear_output()
         print("[CodeViewer] Prepared for new project session")
 
-    # Fixed: removed the str parameter that was causing event signature issues
     def prepare_for_generation(self, filenames: list, project_path: str = None):
-        """
-        Prepares the UI for code generation.
-        Handles both new projects and modifications.
-        """
+        """Prepares the UI for code generation."""
         self.terminal.clear_output()
-
-        if project_path:
-            # New project generation
-            if self.project_context.set_new_project_context(project_path):
-                self.file_tree_manager.setup_new_project_tree(
-                    self.project_context.project_root, filenames
-                )
-                print(f"[CodeViewer] Prepared for new project generation: {len(filenames)} files")
-                self.show_window()
-        else:
-            # Modification of existing project
-            if self.project_context.validate_existing_context():
-                self._prepare_tabs_for_modification(filenames)
-                print(f"[CodeViewer] Prepared for modification: {len(filenames)} files")
-                self.show_window()
+        if project_path and self.project_context.set_new_project_context(project_path):
+            self.file_tree_manager.setup_new_project_tree(
+                self.project_context.project_root, filenames
+            )
+            print(f"[CodeViewer] Prepared for new project generation: {len(filenames)} files")
+            self.show_window()
+        elif self.project_context.validate_existing_context():
+            self._prepare_tabs_for_modification(filenames)
+            print(f"[CodeViewer] Prepared for modification: {len(filenames)} files")
+            self.show_window()
 
     def _prepare_tabs_for_modification(self, filenames: list):
         """Opens tabs for files that will be modified."""
-        if not self.project_context.is_valid:
-            return
-
-        for filename in filenames:
-            abs_path = self.project_context.get_absolute_path(filename)
-            if abs_path and abs_path.is_file():
-                self.editor_manager.open_file_in_tab(abs_path)
+        if self.project_context.is_valid:
+            for filename in filenames:
+                abs_path = self.project_context.get_absolute_path(filename)
+                if abs_path and abs_path.is_file():
+                    self.editor_manager.open_file_in_tab(abs_path)
 
     def stream_code_chunk(self, filename: str, chunk: str):
         """Streams a chunk of code to the appropriate editor."""
@@ -160,13 +132,7 @@ class CodeViewerWindow(QMainWindow):
             if self.project_context.is_valid:
                 abs_path = self.project_context.get_absolute_path(filename)
                 if abs_path:
-                    path_key = str(abs_path)
-                    if not self.editor_manager.create_editor_tab(path_key):
-                        # Tab already exists, just update content
-                        self.editor_manager.set_editor_content(path_key, content)
-                    else:
-                        # New tab created, set content
-                        self.editor_manager.set_editor_content(path_key, content)
+                    self.editor_manager.create_or_update_tab(str(abs_path), content)
 
     def load_project(self, project_path_str: str):
         """Loads an existing project into the viewer."""
@@ -187,6 +153,16 @@ class CodeViewerWindow(QMainWindow):
         """Shows the window and brings it to front."""
         if not self.isVisible():
             self.show()
-        else:
-            self.activateWindow()
-            self.raise_()
+        self.activateWindow()
+        self.raise_()
+
+    # --- NEW METHODS TO CONTROL THE TERMINAL ---
+    def show_fix_button(self):
+        """Makes the 'Review & Fix' button visible in the integrated terminal."""
+        if self.terminal:
+            self.terminal.show_fix_button()
+
+    def hide_fix_button(self):
+        """Hides the 'Review & Fix' button in the integrated terminal."""
+        if self.terminal:
+            self.terminal.hide_fix_button()
