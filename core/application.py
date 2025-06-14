@@ -102,6 +102,11 @@ class Application:
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
         self.event_bus.subscribe("code_patched", self.code_viewer.apply_diff_highlighting)
 
+        # --- THE FIX ---
+        # Connect the new event to refresh the code viewer's project tree
+        self.event_bus.subscribe("project_creation_finished", self._handle_project_created)
+        # --- END FIX ---
+
     def show(self):
         """Show the main application window and start background initializations."""
         self.main_window.show()
@@ -129,13 +134,10 @@ class Application:
 
     def _handle_new_project(self):
         """Create a new, empty project."""
-        # For now, use a default name. Could add a dialog later.
         project_path = self.project_manager.new_project("New_Project")
         self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
-        self.code_viewer.load_project(project_path)
-        self.event_bus.emit("new_session_requested")  # Clears chat and resets state
-        if self.project_manager.repo and self.project_manager.repo.active_branch:
-            self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
+        # We no longer load the project here; we wait for the generation to finish
+        self.event_bus.emit("new_session_requested")
 
     def _handle_load_project(self):
         """Open a dialog to load an existing project."""
@@ -147,7 +149,7 @@ class Application:
                 branch_name = self.project_manager.begin_modification_session()
                 self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
                 self.code_viewer.load_project(project_path)
-                self.event_bus.emit("new_session_requested")  # Clears chat and resets state
+                self.event_bus.emit("new_session_requested")
                 if branch_name:
                     self.event_bus.emit("branch_updated", branch_name)
                 elif self.project_manager.repo and self.project_manager.repo.active_branch:
@@ -159,23 +161,36 @@ class Application:
 
     def _handle_new_session(self):
         """Resets the state for a new conversation."""
-        # Cancel any ongoing AI task to prevent it from continuing in the new session
         if self.ai_task and not self.ai_task.done():
             self.ai_task.cancel()
+            print("[Application] Canceled active AI task for new session.")
 
-        # Reset the workflow monitor nodes to their idle state
+        if self.terminal_task and not self.terminal_task.done():
+            self.terminal_task.cancel()
+            print("[Application] Canceled active terminal task for new session.")
+
         for agent_id in ["architect", "coder", "executor", "reviewer"]:
             self.event_bus.emit("node_status_changed", agent_id, "idle", "Ready")
 
         print("[Application] New session state reset.")
+
+    def _handle_project_created(self, project_path: str):
+        """Handles the finalization of a new project's creation."""
+        print(f"[Application] Project creation finished. Loading final view from: {project_path}")
+        self.code_viewer.load_project(project_path)
+        self.main_window.sidebar.update_project_display(self.project_manager.active_project_name)
+        if self.project_manager.repo and self.project_manager.repo.active_branch:
+            self.event_bus.emit("branch_updated", self.project_manager.repo.active_branch.name)
 
     async def cancel_all_tasks(self):
         """Safely cancel any running background tasks on shutdown."""
         tasks_to_cancel = [self.ai_task, self.terminal_task]
         for task in tasks_to_cancel:
             if task and not task.done():
-                task.cancel()
                 try:
+                    task.cancel()
                     await task
                 except asyncio.CancelledError:
-                    print(f"[Application] Task {task.get_name()} successfully cancelled.")
+                    pass
+                except Exception as e:
+                    print(f"[Application] Error during task cancellation: {e}")

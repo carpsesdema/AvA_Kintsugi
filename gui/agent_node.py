@@ -1,5 +1,4 @@
 # kintsugi_ava/gui/agent_node.py
-# V2: Corrected Qt.TextFlag typo to Qt.AlignmentFlag.
 
 from PySide6.QtWidgets import QGraphicsObject, QGraphicsDropShadowEffect
 from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont

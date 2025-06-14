@@ -1,7 +1,6 @@
 # kintsugi_ava/services/reviewer_service.py
-# V2: Now generates diffs to unify the code modification process.
+# V3: Upgraded to use the new diff-based refinement prompt.
 
-import difflib
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
 from prompts.prompts import REFINEMENT_PROMPT
@@ -9,38 +8,27 @@ from prompts.prompts import REFINEMENT_PROMPT
 
 class ReviewerService:
     """
-    The ReviewerService uses an LLM to fix code, then generates a diff
-    of the changes to ensure all modifications are handled consistently.
+    The ReviewerService uses an LLM to generate a diff patch to fix code,
+    based on a precise error location.
     """
 
     def __init__(self, event_bus: EventBus, llm_client: LLMClient):
         self.event_bus = event_bus
         self.llm_client = llm_client
 
-    def _generate_diff(self, original_code: str, fixed_code: str, filename: str) -> str:
-        """Compares two versions of code and returns a unified diff string."""
-        diff = difflib.unified_diff(
-            original_code.splitlines(keepends=True),
-            fixed_code.splitlines(keepends=True),
-            fromfile=f"a/{filename}",
-            tofile=f"b/{filename}",
-        )
-        # We only want the content of the diff, not the '---' and '+++' headers.
-        diff_content = "".join(list(diff)[2:])
-        return diff_content
-
-    async def review_and_correct_code(self, filename: str, broken_code: str, error_message: str) -> str | None:
+    async def review_and_correct_code(self, filename: str, broken_code: str, error_message: str, line_number: int) -> str | None:
         """
-        Takes broken code and an error, gets a fix from an LLM, and returns a diff patch.
+        Takes broken code, an error, and a line number, gets a fix patch from an LLM.
 
         Returns:
             A diff patch string if a fix was generated, otherwise None.
         """
-        self.log("info", f"Reviewer received task to fix '{filename}'.")
+        self.log("info", f"Reviewer received task to fix '{filename}' near line {line_number}.")
         self.log("info", f"Error was: {error_message.strip().splitlines()[-1]}")
 
         prompt = REFINEMENT_PROMPT.format(
             filename=filename,
+            line_number=line_number,
             code=broken_code,
             error=error_message
         )
@@ -50,18 +38,45 @@ class ReviewerService:
             self.log("error", "No model assigned for the 'reviewer' role.")
             return None
 
-        self.log("ai_call", f"Asking {provider}/{model} to fix the code...")
+        self.log("ai_call", f"Asking {provider}/{model} to generate a fix patch...")
 
-        fixed_code = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt)])
+        # The LLM is now expected to return a diff patch directly.
+        patch_content = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt)])
 
-        if fixed_code and fixed_code.strip() != broken_code.strip():
-            self.log("success", f"Received potential fix for '{filename}'. Generating diff.")
-            # Generate a patch from the change the reviewer made.
-            patch = self._generate_diff(broken_code, fixed_code, filename)
-            return patch
+        if patch_content and patch_content.strip():
+            # The cleaning function from ArchitectService is now part of the service itself.
+            cleaned_patch = self._clean_diff_output(patch_content)
+            if cleaned_patch:
+                self.log("success", f"Received potential fix patch for '{filename}'.")
+                return cleaned_patch
+            else:
+                self.log("warning", f"Reviewer returned an empty or invalid patch for '{filename}'.")
+                return None
         else:
-            self.log("warning", f"Reviewer did not produce a change for '{filename}'.")
+            self.log("warning", f"Reviewer did not produce a patch for '{filename}'.")
             return None
+
+    def _clean_diff_output(self, diff: str) -> str:
+        """Strips markdown code fences from a diff block."""
+        diff = diff.strip()
+        start_markers = ["```diff", "```"]
+        for marker in start_markers:
+            if diff.startswith(marker):
+                diff = diff[len(marker):].lstrip()
+                # Handle cases like ```diff\n...
+                if diff.lower().startswith('diff'):
+                   diff = diff[4:].lstrip()
+
+        if diff.endswith("```"):
+            diff = diff[:-3].rstrip()
+
+        # A valid diff should start with '@@'
+        if not diff.strip().startswith("@@"):
+            self.log("warning", "AI response for diff did not start with @@, discarding.")
+            return ""
+
+        return diff.strip()
+
 
     def log(self, message_type: str, content: str):
         """Helper to emit log events with a consistent source name."""

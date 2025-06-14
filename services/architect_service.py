@@ -1,6 +1,10 @@
 # kintsugi_ava/services/architect_service.py
 import asyncio
 import json
+import re
+import traceback
+from pathlib import Path
+
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
 from core.execution_engine import ExecutionEngine
@@ -62,7 +66,6 @@ class ArchitectService:
         self.event_bus.emit("prepare_for_generation", [f['filename'] for f in code_files_to_generate])
         await asyncio.sleep(0.1)
 
-        # --- FIX: Call the correct function that returns the expected tuple ---
         generation_tasks = [
             self._generate_and_return_file(
                 file_info['filename'],
@@ -70,7 +73,6 @@ class ArchitectService:
                 plan
             ) for file_info in code_files_to_generate
         ]
-        # --- END FIX ---
 
         results = await asyncio.gather(*generation_tasks, return_exceptions=True)
 
@@ -85,6 +87,8 @@ class ArchitectService:
 
         if not all_successful:
             return False
+
+        self.event_bus.emit("code_generation_complete", generated_code_map)
 
         self.log("info", "All files generated. Committing project foundation...")
         self.project_manager.save_and_commit_files(generated_code_map, user_prompt_summary)
@@ -133,12 +137,12 @@ class ArchitectService:
                 purpose = file_info['purpose']
                 original_code = existing_files.get(filename)
                 if original_code is None:
-                    # In modification, a "new" file is generated one by one and committed.
                     single_file_plan = {"files": [{"filename": filename, "purpose": purpose}], "dependencies": []}
                     content_tuple = await self._generate_and_return_file(filename, purpose, single_file_plan)
                     if content_tuple:
                         self.project_manager.save_and_commit_files({content_tuple[0]: content_tuple[1]},
                                                                    f"feat: Create {filename}")
+                        self.event_bus.emit("code_generation_complete", {content_tuple[0]: content_tuple[1]})
                     else:
                         all_steps_succeeded = False
                 else:
@@ -168,7 +172,6 @@ class ArchitectService:
             self.event_bus.emit("stream_code_chunk", filename, chunk)
 
         cleaned_code = self._clean_code_output(file_content)
-        self.event_bus.emit("code_generation_complete", {filename: cleaned_code})
         self.log("info", f"Successfully generated content for {filename}")
         return (filename, cleaned_code)
 
@@ -195,6 +198,31 @@ class ArchitectService:
             self.log("error", f"A patch generated for {filename} was invalid.")
             return False
 
+    def _parse_error_traceback(self, error_str: str) -> tuple[str | None, int | None]:
+        """Parses a traceback string to find the file and line number within the project."""
+        if not self.project_manager.active_project_path:
+            return None, None
+
+        # Regex to find 'File "path/to/file.py", line 123'
+        # It now captures the file path and line number
+        traceback_lines = re.findall(r'File "([^"]+)", line (\d+)', error_str)
+
+        # Iterate backwards through the traceback to find the most recent call in our project
+        for file_path_str, line_num_str in reversed(traceback_lines):
+            file_path = Path(file_path_str)
+            try:
+                # Check if the file from the traceback is within our active project directory
+                if self.project_manager.active_project_path in file_path.resolve().parents:
+                    relative_path_str = str(file_path.relative_to(self.project_manager.active_project_path))
+                    self.log("info", f"Pinpointed error in project file: {relative_path_str} at line {line_num_str}")
+                    return relative_path_str, int(line_num_str)
+            except (ValueError, FileNotFoundError):
+                # This can happen if the path is not relative to the project, which is fine.
+                continue
+
+        self.log("warning", "Could not pinpoint error to a specific project file. Will default to main.py.")
+        return None, None
+
     async def _validate_and_refine_loop(self):
         """The self-correction loop that runs and fixes the code using patches."""
         for attempt in range(self.MAX_REFINEMENT_ATTEMPTS):
@@ -208,34 +236,48 @@ class ArchitectService:
                 return
 
             self.update_status("executor", "error", "Validation failed.")
+
+            # --- THE FIX: SMART ERROR PARSING ---
             all_project_files = self.project_manager.get_project_files()
-            main_py_path = "main.py"
-            if main_py_path not in all_project_files:
-                self.handle_error("executor", "Could not find main.py to fix.")
+            file_to_fix, line_number = self._parse_error_traceback(exec_result.error)
+
+            # Fallback to main.py if parsing fails or error is outside project files
+            if not file_to_fix or not line_number:
+                file_to_fix = "main.py"
+                line_number = 1
+
+            if file_to_fix not in all_project_files:
+                self.handle_error("executor", f"Could not find file '{file_to_fix}' to apply fix.")
                 return
 
-            self.update_status("reviewer", "working", "Attempting to fix code...")
-            broken_code = all_project_files.get(main_py_path, "")
+            self.update_status("reviewer", "working", f"Attempting to fix {file_to_fix}...")
+            broken_code = all_project_files.get(file_to_fix, "")
 
-            fix_patch = await self.reviewer_service.review_and_correct_code(main_py_path, broken_code,
-                                                                            exec_result.error)
+            fix_patch = await self.reviewer_service.review_and_correct_code(
+                file_to_fix, broken_code, exec_result.error, line_number
+            )
+            # --- END FIX ---
 
             if not fix_patch:
-                self.handle_error("reviewer", f"Could not generate a fix for {main_py_path}.")
-                return
+                self.handle_error("reviewer", f"Could not generate a fix for {file_to_fix}.")
+                # If it fails, break the loop for this file and let the outer error handler take over.
+                break
 
-            fix_commit_message = f"AI Reviewer fix after error: {exec_result.error.strip().splitlines()[-1]}"
-            patch_success = self.project_manager.patch_file(main_py_path, fix_patch, fix_commit_message)
+            fix_commit_message = f"fix: AI Reviewer fix for {file_to_fix} after error"
+            patch_success = self.project_manager.patch_file(file_to_fix, fix_patch, fix_commit_message)
 
             if patch_success:
                 updated_files = self.project_manager.get_project_files()
-                self.event_bus.emit("code_patched", main_py_path, updated_files.get(main_py_path, ""), fix_patch)
+                self.event_bus.emit("code_patched", file_to_fix, updated_files.get(file_to_fix, ""), fix_patch)
                 self.update_status("reviewer", "success", "Fix implemented. Re-validating...")
             else:
-                self.handle_error("reviewer", f"Generated fix for {main_py_path} was invalid and could not be applied.")
-                return
+                self.handle_error("reviewer", f"Generated fix for {file_to_fix} was invalid and could not be applied.")
+                # Break the loop if the patch is bad.
+                break
 
-        self.handle_error("executor", "Could not fix the code after several attempts.")
+        # If the loop finishes without success, then we declare failure.
+        else:
+            self.handle_error("executor", "Could not fix the code after several attempts.")
 
     def _parse_json_response(self, response: str) -> dict:
         """Cleans and parses a JSON string from an AI response."""

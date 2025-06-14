@@ -90,12 +90,31 @@ class CodeViewerWindow(QMainWindow):
         self.file_tree.clear()
         self.editors.clear()
         self.project_root_for_load = None
-        while self.tab_widget.count() > 0: self.tab_widget.removeTab(0)
+        # Remove all tabs except the "Welcome" tab if it exists
+        while self.tab_widget.count() > 0:
+            if self.tab_widget.tabText(0) == "Welcome":
+                self.tab_widget.removeTab(0)
+                break
+            self.tab_widget.removeTab(0)
+
+        # Re-add the welcome tab if all tabs were removed
+        if self.tab_widget.count() == 0:
+            welcome_label = QLabel("Code will appear here when generated.")
+            welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            welcome_label.setFont(Typography.get_font(18))
+            welcome_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
+            self.tab_widget.addTab(welcome_label, "Welcome")
+
         project_root_item = QTreeWidgetItem(["generated_project"])
         self.file_tree.addTopLevelItem(project_root_item)
         for filename in filenames:
             self._add_file_to_tree(project_root_item, filename.split('/'))
             self._create_editor_tab(filename)
+
+        # Switch to the first generated file tab
+        if len(filenames) > 0 and self.tab_widget.count() > 1:
+            self.tab_widget.setCurrentIndex(1)
+
         self.show_window()
 
     def _add_file_to_tree(self, parent_item, path_parts):
@@ -122,9 +141,9 @@ class CodeViewerWindow(QMainWindow):
                 editor.setPlainText(content)
             else:
                 # Fallback for safety, though this path is less likely now.
-                self._setup_new_project_view(list(files.keys()))
-                if filename in self.editors:
-                    self.editors[filename].setPlainText(content)
+                print(f"[CodeViewer] Warning: Received completed code for an untracked file: {filename}")
+                self._create_editor_tab(filename)
+                self.editors[filename].setPlainText(content)
 
     def _prepare_tabs_for_modification(self, filenames: list):
         """Prepares editor tabs for files that will be modified by opening them if not already open."""
@@ -206,6 +225,17 @@ class CodeViewerWindow(QMainWindow):
 
     @Slot(str, str)
     def stream_code_chunk(self, filename: str, chunk: str):
+        # --- THE FIX ---
+        # First, ensure a tab for the file exists. This handles the case where the
+        # signal arrives before the editor is fully in the dictionary.
+        if filename not in self.editors:
+            # We check if a "Welcome" tab is present and remove it before adding the first real file.
+            if self.tab_widget.count() == 1 and self.tab_widget.tabText(0) == "Welcome":
+                self.tab_widget.removeTab(0)
+            self._create_editor_tab(filename)
+            self.tab_widget.setCurrentIndex(self.tab_widget.count() - 1)
+        # --- END FIX ---
+
         if filename in self.editors:
             editor = self.editors[filename]
             cursor = editor.textCursor()
@@ -214,9 +244,18 @@ class CodeViewerWindow(QMainWindow):
             editor.ensureCursorVisible()
 
     def _create_editor_tab(self, path_key: str):
+        # If the editor already exists, don't create a new one.
+        if path_key in self.editors:
+            return
+
         editor = QTextEdit()
         editor.setFont(Typography.get_font(11, family="JetBrains Mono"))
         PythonHighlighter(editor.document())
+
+        # If the "Welcome" tab is the only tab, remove it.
+        if self.tab_widget.count() == 1 and self.tab_widget.tabText(0) == "Welcome":
+            self.tab_widget.removeTab(0)
+
         tab_index = self.tab_widget.addTab(editor, Path(path_key).name)
         self.tab_widget.setTabToolTip(tab_index, path_key)
         self.editors[path_key] = editor
@@ -274,4 +313,5 @@ class CodeViewerWindow(QMainWindow):
         if not self.isVisible():
             self.show()
         else:
-            self.activateWindow(); self.raise_()
+            self.activateWindow();
+            self.raise_()

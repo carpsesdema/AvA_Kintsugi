@@ -1,3 +1,5 @@
+# prompts.py
+
 PLANNER_PROMPT = """
 You are an expert software architect who specializes in creating plans for Python applications.
 
@@ -51,7 +53,6 @@ You are an expert software architect. Your task is to design a robust and modula
   "dependencies": ["Flask", "Flask-SQLAlchemy", "Flask-Login"]
 }}
 """
-
 
 MODIFICATION_PLANNER_PROMPT = """
 You are an expert software architect specializing in refactoring and modifying existing Python codebases.
@@ -136,23 +137,22 @@ Your task is to generate a diff patch to apply to an existing file based on a us
 """
 
 REFINEMENT_PROMPT = """
-You are a senior software engineer acting as a code reviewer. Your task is to fix a Python script that failed to run.
+You are a senior software engineer acting as a code reviewer. Your task is to generate a diff patch to fix a Python script that failed to run.
 
-**FILE:** `{filename}`
-
-**FAILED CODE:**
-```python
-{code}
-```
-
-**ERROR MESSAGE:**
+**FAILED FILE:** `{filename}`
+**ERROR MESSAGE (originating near line {line_number}):**
 ```
 {error}
 ```
 
-**INSTRUCTIONS:**
-1.  Analyze the error message and the failed code.
-2.  Identify the root cause of the error.
-3.  Rewrite the entire script with the necessary corrections.
-4.  Your response **MUST BE ONLY** the corrected, complete, and raw Python code. Do not include explanations or markdown.
+**ORIGINAL FILE CONTENT for `{filename}`:**
+```python
+{code}
+```
+
+**CRITICAL INSTRUCTIONS:**
+1.  Analyze the error message and the original code to determine the precise changes needed to fix the bug.
+2.  Your response **MUST** be only a standard, unified format diff patch.
+3.  **Do NOT include the file headers** (`--- a/...` or `+++ b/...`).
+4.  Do NOT include any other text, explanations, or markdown. Start the diff directly with `@@ ... @@`.
 """
