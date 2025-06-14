@@ -1,5 +1,5 @@
 # kintsugi_ava/services/reviewer_service.py
-# V5: Swaps from generating diff patches to generating full, corrected files for reliability.
+# V6: Enhanced workflow monitor integration with review phase events
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
@@ -24,6 +24,9 @@ class ReviewerService:
         Returns:
             A string containing the full, corrected source code, or None.
         """
+        # Emit review started event for enhanced workflow monitor
+        self.event_bus.emit("review_started")
+
         self.log("info", f"Reviewer received task to fix '{filename}' near line {line_number}.")
         self.log("info", f"Error was: {error_message.strip().splitlines()[-1]}")
 
@@ -47,7 +50,7 @@ class ReviewerService:
         if corrected_code and corrected_code.strip():
             cleaned_code = self._clean_code_output(corrected_code)
             if cleaned_code:
-                self.log("success", f"Received potential fix for '{filename}'.")
+                self.log("success", f"Review completed for '{filename}'.")
                 return cleaned_code
 
         self.log("warning", f"Reviewer did not produce a valid correction for '{filename}'.")

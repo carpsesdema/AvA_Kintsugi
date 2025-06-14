@@ -1,5 +1,5 @@
 # kintsugi_ava/services/validation_service.py
-# V4: Implements full-file replacement instead of patching for reliability.
+# V5: Enhanced workflow monitor integration with detailed event emissions
 
 import re
 import asyncio
@@ -72,6 +72,9 @@ class ValidationService:
 
     async def run_validation_loop(self):
         """The self-correction loop that runs and fixes the code by replacing faulty files."""
+        # Emit validation started event for enhanced workflow monitor
+        self.event_bus.emit("validation_started")
+
         self.update_status("executor", "working", "Preparing environment...")
         setup_success, setup_output = await self._setup_environment()
         if not setup_success:
@@ -86,6 +89,9 @@ class ValidationService:
             if exec_result.success:
                 self.update_status("executor", "success", "Validation passed!")
                 success_message = "Modifications complete and successfully tested!" if self.project_manager.is_existing_project else "Application generated and successfully tested!"
+
+                # Emit workflow completed event
+                self.event_bus.emit("workflow_completed")
                 self.event_bus.emit("ai_response_ready", success_message)
                 return
 
@@ -97,10 +103,14 @@ class ValidationService:
                 self.handle_error("executor", f"Could not find file '{file_to_fix}' to apply fix.")
                 return
 
+            # Emit validation failed event with specific files
+            failed_files = [file_to_fix] if file_to_fix else []
+            self.event_bus.emit("validation_failed", failed_files)
+
             self.update_status("reviewer", "working", f"Attempting to fix {file_to_fix}...")
             broken_code = all_project_files.get(file_to_fix, "")
 
-            # --- LOGIC CHANGE: Get full corrected code instead of a patch ---
+            # Get full corrected code instead of a patch
             corrected_content = await self.reviewer_service.review_and_correct_code(
                 file_to_fix, broken_code, exec_result.error, line_number
             )
@@ -116,7 +126,6 @@ class ValidationService:
             # Update the UI by treating it as a new code generation for that file
             self.event_bus.emit("code_generation_complete", {file_to_fix: corrected_content})
             self.update_status("reviewer", "success", "Fix implemented. Re-validating...")
-            # --- END LOGIC CHANGE ---
 
         else:
             self.handle_error("executor", "Could not fix the code after several attempts.")
