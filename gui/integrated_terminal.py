@@ -1,19 +1,20 @@
 # kintsugi_ava/gui/integrated_terminal.py
-# V2: Refined styling for a seamless, "Aider-like" aesthetic.
+# V3: Added dynamic "Review & Fix" button for the co-pilot workflow.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QFrame
 )
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtCore import Signal, Qt
+import qtawesome as qta
 
 from .components import Colors, Typography, ModernButton
 
 
 class IntegratedTerminal(QWidget):
     """
-    A widget that provides an integrated terminal experience, with a refined
-    stylesheet for a seamless, professional look.
+    An integrated terminal that now includes a dynamic button to trigger
+    the AI review and fix process.
     """
     command_entered = Signal(str)
 
@@ -35,15 +36,36 @@ class IntegratedTerminal(QWidget):
         # 1. Action Buttons
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
+
         run_main_btn = ModernButton("Run main.py", "primary")
         run_main_btn.clicked.connect(lambda: self.command_entered.emit("run_main"))
 
         install_reqs_btn = ModernButton("Install Requirements", "secondary")
         install_reqs_btn.clicked.connect(lambda: self.command_entered.emit("install_reqs"))
 
+        # --- New "Review & Fix" Button ---
+        self.fix_button = ModernButton("Review & Fix", "primary")
+        self.fix_button.setIcon(qta.icon("fa5s.magic", color=Colors.TEXT_PRIMARY.name()))
+        self.fix_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.ACCENT_RED.name()};
+                color: {Colors.TEXT_PRIMARY.name()};
+                border: 1px solid #ff7b72;
+                border-radius: 6px;
+                padding: 5px 15px;
+            }}
+            QPushButton:hover {{
+                background-color: #ff4747;
+            }}
+        """)
+        self.fix_button.clicked.connect(lambda: self.command_entered.emit("review_and_fix"))
+        self.fix_button.hide()  # Hidden by default
+
         button_layout.addWidget(run_main_btn)
         button_layout.addWidget(install_reqs_btn)
+        button_layout.addWidget(self.fix_button)
         button_layout.addStretch()
+
         main_layout.addLayout(button_layout)
 
         # 2. Output Display
@@ -80,6 +102,11 @@ class IntegratedTerminal(QWidget):
         self.command_input.returnPressed.connect(self._on_command_entered)
         main_layout.addWidget(self.command_input)
 
+        # Connect the command signal to the event bus
+        self.command_entered.connect(
+            lambda cmd: self.event_bus.emit("terminal_command_entered", cmd)
+        )
+
     def _on_command_entered(self):
         """Handle the returnPressed signal from the command input."""
         command_text = self.command_input.text().strip()
@@ -97,3 +124,11 @@ class IntegratedTerminal(QWidget):
     def clear_output(self):
         """Clears the output view."""
         self.output_view.clear()
+
+    def show_fix_button(self):
+        """Makes the 'Review & Fix' button visible."""
+        self.fix_button.show()
+
+    def hide_fix_button(self):
+        """Hides the 'Review & Fix' button."""
+        self.fix_button.hide()

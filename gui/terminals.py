@@ -1,26 +1,49 @@
 # kintsugi_ava/gui/terminals.py
-# A real, live-streaming log terminal.
+# V2: Plumbing update to pass EventBus down to the IntegratedTerminal.
 
-from PySide6.QtWidgets import QMainWindow, QTextEdit
+from PySide6.QtWidgets import QMainWindow, QTextEdit, QTabWidget, QVBoxLayout, QWidget
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QTextCursor, QColor
 from datetime import datetime
 import html
 
 from .components import Colors, Typography
+from .integrated_terminal import IntegratedTerminal
 
 
 class TerminalsWindow(QMainWindow):
     """
-    A window that displays formatted, real-time log messages from the application.
-    It listens for events and formats them for clear, readable output.
+    A window that holds multiple terminal-like views.
+    - The Log View shows formatted, real-time log messages from the application.
+    - The Integrated Terminal provides an interactive command line.
     """
 
-    def __init__(self):
+    def __init__(self, event_bus):
         super().__init__()
-        self.setWindowTitle("Kintsugi AvA - Log Terminal")
-        self.setGeometry(250, 250, 900, 500)
+        self.event_bus = event_bus
+        self.setWindowTitle("Kintsugi AvA - Terminals")
+        self.setGeometry(250, 250, 900, 600)
 
+        # Main Tab Widget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border-top: 1px solid {Colors.BORDER_DEFAULT.name()};
+            }}
+            QTabBar::tab {{
+                background: {Colors.SECONDARY_BG.name()};
+                color: {Colors.TEXT_SECONDARY.name()};
+                padding: 8px 15px;
+                border: 1px solid {Colors.BORDER_DEFAULT.name()};
+                border-bottom: none;
+            }}
+            QTabBar::tab:selected, QTabBar::tab:hover {{
+                background: {Colors.PRIMARY_BG.name()};
+                color: {Colors.TEXT_PRIMARY.name()};
+            }}
+        """)
+
+        # --- Log Viewer Tab ---
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setFont(Typography.get_font(10, family="JetBrains Mono"))
@@ -33,27 +56,32 @@ class TerminalsWindow(QMainWindow):
             }}
         """)
         self.log_view.setPlainText("--- Kintsugi AvA Log Terminal Initialized ---")
-        self.setCentralWidget(self.log_view)
+
+        # --- Integrated Terminal Tab ---
+        self.integrated_terminal = IntegratedTerminal(self.event_bus)
+        self.event_bus.subscribe("terminal_output_received", self.integrated_terminal.append_output)
+
+        # Add tabs
+        self.tab_widget.addTab(self.integrated_terminal, "Interactive Terminal")
+        self.tab_widget.addTab(self.log_view, "Log Viewer")
+
+        self.setCentralWidget(self.tab_widget)
 
     def add_log_message(self, source: str, message_type: str, content: str):
-        """A public slot that receives log data and displays it."""
-
+        """A public slot that receives log data and displays it in the log viewer."""
         timestamp = datetime.now().strftime("%H:%M:%S")
 
-        # Define colors for different message types
         type_colors = {
-            "info": "#58a6ff",  # Blue
-            "success": "#3fb950",  # Green
-            "warning": "#d29922",  # Yellow/Orange
-            "error": "#f85149",  # Red
-            "ai_call": "#a5a6ff"  # Purple
+            "info": "#58a6ff",
+            "success": "#3fb950",
+            "warning": "#d29922",
+            "error": "#f85149",
+            "ai_call": "#a5a6ff"
         }
         log_color = type_colors.get(message_type, Colors.TEXT_SECONDARY.name())
 
-        # Escape content to prevent it from being interpreted as HTML
         escaped_content = html.escape(content).replace('\n', '<br>')
 
-        # Construct the log message using simple HTML for styling
         log_html = (
             f'<span style="color: #8b949e;">[{timestamp}]</span> '
             f'<span style="color: {log_color}; font-weight: bold;">[{source.upper()}]</span> '
@@ -61,6 +89,13 @@ class TerminalsWindow(QMainWindow):
         )
 
         self.log_view.append(log_html)
-
-        # Auto-scroll to the bottom
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
+
+    def show_fix_button(self):
+        """Shows the fix button on the interactive terminal."""
+        self.integrated_terminal.show_fix_button()
+        self.tab_widget.setCurrentWidget(self.integrated_terminal)  # Switch to terminal tab
+
+    def hide_fix_button(self):
+        """Hides the fix button on the interactive terminal."""
+        self.integrated_terminal.hide_fix_button()

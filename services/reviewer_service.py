@@ -1,5 +1,5 @@
 # kintsugi_ava/services/reviewer_service.py
-# V6: Enhanced workflow monitor integration with review phase events
+# V7: Cleaned up for user-driven workflow. Removed obsolete event emissions.
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
@@ -10,7 +10,7 @@ import json
 class ReviewerService:
     """
     The ReviewerService uses an LLM to generate a full, corrected version of a file
-    that failed to execute.
+    that failed to execute. It's called on-demand by the ValidationService.
     """
 
     def __init__(self, event_bus: EventBus, llm_client: LLMClient):
@@ -25,9 +25,6 @@ class ReviewerService:
         Returns:
             A string containing the full, corrected source code, or None.
         """
-        # Emit review started event for enhanced workflow monitor
-        self.event_bus.emit("review_started")
-
         self.log("info", f"Reviewer received task to fix '{filename}' near line {line_number}.")
         self.log("info", f"Error was: {error_message.strip().splitlines()[-1]}")
 
@@ -38,7 +35,6 @@ class ReviewerService:
 
         prompt = REFINEMENT_PROMPT.format(
             filename=filename,
-            line_number=line_number,
             code=broken_code,
             error=error_message,
             code_summaries_json=json.dumps(context_for_prompt, indent=2)

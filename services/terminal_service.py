@@ -1,5 +1,5 @@
 # kintsugi_ava/services/terminal_service.py
-# V2: Now a smart command parser with slash command support.
+# V3: Refactored to emit events for command success/failure.
 
 import asyncio
 import shlex
@@ -11,40 +11,40 @@ from gui.code_viewer import CodeViewerWindow
 
 class TerminalService:
     """
-    Parses and executes commands from the integrated terminal, handling special
-    slash commands and delegating to other services.
+    Parses and executes commands, emitting events for success or failure
+    to drive the new user-in-control workflow.
     """
 
-    def __init__(self, event_bus, project_manager: ProjectManager, execution_engine: ExecutionEngine, code_viewer: CodeViewerWindow):
+    def __init__(self, event_bus, project_manager: ProjectManager, execution_engine: ExecutionEngine,
+                 code_viewer: CodeViewerWindow):
         self.event_bus = event_bus
         self.project_manager = project_manager
         self.execution_engine = execution_engine
         self.code_viewer = code_viewer
 
     async def execute_command(self, command: str):
-        """Asynchronously executes a command and emits the output."""
-        output = ""
+        """Asynchronously executes a command and emits events based on the result."""
         # --- COMMAND ROUTING ---
         if command.startswith('/'):
             output = self._handle_slash_command(command)
-        elif command == "run_main": # Keep button commands simple
-            output = self._run_main_script()
+            self.event_bus.emit("terminal_output_received", output)
+        elif command == "run_main":
+            await self._run_main_script()
         elif command == "install_reqs":
-            output = await self._run_pip_install()
+            await self._run_pip_install()
+        elif command == "review_and_fix":
+            self.event_bus.emit("review_and_fix_requested")
         else:
-            output = await self._run_generic_command(command)
-        # --- END ROUTING ---
-
-        self.event_bus.emit("terminal_output_received", output)
+            await self._run_generic_command(command)
 
     def _handle_slash_command(self, command: str) -> str:
-        """Parses and executes slash commands."""
+        """Parses and executes slash commands, returning output immediately."""
         parts = shlex.split(command)
         base_command = parts[0].lower()
         args = parts[1:]
 
         if base_command == "/add":
-            if not args: # If no filename, use the active one
+            if not args:
                 active_file = self.code_viewer.get_active_file_path()
                 if not active_file: return "Usage: /add <filename> or open a file to add it implicitly."
                 args = [active_file]
@@ -61,37 +61,68 @@ class TerminalService:
         else:
             return f"Unknown command: '{base_command}'. Type /help for a list of commands."
 
-    def _run_main_script(self) -> str:
+    async def _run_main_script(self):
+        """Runs the main script and emits success or failure events."""
         self.event_bus.emit("terminal_output_received", "Running main.py...\n")
         result = self.execution_engine.run_main_in_project()
-        if result.success: return f"SUCCESS: main.py ran successfully.\n\nOutput:\n{result.output}\n"
-        else: return f"ERROR: main.py failed to run.\n\nDetails:\n{result.error}\n"
 
-    async def _run_pip_install(self) -> str:
+        if result.success:
+            output = f"SUCCESS: main.py ran successfully.\n\nOutput:\n{result.output}\n"
+            self.event_bus.emit("terminal_output_received", output)
+        else:
+            error_output = f"ERROR: main.py failed to run.\n\nDetails:\n{result.error}\n"
+            self.event_bus.emit("terminal_output_received", error_output)
+            # This is the crucial event for our new workflow
+            self.event_bus.emit("execution_failed", result.error)
+
+    async def _run_pip_install(self):
+        """Runs pip install and reports output."""
         project_dir = self.project_manager.active_project_path
-        if not project_dir: return "ERROR: No active project.\n"
+        if not project_dir:
+            self.event_bus.emit("terminal_output_received", "ERROR: No active project.\n")
+            return
+
         requirements_file = project_dir / "requirements.txt"
-        if not requirements_file.exists(): return "ERROR: requirements.txt not found.\n"
+        if not requirements_file.exists():
+            self.event_bus.emit("terminal_output_received", "ERROR: requirements.txt not found.\n")
+            return
+
         python_executable = self.project_manager.venv_python_path
-        if not python_executable: return "ERROR: No virtual environment found for this project.\n"
+        if not python_executable:
+            self.event_bus.emit("terminal_output_received", "ERROR: No virtual environment found for this project.\n")
+            return
+
         command_to_run = f'"{python_executable}" -m pip install -r "{requirements_file}"'
         self.event_bus.emit("terminal_output_received", f"Running: {command_to_run}\n")
-        return await self._run_generic_command(command_to_run)
+        await self._run_generic_command(command_to_run)
 
-    async def _run_generic_command(self, command: str) -> str:
+    async def _run_generic_command(self, command: str):
+        """Runs a generic shell command and emits success or failure events."""
         project_dir = self.project_manager.active_project_path
-        if not project_dir: return "ERROR: No active project to run a command in.\n"
+        if not project_dir:
+            self.event_bus.emit("terminal_output_received", "ERROR: No active project to run a command in.\n")
+            return
+
         try:
             process = await asyncio.create_subprocess_shell(
                 command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=project_dir
             )
             stdout, stderr = await process.communicate()
-            response = ""
-            if stdout: response += f"{stdout.decode('utf-8', 'ignore')}\n"
-            if stderr: response += f"ERROR:\n{stderr.decode('utf-8', 'ignore')}\n"
-            return response or "Command executed with no output.\n"
+
+            if process.returncode == 0:
+                response = stdout.decode('utf-8',
+                                         'ignore') if stdout else "Command executed successfully with no output.\n"
+                self.event_bus.emit("terminal_output_received", response)
+            else:
+                response = f"ERROR:\n{stderr.decode('utf-8', 'ignore')}\n" if stderr else f"Command failed with exit code {process.returncode}\n"
+                self.event_bus.emit("terminal_output_received", response)
+                # Emit the failure event with the stderr content
+                self.event_bus.emit("execution_failed", stderr.decode('utf-8', 'ignore'))
+
         except Exception as e:
-            return f"Failed to execute command: {e}\n"
+            error_msg = f"Failed to execute command: {e}\n"
+            self.event_bus.emit("terminal_output_received", error_msg)
+            self.event_bus.emit("execution_failed", error_msg)
 
     def _get_help_message(self) -> str:
         """Returns the help text for available slash commands."""

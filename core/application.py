@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V8: Cleaned up diff system removal - no more patch/diff event handling.
+# V9: Decommissioned autonomous loop. Preparing for user-driven co-pilot workflow.
 
 import asyncio
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -41,7 +41,7 @@ class Application:
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow(self.event_bus)
         self.workflow_monitor = WorkflowMonitorWindow(self.event_bus)
-        self.terminals = TerminalsWindow()
+        self.terminals = TerminalsWindow(self.event_bus)  # Pass event bus
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client, self.main_window)
 
         # --- Services (instantiated with dependency injection in mind) ---
@@ -70,9 +70,10 @@ class Application:
             self.code_viewer
         )
 
-        # --- Task Tracking ---
+        # --- Task Tracking & State ---
         self.ai_task = None
         self.terminal_task = None
+        self._last_error_report = None  # For the new co-pilot workflow
 
         # --- Connect Events ---
         self._connect_events()
@@ -80,14 +81,21 @@ class Application:
 
     def _connect_events(self):
         """Subscribe handlers to events on the central event bus."""
+        # Project & Session Management
         self.event_bus.subscribe("user_request_submitted", self._handle_user_request)
         self.event_bus.subscribe("new_project_requested", self._handle_new_project)
         self.event_bus.subscribe("load_project_requested", self._handle_load_project)
+        self.event_bus.subscribe("new_session_requested", self._handle_new_session)
+
+        # Tools & Config
         self.event_bus.subscribe("configure_models_requested", self.model_config_dialog.exec)
         self.event_bus.subscribe("scan_directory_requested", self.rag_manager.open_scan_directory_dialog)
         self.event_bus.subscribe("add_active_project_to_rag_requested", self._handle_add_project_to_rag)
+
+        # Terminal and Execution
         self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
-        self.event_bus.subscribe("new_session_requested", self._handle_new_session)
+        self.event_bus.subscribe("execution_failed", self._handle_execution_failed)
+        self.event_bus.subscribe("review_and_fix_requested", self._handle_review_and_fix)
 
         # Window Visibility & UI Updates
         self.event_bus.subscribe("show_code_viewer_requested", self.code_viewer.show_window)
@@ -98,7 +106,7 @@ class Application:
         self.event_bus.subscribe("node_status_changed", self.workflow_monitor.update_node_status)
         self.event_bus.subscribe("branch_updated", self.code_viewer.statusBar().on_branch_updated)
 
-        # Clean code generation events (no more diff/patch complexity)
+        # Clean code generation events
         self.event_bus.subscribe("prepare_for_generation", self.code_viewer.prepare_for_generation)
         self.event_bus.subscribe("stream_code_chunk", self.code_viewer.stream_code_chunk)
         self.event_bus.subscribe("code_generation_complete", self.code_viewer.display_code)
@@ -115,19 +123,18 @@ class Application:
             return
 
         self.ai_task = asyncio.create_task(self._run_full_workflow(prompt))
-        # This is our new safety net. It will call the method below when the task is done.
         self.ai_task.add_done_callback(self._on_ai_task_done)
 
     def _on_ai_task_done(self, task: asyncio.Task):
         """Callback executed when the main AI task is finished to catch silent errors."""
         try:
-            # This will re-raise any exception that occurred in the task
             task.result()
-            print("[Application] AI task finished successfully.")
+            print("[Application] AI generation task finished successfully.")
+            self.event_bus.emit("ai_response_ready",
+                                "Code generation complete. You can now run the code or ask for modifications.")
         except asyncio.CancelledError:
             print("[Application] AI task was cancelled.")
         except Exception as e:
-            # This is the crucial part. We will now see the hidden error.
             print(f"[Application] CRITICAL ERROR IN AI TASK: {e}")
             import traceback
             traceback.print_exc()
@@ -138,22 +145,50 @@ class Application:
             )
 
     async def _run_full_workflow(self, prompt: str):
-        """Orchestrates the two-phase workflow: Generation then Validation."""
+        """Orchestrates the code generation workflow. The autonomous validation loop has been removed."""
         existing_files = self.project_manager.get_project_files() if self.project_manager.is_existing_project else None
 
-        # Phase 1: Generation
+        # --- The autonomous loop is now disabled ---
+        # The ArchitectService will run, and then the workflow will stop, awaiting user command.
         generation_succeeded = await self.architect_service.generate_or_modify(prompt, existing_files)
-
-        # Phase 2: Validation (only if generation succeeded)
-        if generation_succeeded:
-            await self.validation_service.run_validation_loop()
+        # The line below has been removed.
+        # await self.validation_service.run_validation_loop()
 
     def _handle_terminal_command(self, command: str):
         """Execute a command from the integrated terminal."""
         if self.terminal_task and not self.terminal_task.done():
             self.event_bus.emit("terminal_output_received", "A command is already running.\n")
             return
+
+        # Clear the "fix this" state before running a new command
+        self._last_error_report = None
+        self.terminals.hide_fix_button()
+
         self.terminal_task = asyncio.create_task(self.terminal_service.execute_command(command))
+
+    def _handle_execution_failed(self, error_report: str):
+        """Handles the new event for when a command execution fails."""
+        print("[Application] Execution failed. Storing error report and showing fix button.")
+        self._last_error_report = error_report
+        self.terminals.show_fix_button()
+
+    async def _handle_review_and_fix(self):
+        """Handles the user clicking the new 'Review & Fix' button."""
+        if not self._last_error_report:
+            print("[Application] 'Review & Fix' clicked, but no recent error report found.")
+            return
+
+        print("[Application] Kicking off review and fix task...")
+        self.terminals.hide_fix_button()
+
+        # This will become our new AI task, replacing the main generation task.
+        if self.ai_task and not self.ai_task.done():
+            QMessageBox.warning(self.main_window, "AI Busy", "The AI is currently processing another request.")
+            return
+
+        self.ai_task = asyncio.create_task(self.validation_service.review_and_fix_file(self._last_error_report))
+        self.ai_task.add_done_callback(self._on_ai_task_done)
+        self._last_error_report = None  # Consume the error report
 
     def _handle_new_project(self):
         """Handles the user's request to create a new project."""
@@ -206,6 +241,10 @@ class Application:
             print("[Application] Canceled active terminal task for new session.")
         for agent_id in ["architect", "coder", "executor", "reviewer"]:
             self.event_bus.emit("node_status_changed", agent_id, "idle", "Ready")
+
+        self.terminals.hide_fix_button()
+        self._last_error_report = None
+
         print("[Application] New session state reset.")
 
     async def cancel_all_tasks(self):
