@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V12: Simplified to work with the new RAGService client.
+# V13: Updated to pass role parameter for temperature settings.
 
 import asyncio
 import json
@@ -60,8 +60,9 @@ class ArchitectService:
             self.handle_error("architect", "No model configured.")
             return None
 
+        # Pass the "architect" role for proper temperature setting
         raw_plan_response = "".join(
-            [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt)])
+            [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt, "architect")])
 
         try:
             plan = self._parse_json_response(raw_plan_response)
@@ -142,7 +143,8 @@ class ArchitectService:
         )
 
         file_content = ""
-        async for chunk in self.llm_client.stream_chat(provider, model, code_prompt):
+        # Pass the "coder" role for proper temperature setting
+        async for chunk in self.llm_client.stream_chat(provider, model, code_prompt, "coder"):
             file_content += chunk
             self.event_bus.emit("stream_code_chunk", filename, chunk)
         return self._clean_code_output(file_content)

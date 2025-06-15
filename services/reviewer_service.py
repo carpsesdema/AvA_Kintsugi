@@ -1,5 +1,5 @@
 # kintsugi_ava/services/reviewer_service.py
-# V9: Uses the final, architecturally-aware refinement prompt.
+# V10: Updated to pass role parameter for temperature settings.
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
@@ -35,7 +35,8 @@ class ReviewerService:
 
         self.log("ai_call", f"Asking {provider}/{model} to generate an architectural correction...")
 
-        json_response_str = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt)])
+        # Pass the "reviewer" role for proper temperature setting
+        json_response_str = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt, "reviewer")])
 
         if json_response_str and json_response_str.strip():
             self.log("success", "Reviewer provided a potential fix.")

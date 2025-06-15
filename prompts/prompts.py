@@ -151,5 +151,4 @@ REFINEMENT_PROMPT = textwrap.dedent("""
     # ... the rest of the complete, corrected code for chunk.py ...
     "
     }}
-    ```
-    """)
+    ```    """)
