@@ -1,5 +1,6 @@
 # kintsugi_ava/core/managers/event_coordinator.py
 # Centralized event subscription management
+# V2: Added plugin system event wiring
 
 from core.event_bus import EventBus
 
@@ -8,6 +9,7 @@ class EventCoordinator:
     """
     Centralized event subscription coordinator.
     Single responsibility: Wire up all event subscriptions between components.
+    V2: Now includes plugin system event wiring.
     """
 
     def __init__(self, event_bus: EventBus):
@@ -46,6 +48,7 @@ class EventCoordinator:
         self._wire_code_generation_events()
         self._wire_execution_events()
         self._wire_tool_events()
+        self._wire_plugin_events()
 
         print("[EventCoordinator] Event wiring complete")
 
@@ -122,8 +125,114 @@ class EventCoordinator:
             self.event_bus.subscribe("launch_rag_server_requested",
                                      lambda: rag_manager.launch_rag_server(main_window))
 
+    def _wire_plugin_events(self):
+        """Wire plugin system events."""
+        plugin_manager = self.service_manager.get_plugin_manager()
+        terminals = self.window_manager.get_terminals()
+        main_window = self.window_manager.get_main_window()
+
+        if not plugin_manager:
+            print("[EventCoordinator] Plugin manager not available, skipping plugin event wiring")
+            return
+
+        # Plugin management events
+        self.event_bus.subscribe("plugin_enable_requested", self._handle_plugin_enable_request)
+        self.event_bus.subscribe("plugin_disable_requested", self._handle_plugin_disable_request)
+        self.event_bus.subscribe("plugin_reload_requested", self._handle_plugin_reload_request)
+        self.event_bus.subscribe("plugin_settings_requested", self._handle_plugin_settings_request)
+
+        # Plugin status and logging
+        if terminals:
+            # Route plugin log messages to the terminals window
+            self.event_bus.subscribe("plugin_log_message",
+                                     lambda plugin_name, level, message:
+                                     terminals.add_log_message(f"Plugin:{plugin_name}", level, message))
+
+        # Plugin state change notifications
+        self.event_bus.subscribe("plugin_state_changed", self._handle_plugin_state_changed)
+
+        # UI refresh events for plugin status updates
+        self.event_bus.subscribe("plugin_status_refresh_requested", self._handle_plugin_status_refresh)
+
+        print("[EventCoordinator] Plugin events wired")
+
+    async def _handle_plugin_enable_request(self, plugin_name: str):
+        """Handle plugin enable request."""
+        plugin_manager = self.service_manager.get_plugin_manager()
+        if plugin_manager:
+            success = await plugin_manager.enable_plugin(plugin_name)
+            if success:
+                self.event_bus.emit("log_message_received", "PluginSystem", "success",
+                                    f"Plugin '{plugin_name}' enabled successfully")
+                self.event_bus.emit("plugin_status_refresh_requested")
+            else:
+                self.event_bus.emit("log_message_received", "PluginSystem", "error",
+                                    f"Failed to enable plugin '{plugin_name}'")
+
+    async def _handle_plugin_disable_request(self, plugin_name: str):
+        """Handle plugin disable request."""
+        plugin_manager = self.service_manager.get_plugin_manager()
+        if plugin_manager:
+            success = await plugin_manager.disable_plugin(plugin_name)
+            if success:
+                self.event_bus.emit("log_message_received", "PluginSystem", "success",
+                                    f"Plugin '{plugin_name}' disabled successfully")
+                self.event_bus.emit("plugin_status_refresh_requested")
+            else:
+                self.event_bus.emit("log_message_received", "PluginSystem", "error",
+                                    f"Failed to disable plugin '{plugin_name}'")
+
+    async def _handle_plugin_reload_request(self, plugin_name: str):
+        """Handle plugin reload request."""
+        plugin_manager = self.service_manager.get_plugin_manager()
+        if plugin_manager:
+            # Disable then re-enable to reload
+            disable_success = await plugin_manager.disable_plugin(plugin_name)
+            if disable_success:
+                enable_success = await plugin_manager.enable_plugin(plugin_name)
+                if enable_success:
+                    self.event_bus.emit("log_message_received", "PluginSystem", "success",
+                                        f"Plugin '{plugin_name}' reloaded successfully")
+                else:
+                    self.event_bus.emit("log_message_received", "PluginSystem", "error",
+                                        f"Failed to reload plugin '{plugin_name}' - enable failed")
+            else:
+                self.event_bus.emit("log_message_received", "PluginSystem", "error",
+                                    f"Failed to reload plugin '{plugin_name}' - disable failed")
+
+            self.event_bus.emit("plugin_status_refresh_requested")
+
+    def _handle_plugin_settings_request(self, plugin_name: str):
+        """Handle plugin settings request."""
+        # This would open a plugin settings dialog
+        # For now, just log that settings were requested
+        self.event_bus.emit("log_message_received", "PluginSystem", "info",
+                            f"Settings requested for plugin '{plugin_name}' (not yet implemented)")
+
+    def _handle_plugin_state_changed(self, plugin_name: str, old_state, new_state):
+        """Handle plugin state change."""
+        self.event_bus.emit("log_message_received", "PluginSystem", "info",
+                            f"Plugin '{plugin_name}' state changed: {old_state.value} -> {new_state.value}")
+
+    def _handle_plugin_status_refresh(self):
+        """Handle plugin status refresh request."""
+        # This would refresh any plugin status displays in the UI
+        # For now, just log that a refresh was requested
+        self.event_bus.emit("log_message_received", "PluginSystem", "info",
+                            "Plugin status refresh requested")
+
     def get_subscription_status(self) -> dict:
         """Get status of event subscriptions for debugging."""
+        plugin_events_count = 0
+        if self.service_manager and self.service_manager.get_plugin_manager():
+            # Count plugin-related events
+            plugin_events = [
+                "plugin_enable_requested", "plugin_disable_requested", "plugin_reload_requested",
+                "plugin_settings_requested", "plugin_log_message", "plugin_state_changed",
+                "plugin_status_refresh_requested"
+            ]
+            plugin_events_count = len(plugin_events)
+
         return {
             "managers_set": all([
                 self.service_manager,
@@ -132,5 +241,7 @@ class EventCoordinator:
                 self.task_manager
             ]),
             "event_bus_available": self.event_bus is not None,
-            "subscription_count": len(self.event_bus._subscribers) if hasattr(self.event_bus, '_subscribers') else 0
+            "subscription_count": len(self.event_bus._subscribers) if hasattr(self.event_bus, '_subscribers') else 0,
+            "plugin_events_wired": plugin_events_count > 0,
+            "plugin_events_count": plugin_events_count
         }

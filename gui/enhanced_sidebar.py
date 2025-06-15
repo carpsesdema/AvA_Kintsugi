@@ -1,7 +1,8 @@
 # kintsugi_ava/gui/enhanced_sidebar.py
-# V6: Wires up the "Add Project Files" RAG button.
+# V7: Added plugin management section
+
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QPushButton
 from PySide6.QtCore import Qt
 import qtawesome as qta
 
@@ -27,6 +28,7 @@ class EnhancedSidebar(QWidget):
         main_layout.addWidget(self._create_project_panel())
         main_layout.addWidget(self._create_model_panel())
         main_layout.addWidget(self._create_knowledge_panel())
+        main_layout.addWidget(self._create_plugin_panel())
         main_layout.addWidget(self._create_actions_panel())
         main_layout.addStretch()
 
@@ -73,7 +75,6 @@ class EnhancedSidebar(QWidget):
     def _create_knowledge_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Knowledge Base (RAG)")
 
-        # --- NEW: Button to launch the RAG server ---
         launch_rag_btn = ModernButton("Launch RAG Server", "primary")
         launch_rag_btn.setIcon(qta.icon("fa5s.rocket", color=Colors.TEXT_PRIMARY.name()))
         launch_rag_btn.clicked.connect(lambda: self.event_bus.emit("launch_rag_server_requested"))
@@ -89,6 +90,65 @@ class EnhancedSidebar(QWidget):
 
         layout.addWidget(scan_btn)
         layout.addWidget(add_files_btn)
+        return panel
+
+    def _create_plugin_panel(self) -> QFrame:
+        """New plugin management panel."""
+        panel, layout = self._create_styled_panel("Plugin System")
+
+        # Plugin status display
+        self.plugin_status_label = QLabel("Plugins: Loading...")
+        self.plugin_status_label.setFont(Typography.body())
+        self.plugin_status_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()}; padding: 2px 0px;")
+        layout.addWidget(self.plugin_status_label)
+
+        # Plugin action buttons
+        plugin_buttons_layout = QHBoxLayout()
+        plugin_buttons_layout.setSpacing(4)
+
+        refresh_plugins_btn = QPushButton("Refresh")
+        refresh_plugins_btn.setFont(Typography.body())
+        refresh_plugins_btn.setMaximumHeight(24)
+        refresh_plugins_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.ELEVATED_BG.name()};
+                color: {Colors.TEXT_PRIMARY.name()};
+                border: 1px solid {Colors.BORDER_DEFAULT.name()};
+                border-radius: 4px;
+                padding: 2px 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.ACCENT_BLUE.name()};
+            }}
+        """)
+        refresh_plugins_btn.clicked.connect(lambda: self.event_bus.emit("plugin_status_refresh_requested"))
+
+        manage_plugins_btn = QPushButton("Manage")
+        manage_plugins_btn.setFont(Typography.body())
+        manage_plugins_btn.setMaximumHeight(24)
+        manage_plugins_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.ELEVATED_BG.name()};
+                color: {Colors.TEXT_PRIMARY.name()};
+                border: 1px solid {Colors.BORDER_DEFAULT.name()};
+                border-radius: 4px;
+                padding: 2px 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.ACCENT_BLUE.name()};
+            }}
+        """)
+        manage_plugins_btn.clicked.connect(lambda: self.event_bus.emit("plugin_management_requested"))
+
+        plugin_buttons_layout.addWidget(refresh_plugins_btn)
+        plugin_buttons_layout.addWidget(manage_plugins_btn)
+        plugin_buttons_layout.addStretch()
+        layout.addLayout(plugin_buttons_layout)
+
+        # Subscribe to plugin status updates
+        self.event_bus.subscribe("plugin_status_changed", self._update_plugin_status)
+        self.event_bus.subscribe("plugin_status_refresh_requested", self._refresh_plugin_status)
+
         return panel
 
     def _create_actions_panel(self) -> QFrame:
@@ -122,3 +182,17 @@ class EnhancedSidebar(QWidget):
     def update_project_display(self, project_name: str):
         """Public method to update the project name label."""
         self.project_name_label.setText(f"Project: {project_name}")
+
+    def _update_plugin_status(self, *args):
+        """Update plugin status display when plugins change state."""
+        self._refresh_plugin_status()
+
+    def _refresh_plugin_status(self):
+        """Refresh the plugin status display."""
+        # This would normally get real plugin status from the plugin manager
+        # For now, show a placeholder
+        self.plugin_status_label.setText("Plugins: Ready (Click Manage)")
+
+        # Emit a request for actual plugin status
+        # The event coordinator will handle getting real status from the plugin manager
+        self.event_bus.emit("log_message_received", "UI", "info", "Plugin status refresh requested")

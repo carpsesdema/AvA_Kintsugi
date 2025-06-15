@@ -1,5 +1,5 @@
 # kintsugi_ava/services/rag_manager.py
-# V7: Implemented directory scanning and ingestion orchestration.
+# V8: Fixed constructor to work with manager architecture
 
 import asyncio
 import subprocess
@@ -8,43 +8,60 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtWidgets import QMessageBox, QFileDialog
 
-# --- FIX: Import necessary services ---
+# Import necessary services
 from .rag_service import RAGService
 from .directory_scanner_service import DirectoryScannerService
 from .chunking_service import ChunkingService
-from core.project_manager import ProjectManager
-# --- END FIX ---
 
 
 class RAGManager(QObject):
     """
     Manages the RAG pipeline by orchestrating the RAGService client and
     launching/monitoring the external RAG server process.
+    Fixed to work with the manager architecture.
     """
     log_message = Signal(str, str, str)  # Emits (source, type, message)
 
-    # --- FIX: Update constructor to accept required services ---
-    def __init__(self, event_bus, project_manager: ProjectManager, rag_service: RAGService,
-                 scanner: DirectoryScannerService, chunker: ChunkingService):
+    def __init__(self, event_bus):
         super().__init__()
         self.event_bus = event_bus
-        self.project_manager = project_manager
-        self.rag_service = rag_service
-        self.scanner = scanner
-        self.chunker = chunker
-    # --- END FIX ---
+
+        # Create the RAG-related services internally
+        self.rag_service = RAGService()
+        self.scanner = DirectoryScannerService()
+        self.chunker = ChunkingService()
+
+        # RAG server process management
         self.rag_server_process = None
         self._last_connection_status = None
         self._last_process_status = None
+
+        # Status monitoring
         self.status_check_timer = QTimer()
         self.status_check_timer.timeout.connect(self.check_server_status_async)
         self.status_check_timer.start(10000)
+
+        # Connect log messages to event bus
         self.log_message.connect(
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
         )
-        print("[RAGManager] Initialized.")
 
-    # --- FIX: Add methods to handle directory scanning and ingestion ---
+        # Wire up events
+        self._connect_events()
+
+        print("[RAGManager] Initialized with internal services.")
+
+    def _connect_events(self):
+        """Connect to relevant events."""
+        self.event_bus.subscribe("scan_directory_requested",
+                                 lambda: self.open_scan_directory_dialog())
+        self.event_bus.subscribe("add_active_project_to_rag_requested",
+                                 lambda: self.ingest_active_project())
+
+    def set_project_manager(self, project_manager):
+        """Set the project manager reference after it's available."""
+        self.project_manager = project_manager
+
     def open_scan_directory_dialog(self, parent_widget=None):
         """Opens a dialog for the user to select a directory to ingest."""
         directory = QFileDialog.getExistingDirectory(
@@ -58,6 +75,11 @@ class RAGManager(QObject):
 
     def ingest_active_project(self):
         """Ingests all files from the currently active project."""
+        if not hasattr(self, 'project_manager') or not self.project_manager:
+            self.log_message.emit("RAGManager", "warning", "No project manager available.")
+            QMessageBox.warning(None, "No Project Manager", "Project manager not available.")
+            return
+
         if not self.project_manager.active_project_path:
             self.log_message.emit("RAGManager", "warning", "No active project to ingest.")
             QMessageBox.warning(None, "No Project", "Please load or create a project first.")
@@ -76,7 +98,8 @@ class RAGManager(QObject):
             self.log_message.emit("RAGManager", "warning", "No supported files found in the selected directory.")
             return
 
-        self.log_message.emit("RAGManager", "info", f"Found {len(files_to_process)} files. Starting chunking process...")
+        self.log_message.emit("RAGManager", "info",
+                              f"Found {len(files_to_process)} files. Starting chunking process...")
         all_chunks = []
         for file_path in files_to_process:
             try:
@@ -97,7 +120,6 @@ class RAGManager(QObject):
             self.log_message.emit("RAGManager", "success", f"Ingestion complete. {message}")
         else:
             self.log_message.emit("RAGManager", "error", f"Ingestion failed. {message}")
-    # --- END FIX ---
 
     def check_server_status_async(self):
         asyncio.create_task(self._check_and_log_status())
@@ -131,7 +153,8 @@ class RAGManager(QObject):
                 QMessageBox.critical(parent_widget, "Error", f"Could not find rag_server.py at {server_script_path}")
                 return
             if not requirements_path.exists():
-                QMessageBox.critical(parent_widget, "Error", f"Could not find requirements_rag.txt at {requirements_path}")
+                QMessageBox.critical(parent_widget, "Error",
+                                     f"Could not find requirements_rag.txt at {requirements_path}")
                 return
             print(f"Installing RAG server dependencies from {requirements_path}...")
             pip_install = subprocess.Popen([python_executable, "-m", "pip", "install", "-r", str(requirements_path)],
@@ -139,14 +162,17 @@ class RAGManager(QObject):
             stdout, stderr = pip_install.communicate()
             if pip_install.returncode != 0:
                 self.log_message.emit("RAGManager", "error", f"Failed to install RAG dependencies: {stderr}")
-                QMessageBox.critical(parent_widget, "Dependency Error", f"Failed to install RAG dependencies:\n{stderr}")
+                QMessageBox.critical(parent_widget, "Dependency Error",
+                                     f"Failed to install RAG dependencies:\n{stderr}")
                 return
             self.log_message.emit("RAGManager", "success", "RAG dependencies are up to date.")
             creation_flags = 0
             if sys.platform == "win32":
                 creation_flags = subprocess.CREATE_NO_WINDOW
-            self.rag_server_process = subprocess.Popen([python_executable, str(server_script_path)], creationflags=creation_flags)
-            self.log_message.emit("RAGManager", "info", f"RAG server process started with PID: {self.rag_server_process.pid}")
+            self.rag_server_process = subprocess.Popen([python_executable, str(server_script_path)],
+                                                       creationflags=creation_flags)
+            self.log_message.emit("RAGManager", "info",
+                                  f"RAG server process started with PID: {self.rag_server_process.pid}")
             self._last_connection_status = None
             self._last_process_status = None
         except Exception as e:
@@ -155,7 +181,8 @@ class RAGManager(QObject):
 
     def terminate_rag_server(self):
         if self.rag_server_process and self.rag_server_process.poll() is None:
-            self.log_message.emit("RAGManager", "info", f"Terminating RAG server process (PID: {self.rag_server_process.pid})...")
+            self.log_message.emit("RAGManager", "info",
+                                  f"Terminating RAG server process (PID: {self.rag_server_process.pid})...")
             self.rag_server_process.terminate()
             try:
                 self.rag_server_process.wait(timeout=5)
