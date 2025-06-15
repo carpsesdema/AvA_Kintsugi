@@ -1,7 +1,7 @@
 # kintsugi_ava/core/plugins/plugin_manager.py
 # Plugin lifecycle management and coordination
 
-import asyncio  # <--- IMPORT ASYNCIO
+import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 from collections import defaultdict
@@ -372,6 +372,21 @@ class PluginManager:
 
         self.config.save_config()
         return True
+
+    def get_active_plugin_instance(self, plugin_name: str) -> Optional[PluginBase]:
+        """
+        Retrieves an active plugin instance if it's loaded or started.
+
+        Args:
+            plugin_name: The name of the plugin.
+
+        Returns:
+            The plugin instance, or None if not active.
+        """
+        plugin = self._active_plugins.get(plugin_name)
+        if plugin and plugin.state in [PluginState.LOADED, PluginState.STARTED]:
+            return plugin
+        return None
 
     def get_plugin_status(self, plugin_name: str) -> Dict[str, any]:
         """

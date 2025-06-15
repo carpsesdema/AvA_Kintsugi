@@ -1,8 +1,10 @@
 # kintsugi_ava/core/managers/service_manager.py
 # Creates and manages all services and core components
-# V2: Added PluginManager integration
+# V4: Corrected RAG service dependency in ArchitectService initialization.
 
+from __future__ import annotations
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
@@ -19,6 +21,9 @@ from services.validation_service import ValidationService
 from services.terminal_service import TerminalService
 from services.project_indexer_service import ProjectIndexerService
 from services.import_fixer_service import ImportFixerService
+
+if TYPE_CHECKING:
+    from core.plugins import PluginBase
 
 
 class ServiceManager:
@@ -138,12 +143,13 @@ class ServiceManager:
         if self.project_manager:
             self.rag_manager.set_project_manager(self.project_manager)
 
-        # Architect Service (now depends on our new micro-agents)
+        # Architect Service (now depends on the service manager itself to access plugins)
         self.architect_service = ArchitectService(
+            self, # Pass self (the service manager)
             self.event_bus,
             self.llm_client,
             self.project_manager,
-            self.rag_manager.rag_service,
+            self.rag_manager.rag_service, # <-- THIS IS THE FIX! Use the created rag_manager
             self.project_indexer_service,
             self.import_fixer_service
         )
@@ -206,6 +212,21 @@ class ServiceManager:
     def get_plugin_manager(self) -> PluginManager:
         """Get the plugin manager instance."""
         return self.plugin_manager
+
+    def get_active_plugin_instance(self, plugin_name: str) -> Optional['PluginBase']:
+        """
+        Safely retrieves an active plugin instance by name from the PluginManager.
+        This allows services to interact with plugins without direct dependencies.
+
+        Args:
+            plugin_name: The name of the plugin to retrieve.
+
+        Returns:
+            The plugin instance if it is active (loaded/started), otherwise None.
+        """
+        if self.plugin_manager:
+            return self.plugin_manager.get_active_plugin_instance(plugin_name)
+        return None
 
     # Service getters
     def get_rag_manager(self) -> RAGManager:

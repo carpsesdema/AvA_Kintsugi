@@ -1,10 +1,12 @@
 # kintsugi_ava/services/architect_service.py
-# V13: Now uses ProjectIndexerService and ImportFixerService for robust imports.
+# V14: Integrates with ServiceManager to use the LivingDesignAgent plugin.
 
+from __future__ import annotations
 import asyncio
 import json
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
@@ -17,6 +19,9 @@ from services.rag_service import RAGService
 from services.project_indexer_service import ProjectIndexerService
 from services.import_fixer_service import ImportFixerService
 
+if TYPE_CHECKING:
+    from core.managers.service_manager import ServiceManager
+
 
 class ArchitectService:
     """
@@ -24,8 +29,9 @@ class ArchitectService:
     step to fix imports, ensuring greater reliability.
     """
 
-    def __init__(self, event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager,
+    def __init__(self, service_manager: 'ServiceManager', event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager,
                  rag_service: RAGService, project_indexer: ProjectIndexerService, import_fixer: ImportFixerService):
+        self.service_manager = service_manager
         self.event_bus = event_bus
         self.llm_client = llm_client
         self.project_manager = project_manager
@@ -64,7 +70,7 @@ class ArchitectService:
             return None
 
         raw_plan_response = "".join(
-            [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt)])
+            [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt, "architect")])
 
         try:
             plan = self._parse_json_response(raw_plan_response)
@@ -123,7 +129,14 @@ class ArchitectService:
             generated_files["requirements.txt"] = req_content
             self.event_bus.emit("code_generation_complete", {"requirements.txt": req_content})
 
-        # --- NEW: Build the project index AFTER initial files are on disk ---
+        # --- NEW: Get context from Living Design Agent ---
+        living_design_agent = self.service_manager.get_active_plugin_instance("living_design_agent")
+        living_design_context = {}
+        if living_design_agent and hasattr(living_design_agent, 'get_current_documentation'):
+            self.log("info", "Living Design Agent is active. Fetching architecture documentation.")
+            living_design_context = living_design_agent.get_current_documentation()
+        # ---------------------------------------------
+
         self.update_status("coder", "working", "Indexing project structure...")
         project_index = self.project_indexer.build_index(project_root)
 
@@ -134,17 +147,18 @@ class ArchitectService:
             purpose = file_info['purpose']
             self.update_status("coder", "working", f"Writing {filename}...")
 
-            raw_code = await self._generate_one_file_with_context(plan, filename, purpose, project_index)
+            raw_code = await self._generate_one_file_with_context(
+                plan, filename, purpose, project_index, living_design_context
+            )
             if raw_code is None:
                 self.handle_error("coder", f"Failed to generate content for {filename}.")
                 return False
 
             self.log("info", f"Generated raw code for {filename}. Now fixing imports...")
 
-            # --- NEW: Use the Import Fixer micro-agent ---
+            # --- Use the Import Fixer micro-agent ---
             module_path = filename.replace('.py', '').replace('/', '.')
             fixed_code = self.import_fixer.fix_imports(raw_code, project_index, module_path)
-            # -------------------------------------------
 
             generated_files[filename] = fixed_code
             self.event_bus.emit("code_generation_complete", {filename: fixed_code})
@@ -159,7 +173,7 @@ class ArchitectService:
         return True
 
     async def _generate_one_file_with_context(self, plan: dict, filename: str, purpose: str,
-                                              summarized_context: dict) -> str | None:
+                                              project_index: dict, living_design_context: dict) -> str | None:
         provider, model = self.llm_client.get_model_for_role("coder")
         if not provider or not model:
             self.handle_error("coder", "No model configured.")
@@ -167,13 +181,14 @@ class ArchitectService:
 
         code_prompt = CODER_PROMPT.format(
             file_plan_json=json.dumps(plan, indent=2),
-            code_summaries_json=json.dumps(summarized_context, indent=2),
+            living_design_context_json=json.dumps(living_design_context, indent=2, default=str),
+            code_summaries_json=json.dumps(project_index, indent=2),
             filename=filename,
             purpose=purpose
         )
 
         file_content = ""
-        async for chunk in self.llm_client.stream_chat(provider, model, code_prompt):
+        async for chunk in self.llm_client.stream_chat(provider, model, code_prompt, "coder"):
             file_content += chunk
             self.event_bus.emit("stream_code_chunk", filename, chunk)
         return self._clean_code_output(file_content)

@@ -1,5 +1,5 @@
 # kintsugi_ava/prompts/prompts.py
-# V6: Enhanced REFINEMENT_PROMPT to handle multi-file architectural fixes.
+# V7: Enhanced CODER_PROMPT to use Living Design Agent context.
 
 import textwrap
 
@@ -97,8 +97,14 @@ CODER_PROMPT = textwrap.dedent("""
     {file_plan_json}
     ```
 
-    **CONTEXT: SUMMARIES OF COMPLETED FILES**
-    These are structural summaries (imports, classes, function signatures) of files already written. Use them to understand how to import and call code from other files.
+    **CONTEXT: LIVING DESIGN DOCUMENT (REAL-TIME ANALYSIS)**
+    This is a real-time architectural analysis of the project as it's being built. It contains detailed information about classes, functions, and dependencies in already-generated files. Use this as your primary source of truth for how to interact with other parts of the code.
+    ```json
+    {living_design_context_json}
+    ```
+
+    **CONTEXT: BASIC FILE INDEX (FALLBACK)**
+    If the Living Design Document is empty, use this basic index of symbols to modules.
     ```json
     {code_summaries_json}
     ```
@@ -109,10 +115,10 @@ CODER_PROMPT = textwrap.dedent("""
 
     **CRITICAL INSTRUCTIONS:**
     1.  Your response **MUST ONLY** contain the complete, raw code for the single file you were assigned: `{filename}`.
-    2.  **DO NOT** include code from other files.
-    3.  **DO NOT** include any explanations, comments, or markdown formatting like ```python.
+    2.  **DO NOT** include any explanations, comments, or markdown formatting like ```python.
+    3.  **DO NOT** write `__init__` methods that just print "Error:". They should properly initialize the class with `self.attribute = value`.
     4.  Ensure the code is robust, clean, and professional.
-    5.  Use the "FULL PROJECT PLAN" and "SUMMARIES OF COMPLETED FILES" to write correct import statements.
+    5.  Use the "LIVING DESIGN DOCUMENT" and "BASIC FILE INDEX" to write correct and complete import statements.
     """)
 
 # --- FIX: V6 - This new prompt gives the AI the ability to fix multiple files at once. ---
