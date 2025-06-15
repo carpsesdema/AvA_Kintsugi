@@ -1,5 +1,5 @@
 # kintsugi_ava/core/project_manager.py
-# V14: Cleaned up patch system removal - simplified to only handle full file operations.
+# V15: Fixed GitPython constructor error by setting environment variables instead of passing arguments.
 
 import os
 import sys
@@ -35,7 +35,15 @@ class ProjectManager:
         self.repo: git.Repo | None = None
         self.active_dev_branch: git.Head | None = None
         self.is_existing_project: bool = False
-        self.git_executable_path = os.getenv("GIT_EXECUTABLE_PATH")
+
+        # --- FIX: Set environment variable for GitPython ---
+        # This is the officially supported way to tell GitPython where to find the git executable.
+        # It avoids passing an invalid 'git_executable' argument to the Repo() constructor.
+        git_executable_path = os.getenv("GIT_EXECUTABLE_PATH")
+        if git_executable_path:
+            os.environ['GIT_PYTHON_GIT_EXECUTABLE'] = git_executable_path
+            print(f"[ProjectManager] Using Git executable from environment: {git_executable_path}")
+        # --- END FIX ---
 
     @property
     def active_project_name(self) -> str:
@@ -145,7 +153,9 @@ class ProjectManager:
             self.is_existing_project = False
             self.active_dev_branch = None
 
-            self.repo = git.Repo.init(self.active_project_path, git_executable=self.git_executable_path)
+            # --- FIX: Removed git_executable argument ---
+            self.repo = git.Repo.init(self.active_project_path)
+            # --- END FIX ---
             self._create_gitignore_if_needed()
             self.repo.index.add([".gitignore"])
             self.repo.index.commit("Initial commit by Kintsugi AvA")
@@ -178,10 +188,14 @@ class ProjectManager:
         self.active_dev_branch = None
 
         try:
-            self.repo = git.Repo(self.active_project_path, git_executable=self.git_executable_path)
+            # --- FIX: Removed git_executable argument ---
+            self.repo = git.Repo(self.active_project_path)
+            # --- END FIX ---
         except InvalidGitRepositoryError:
             # Initialize Git if not already a repo
-            self.repo = git.Repo.init(self.active_project_path, git_executable=self.git_executable_path)
+            # --- FIX: Removed git_executable argument ---
+            self.repo = git.Repo.init(self.active_project_path)
+            # --- END FIX ---
             self._create_gitignore_if_needed()
             self.repo.index.add(all=True)
             if self.repo.index.diff(None):
