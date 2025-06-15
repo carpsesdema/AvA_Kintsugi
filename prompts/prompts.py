@@ -117,48 +117,38 @@ CODER_PROMPT = textwrap.dedent("""
 
 # --- FIX: V6 - This new prompt gives the AI the ability to fix multiple files at once. ---
 REFINEMENT_PROMPT = textwrap.dedent("""
-    You are a senior software engineer and an expert Python debugger. Your task is to analyze an error in a multi-file Python project and provide the necessary code changes to fix it. The root cause may be in a different file from where the error was reported.
+    You are an expert Python game developer specializing in the Ursina engine. Your task is to fix a critical bug in a multi-file voxel game project.
 
     **THE GOAL:**
-    Fix the bug described in the error report by providing the complete, corrected source code for ALL files that need to be changed.
+    Analyze the complete project source code and the provided error traceback. Identify the root cause of the bug and provide the corrected, complete source code for **only the file(s) that need to be changed.**
 
     **CONTEXT: ENTIRE PROJECT SOURCE CODE**
-    You have access to all files in the project. Analyze them to understand the project's architecture and find the true source of the error.
+    This JSON object contains the full source for every file in the project. Use this to understand the relationships and dependencies between modules.
     ```json
     {project_source_json}
     ```
 
     **THE ERROR THAT OCCURRED:**
-    This is the error report. Pay close attention to the file where the error occurred (`{error_filename}`) and the specific error message.
+    This is the error report. The error occurred in `{error_filename}`.
     ```
     {error_report}
     ```
 
-    **CRITICAL INSTRUCTIONS:**
-    1.  **Identify the Root Cause:** The error is an `ImportError` in `{error_filename}`. This means a variable is being imported that doesn't exist in its source file. The architectural convention is that shared constants should be defined in `config.py`. The correct fix is to add the missing variable to `config.py` and ensure the import is correct in `{error_filename}`, not to define it locally.
-    2.  **Formulate the Fix:** Determine which file(s) must be changed. This will likely include `config.py` and the file that crashed, `{error_filename}`.
-    3.  **Provide Complete Files:** Your response MUST be a single, valid JSON object. The keys of the object are the filenames (e.g., "config.py"), and the values are the **complete, new source code** for those files.
-    4.  **DO NOT** include files that do not need to be changed.
-    5.  **DO NOT** include any explanations, comments, or markdown formatting outside of the JSON object.
+    **CRITICAL INSTRUCTIONS & DEBUGGING HINTS:**
+    1.  **Analyze the Full Picture:** The bug might be a simple typo in `{error_filename}`, or it could be a deeper architectural issue, like a mismatch in how two files interact. Use the full project context to find the true root cause.
+    2.  **Common Ursina `Mesh` Error:** If the error is a `ValueError` related to `Mesh` creation, the most common cause is mismatched data lengths or incorrect data types for `vertices`, `triangles`, or `uvs`. Specifically, `uvs` must be a list of 2D coordinates (like tuples `(u, v)` or `Vec2`), NOT 3D vectors (`Vec3`).
+    3.  **Output Format:** Your response MUST be a single, valid JSON object. The keys are the filenames that need to change, and the values are their complete, new source code.
+    4.  **Be Precise:** Only include files that require changes. If only `chunk.py` needs a fix, only include `chunk.py` in your response.
+    5.  **No Explanations:** Do not include any explanations, comments, or markdown formatting outside of the JSON object.
 
-    **EXAMPLE RESPONSE (if 'config.py' and 'main.py' need fixing):**
+    **EXAMPLE RESPONSE (if only chunk.py needs fixing):**
     ```json
     {{
-      "config.py": "
-    # config.py
-    APP_TITLE = 'My Awesome App'
-    DEFAULT_PORT = 8080
-    # ... other constants ...
-    ",
-      "main.py": "
-    # main.py
-    from config import APP_TITLE, DEFAULT_PORT
-
-    def run_app():
-        print(f'Starting {{APP_TITLE}} on port {{DEFAULT_PORT}}')
-
-    if __name__ == '__main__':
-        run_app()
+      "world/chunk.py": "
+    # kintsugi_ava/world/chunk.py
+    import numpy as np
+    from ursina import Entity, Mesh, Vec3, Vec2
+    # ... the rest of the complete, corrected code for chunk.py ...
     "
     }}
     ```
