@@ -1,5 +1,5 @@
 # kintsugi_ava/services/terminal_service.py
-# V3: Refactored to emit events for command success/failure.
+# V4: Ensures pip install uses the project's specific virtual environment.
 
 import asyncio
 import shlex
@@ -72,11 +72,11 @@ class TerminalService:
         else:
             error_output = f"ERROR: main.py failed to run.\n\nDetails:\n{result.error}\n"
             self.event_bus.emit("terminal_output_received", error_output)
-            # This is the crucial event for our new workflow
             self.event_bus.emit("execution_failed", result.error)
 
+    # --- FIX: This method is now venv-aware ---
     async def _run_pip_install(self):
-        """Runs pip install and reports output."""
+        """Runs pip install using the project's specific virtual environment."""
         project_dir = self.project_manager.active_project_path
         if not project_dir:
             self.event_bus.emit("terminal_output_received", "ERROR: No active project.\n")
@@ -87,14 +87,21 @@ class TerminalService:
             self.event_bus.emit("terminal_output_received", "ERROR: requirements.txt not found.\n")
             return
 
+        # THIS IS THE CRITICAL FIX: Get the python executable *from the project's .venv*
         python_executable = self.project_manager.venv_python_path
         if not python_executable:
-            self.event_bus.emit("terminal_output_received", "ERROR: No virtual environment found for this project.\n")
+            self.event_bus.emit("terminal_output_received",
+                                "ERROR: No virtual environment found for this project. Cannot install requirements.\n")
             return
 
+        # Construct the command using the correct, full path to the venv's python
         command_to_run = f'"{python_executable}" -m pip install -r "{requirements_file}"'
         self.event_bus.emit("terminal_output_received", f"Running: {command_to_run}\n")
+
+        # Use the generic command runner to execute it
         await self._run_generic_command(command_to_run)
+
+    # --- END FIX ---
 
     async def _run_generic_command(self, command: str):
         """Runs a generic shell command and emits success or failure events."""
@@ -104,8 +111,11 @@ class TerminalService:
             return
 
         try:
-            process = await asyncio.create_subprocess_shell(
-                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=project_dir
+            # We can run the command directly without needing the shell, which is safer
+            # shlex.split helps handle paths with spaces correctly.
+            args = shlex.split(command)
+            process = await asyncio.create_subprocess_exec(
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=project_dir
             )
             stdout, stderr = await process.communicate()
 
@@ -116,7 +126,6 @@ class TerminalService:
             else:
                 response = f"ERROR:\n{stderr.decode('utf-8', 'ignore')}\n" if stderr else f"Command failed with exit code {process.returncode}\n"
                 self.event_bus.emit("terminal_output_received", response)
-                # Emit the failure event with the stderr content
                 self.event_bus.emit("execution_failed", stderr.decode('utf-8', 'ignore'))
 
         except Exception as e:
