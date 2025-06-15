@@ -1,6 +1,6 @@
 # kintsugi_ava/core/managers/service_manager.py
 # Creates and manages all services and core components
-# V4: Corrected RAG service dependency in ArchitectService initialization.
+# V5: Added service injection support for plugins that need service references
 
 from __future__ import annotations
 from pathlib import Path
@@ -30,7 +30,7 @@ class ServiceManager:
     """
     Creates and manages all services and core components.
     Single responsibility: Service lifecycle and dependency management.
-    V2: Now includes plugin system management.
+    V5: Now includes service injection support for plugins.
     """
 
     def __init__(self, event_bus: EventBus):
@@ -52,6 +52,9 @@ class ServiceManager:
         self.terminal_service: TerminalService = None
         self.project_indexer_service: ProjectIndexerService = None
         self.import_fixer_service: ImportFixerService = None
+
+        # Service injection tracking
+        self._service_injection_enabled = False
 
         print("[ServiceManager] Initialized")
 
@@ -78,53 +81,125 @@ class ServiceManager:
         # Add standard discovery paths
         self._setup_plugin_discovery_paths()
 
+        # Setup service injection event handling
+        self._setup_service_injection()
+
         print("[ServiceManager] Plugin system initialized")
 
     def _setup_plugin_discovery_paths(self):
         """Set up standard plugin discovery paths."""
+        core_plugins_path = Path(__file__).parent.parent / "plugins" / "examples"
+        if core_plugins_path.exists():
+            self.plugin_manager.add_discovery_path(core_plugins_path)
+            print(f"[ServiceManager] Added plugin discovery path: {core_plugins_path}")
+
+    def _setup_service_injection(self):
+        """Set up service injection for plugins that need service references."""
+        # Subscribe to plugin service manager requests
+        self.event_bus.subscribe("plugin_service_manager_request", self._handle_service_injection_request)
+        self._service_injection_enabled = True
+        print("[ServiceManager] Service injection system enabled")
+
+    async def initialize_plugins(self) -> bool:
+        """
+        Initialize the plugin system - discover plugins and load enabled ones.
+
+        Returns:
+            True if initialization succeeded, False otherwise
+        """
+        if not self.plugin_manager:
+            print("[ServiceManager] Plugin manager not initialized, cannot initialize plugins")
+            return False
+
+        try:
+            success = await self.plugin_manager.initialize()
+            if success:
+                print("[ServiceManager] Plugin initialization completed successfully")
+                # Inject services into any plugins that need them after loading
+                if self._service_injection_enabled:
+                    self.inject_services_into_all_compatible_plugins()
+            else:
+                print("[ServiceManager] Plugin initialization completed with warnings")
+            return success
+        except Exception as e:
+            print(f"[ServiceManager] Error during plugin initialization: {e}")
+            return False
+
+    def _handle_service_injection_request(self, plugin_name: str):
+        """
+        Handle a plugin's request for service manager injection.
+
+        Args:
+            plugin_name: Name of the plugin requesting service injection
+        """
+        if not self._service_injection_enabled:
+            print(f"[ServiceManager] Service injection not enabled, ignoring request from {plugin_name}")
+            return
+
+        if not self.plugin_manager:
+            print(f"[ServiceManager] Plugin manager not initialized, cannot inject services for {plugin_name}")
+            return
+
+        # Get the plugin instance
+        plugin_instance = self.plugin_manager.get_active_plugin_instance(plugin_name)
+        if not plugin_instance:
+            print(f"[ServiceManager] Plugin {plugin_name} not found or not active")
+            return
+
+        # Check if plugin supports service injection
+        if not hasattr(plugin_instance, 'set_service_manager'):
+            print(f"[ServiceManager] Plugin {plugin_name} does not support service injection")
+            return
+
+        # Inject service manager reference
+        try:
+            plugin_instance.set_service_manager(self)
+            print(f"[ServiceManager] ✅ Injected service references into {plugin_name}")
+        except Exception as e:
+            print(f"[ServiceManager] ❌ Failed to inject services into {plugin_name}: {e}")
+
+    def inject_services_into_plugin(self, plugin_name: str) -> bool:
+        """
+        Manually inject services into a specific plugin.
+
+        Args:
+            plugin_name: Name of the plugin to inject services into
+
+        Returns:
+            True if injection succeeded, False otherwise
+        """
+        if not self.plugin_manager:
+            return False
+
+        plugin_instance = self.plugin_manager.get_active_plugin_instance(plugin_name)
+        if not plugin_instance or not hasattr(plugin_instance, 'set_service_manager'):
+            return False
+
+        try:
+            plugin_instance.set_service_manager(self)
+            print(f"[ServiceManager] Manually injected services into {plugin_name}")
+            return True
+        except Exception as e:
+            print(f"[ServiceManager] Failed manual service injection for {plugin_name}: {e}")
+            return False
+
+    def inject_services_into_all_compatible_plugins(self):
+        """Inject services into all loaded plugins that support service injection."""
         if not self.plugin_manager:
             return
 
-        # Standard plugin locations
-        plugin_paths = [
-            Path("plugins"),  # Local plugins directory
-            Path("core/plugins/examples"),  # Example plugins
-            Path.home() / ".kintsugi_ava" / "plugins",  # User plugins directory
-        ]
+        injected_count = 0
+        for plugin_name, plugin_info in self.plugin_manager.get_all_plugin_status().items():
+            if plugin_info.get("state") in ["loaded", "started"]:
+                if self.inject_services_into_plugin(plugin_name):
+                    injected_count += 1
 
-        # Create directories if they don't exist and add to discovery
-        for path in plugin_paths:
-            try:
-                if not path.exists():
-                    path.mkdir(parents=True, exist_ok=True)
-                    print(f"[ServiceManager] Created plugin directory: {path}")
-
-                self.plugin_manager.add_discovery_path(path)
-                print(f"[ServiceManager] Added plugin discovery path: {path}")
-
-            except Exception as e:
-                print(f"[ServiceManager] Warning: Could not set up plugin path {path}: {e}")
-
-    async def initialize_plugins(self):
-        """Discover and initialize plugins asynchronously."""
-        if not self.plugin_manager:
-            print("[ServiceManager] Plugin manager not initialized")
-            return False
-
-        print("[ServiceManager] Starting plugin discovery and initialization...")
-
-        success = await self.plugin_manager.initialize()
-
-        if success:
-            print("[ServiceManager] Plugin system initialization completed successfully")
-        else:
-            print("[ServiceManager] Plugin system initialization completed with errors")
-
-        return success
+        if injected_count > 0:
+            print(f"[ServiceManager] Injected services into {injected_count} compatible plugins")
 
     def initialize_services(self, code_viewer=None):
         """
-        Initialize services in dependency order.
+        Initialize all services.
 
         Args:
             code_viewer: CodeViewer instance needed by TerminalService
@@ -145,11 +220,11 @@ class ServiceManager:
 
         # Architect Service (now depends on the service manager itself to access plugins)
         self.architect_service = ArchitectService(
-            self, # Pass self (the service manager)
+            self,  # Pass self (the service manager)
             self.event_bus,
             self.llm_client,
             self.project_manager,
-            self.rag_manager.rag_service, # <-- THIS IS THE FIX! Use the created rag_manager
+            self.rag_manager.rag_service,  # <-- THIS IS THE FIX! Use the created rag_manager
             self.project_indexer_service,
             self.import_fixer_service
         )
@@ -178,6 +253,10 @@ class ServiceManager:
             )
 
         print("[ServiceManager] Services initialized")
+
+        # Inject services into any plugins that need them
+        if self._service_injection_enabled:
+            self.inject_services_into_all_compatible_plugins()
 
     def set_terminal_service_code_viewer(self, code_viewer):
         """
@@ -257,6 +336,7 @@ class ServiceManager:
     def get_import_fixer_service(self) -> ImportFixerService:
         """Get the import fixer service instance."""
         return self.import_fixer_service
+
     # -------------------------------------------
 
     def is_fully_initialized(self) -> bool:
@@ -305,7 +385,8 @@ class ServiceManager:
             },
             "plugin_system": {
                 "plugin_manager": self.plugin_manager is not None,
-                "plugin_status": self.plugin_manager.get_all_plugin_status() if self.plugin_manager else {}
+                "plugin_status": self.plugin_manager.get_all_plugin_status() if self.plugin_manager else {},
+                "service_injection_enabled": self._service_injection_enabled
             },
             "services": {
                 "rag_manager": self.rag_manager is not None,
