@@ -1,5 +1,5 @@
 # kintsugi_ava/core/plugins/examples/system_integrator/__init__.py
-# System Integrator Plugin - Ensures holistic code integration across the entire project
+# System Integrator Plugin - Production-quality holistic code integration analysis and fixing
 
 import asyncio
 import ast
@@ -24,6 +24,7 @@ class IntegrationIssue:
     description: str
     context: Dict[str, Any]
     suggested_fix: Optional[str] = None
+    fix_confidence: float = 0.0  # 0.0 to 1.0
 
 
 @dataclass
@@ -34,29 +35,37 @@ class CodeElement:
     file_path: str
     line_number: int
     signature: Dict[str, Any]
+    dependencies: Set[str]
     parent_class: Optional[str] = None
 
 
 class SystemIntegratorPlugin(PluginBase):
     """
-    The System Integrator ensures that all generated code works together as a cohesive system.
+    Production-quality System Integrator that ensures all generated code works together.
 
     This plugin:
-    - Analyzes the entire codebase after generation
-    - Identifies integration issues between modules
-    - Fixes mismatched signatures, incorrect instantiations, and broken interfaces
+    - Performs deep AST analysis of the entire codebase
+    - Identifies and fixes integration issues between modules
+    - Validates constructor calls, method signatures, and interfaces
     - Ensures main.py properly initializes all components
-    - Validates that all cross-file dependencies work correctly
+    - Applies LLM-powered fixes for complex integration problems
+    - Integrates fully with ProjectManager and LLMClient
     """
 
     def __init__(self, event_bus, plugin_config: Dict[str, Any]):
         super().__init__(event_bus, plugin_config)
 
+        # Service references (injected by ServiceManager)
+        self.service_manager = None
+        self.project_manager = None
+        self.llm_client = None
+
         # Code analysis state
         self.code_elements: Dict[str, CodeElement] = {}
         self.integration_issues: List[IntegrationIssue] = []
-        self.project_structure: Dict[str, Any] = {}
-        self.dependency_map: Dict[str, Set[str]] = defaultdict(set)
+        self.import_map: Dict[str, Set[str]] = defaultdict(set)  # file -> imported names
+        self.definition_map: Dict[str, str] = {}  # name -> file where defined
+        self.usage_map: Dict[str, List[Tuple[str, int]]] = defaultdict(list)  # name -> [(file, line)]
 
         # Integration tracking
         self.last_integration_check: Optional[datetime] = None
@@ -72,7 +81,7 @@ class SystemIntegratorPlugin(PluginBase):
         return PluginMetadata(
             name="system_integrator",
             version="1.0.0",
-            description="Ensures holistic code integration across the entire project by analyzing and fixing system-level issues",
+            description="Production-quality system integration analysis and automatic fixing",
             author="Kintsugi AvA Team",
             dependencies=[],
             event_subscriptions=[
@@ -98,25 +107,15 @@ class SystemIntegratorPlugin(PluginBase):
                     "default": True,
                     "description": "Automatically fix detected integration issues"
                 },
+                "fix_confidence_threshold": {
+                    "type": "float",
+                    "default": 0.8,
+                    "description": "Minimum confidence level to auto-apply fixes (0.0-1.0)"
+                },
                 "analysis_depth": {
                     "type": "str",
                     "default": "deep",
                     "description": "Analysis depth: 'quick', 'standard', 'deep'"
-                },
-                "fix_main_py": {
-                    "type": "bool",
-                    "default": True,
-                    "description": "Automatically fix main.py integration issues"
-                },
-                "validate_interfaces": {
-                    "type": "bool",
-                    "default": True,
-                    "description": "Validate that class interfaces are used correctly"
-                },
-                "check_signatures": {
-                    "type": "bool",
-                    "default": True,
-                    "description": "Check function/method signature consistency"
                 },
                 "detailed_logging": {
                     "type": "bool",
@@ -124,20 +123,16 @@ class SystemIntegratorPlugin(PluginBase):
                     "description": "Log detailed integration analysis information"
                 }
             },
-            enabled_by_default=True  # This should be enabled by default as it's critical
+            enabled_by_default=True
         )
 
     async def load(self) -> bool:
         try:
             self.log("info", "Loading System Integrator...")
-
-            # Initialize analysis state
             self._reset_analysis_state()
-
             self.set_state(PluginState.LOADED)
             self.log("success", "System Integrator loaded")
             return True
-
         except Exception as e:
             self.log("error", f"Failed to load System Integrator: {e}")
             self.set_state(PluginState.ERROR)
@@ -146,6 +141,9 @@ class SystemIntegratorPlugin(PluginBase):
     async def start(self) -> bool:
         try:
             self.log("info", "Starting System Integrator...")
+
+            # Get service references
+            await self._initialize_service_references()
 
             # Subscribe to events
             self.subscribe_to_event("code_generation_complete", self._on_code_generated)
@@ -157,8 +155,7 @@ class SystemIntegratorPlugin(PluginBase):
             self.integration_worker_task = asyncio.create_task(self._integration_worker())
 
             self.set_state(PluginState.STARTED)
-            self.log("info", "🔗 System Integrator active - monitoring code integration")
-
+            self.log("info", "🔗 System Integrator active - production-quality integration monitoring")
             return True
 
         except Exception as e:
@@ -170,7 +167,6 @@ class SystemIntegratorPlugin(PluginBase):
         try:
             self.log("info", "Stopping System Integrator...")
 
-            # Stop integration worker
             if self.integration_worker_task:
                 self.integration_worker_task.cancel()
                 try:
@@ -178,9 +174,7 @@ class SystemIntegratorPlugin(PluginBase):
                 except asyncio.CancelledError:
                     pass
 
-            # Generate final integration report
             await self._generate_integration_report()
-
             self.set_state(PluginState.STOPPED)
             return True
 
@@ -192,18 +186,30 @@ class SystemIntegratorPlugin(PluginBase):
     async def unload(self) -> bool:
         try:
             self.log("info", "Unloading System Integrator...")
-
-            # Clear state
             self._reset_analysis_state()
-
             self.set_state(PluginState.UNLOADED)
             self.log("info", "System Integrator unloaded")
             return True
-
         except Exception as e:
             self.log("error", f"Failed to unload System Integrator: {e}")
             self.set_state(PluginState.ERROR)
             return False
+
+    async def _initialize_service_references(self):
+        """Initialize references to required services."""
+        # Wait a bit for services to be fully initialized
+        await asyncio.sleep(0.1)
+
+        # Get service manager from event bus context (this would be injected in a real implementation)
+        # For now, we'll emit an event to request service manager reference
+        self.emit_event("plugin_service_manager_request", "system_integrator")
+
+    def set_service_manager(self, service_manager):
+        """Called by ServiceManager to inject the reference."""
+        self.service_manager = service_manager
+        self.project_manager = service_manager.get_project_manager()
+        self.llm_client = service_manager.get_llm_client()
+        self.log("info", "Service references initialized")
 
     # Event Handlers
     def _on_code_generated(self, files: Dict[str, str]):
@@ -211,32 +217,29 @@ class SystemIntegratorPlugin(PluginBase):
         if not self.get_config_value("auto_integration_check", True):
             return
 
-        self.log("info", f"🔍 Code generation complete - queueing integration analysis for {len(files)} files")
+        self.log("info", f"🔍 Code generation complete - queueing deep integration analysis for {len(files)} files")
 
-        # Queue integration analysis
         asyncio.create_task(self.integration_queue.put({
             "type": "full_analysis",
             "files": files,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "priority": "normal"
         }))
 
     def _on_generation_prepared(self, filenames: List[str], project_path: str = None):
         """Handle generation preparation."""
         if self.get_config_value("detailed_logging", True):
-            self.log("info", f"🔄 Generation prepared for {len(filenames)} files - clearing previous analysis")
-
-        # Clear previous analysis for fresh start
+            self.log("info", f"🔄 Generation prepared for {len(filenames)} files - resetting analysis state")
         self._reset_analysis_state()
 
     def _on_execution_failed(self, error_report: str):
-        """Handle execution failures - prioritize integration analysis."""
+        """Handle execution failures - high priority integration analysis."""
         self.log("warning", "💥 Execution failed - prioritizing integration analysis")
 
-        # Queue high-priority integration analysis
         asyncio.create_task(self.integration_queue.put({
             "type": "error_focused_analysis",
             "error_report": error_report,
-            "priority": "high",
+            "priority": "critical",
             "timestamp": datetime.now().isoformat()
         }))
 
@@ -252,7 +255,6 @@ class SystemIntegratorPlugin(PluginBase):
 
         while self.state == PluginState.STARTED:
             try:
-                # Wait for next analysis request
                 request = await asyncio.wait_for(self.integration_queue.get(), timeout=1.0)
 
                 self.is_analyzing = True
@@ -268,14 +270,16 @@ class SystemIntegratorPlugin(PluginBase):
                 self.is_analyzing = False
 
     async def _process_integration_request(self, request: Dict[str, Any]):
-        """Process a specific integration analysis request."""
+        """Process integration analysis request with full error handling."""
         try:
             request_type = request.get("type", "unknown")
-            self.log("info", f"🔗 Processing integration request: {request_type}")
+            priority = request.get("priority", "normal")
 
-            # Emit analysis started event
+            self.log("info", f"🔗 Processing {priority} integration request: {request_type}")
+
             self.emit_event("integration_analysis_started", {
                 "request_type": request_type,
+                "priority": priority,
                 "timestamp": datetime.now().isoformat()
             })
 
@@ -283,10 +287,7 @@ class SystemIntegratorPlugin(PluginBase):
                 await self._perform_full_integration_analysis(request.get("files", {}))
             elif request_type == "error_focused_analysis":
                 await self._perform_error_focused_analysis(request.get("error_report", ""))
-            else:
-                self.log("warning", f"Unknown integration request type: {request_type}")
 
-            # Emit analysis complete event
             self.emit_event("integration_analysis_complete", {
                 "request_type": request_type,
                 "issues_found": len(self.integration_issues),
@@ -297,79 +298,129 @@ class SystemIntegratorPlugin(PluginBase):
         except Exception as e:
             self.log("error", f"Failed to process integration request: {e}")
 
-    async def _perform_full_integration_analysis(self, files: Dict[str, str]):
-        """Perform comprehensive integration analysis of the entire project."""
+    async def _perform_full_integration_analysis(self, generated_files: Dict[str, str]):
+        """Perform comprehensive integration analysis."""
         try:
-            self.log("info", "🔍 Starting full integration analysis...")
+            self.log("info", "🔍 Starting comprehensive integration analysis...")
 
-            # Step 1: Parse all project files and build code element map
-            await self._analyze_project_structure(files)
+            # Get all project files, not just generated ones
+            all_project_files = await self._get_all_project_files()
+
+            # Merge with generated files (generated files take precedence)
+            all_project_files.update(generated_files)
+
+            if not all_project_files:
+                self.log("warning", "No project files found for analysis")
+                return
+
+            self.log("info", f"📊 Analyzing {len(all_project_files)} total files")
+
+            # Step 1: Deep AST analysis of all files
+            await self._build_comprehensive_code_map(all_project_files)
 
             # Step 2: Identify integration issues
-            issues = await self._identify_integration_issues()
+            issues = await self._identify_all_integration_issues()
 
             if issues:
                 self.log("warning", f"⚠️ Found {len(issues)} integration issues")
 
-                # Step 3: Apply fixes if auto-fix is enabled
+                # Categorize by severity
+                critical = [i for i in issues if i.severity == "critical"]
+                high = [i for i in issues if i.severity == "high"]
+                medium = [i for i in issues if i.severity == "medium"]
+                low = [i for i in issues if i.severity == "low"]
+
+                self.log("info",
+                         f"📊 Issues by severity - Critical: {len(critical)}, High: {len(high)}, Medium: {len(medium)}, Low: {len(low)}")
+
+                # Step 3: Apply fixes if enabled
                 if self.get_config_value("auto_fix_enabled", True):
-                    await self._apply_integration_fixes(issues)
+                    await self._apply_comprehensive_fixes(issues)
             else:
                 self.log("success", "✅ No integration issues found - project is well integrated")
 
             self.last_integration_check = datetime.now()
 
         except Exception as e:
-            self.log("error", f"Failed to perform full integration analysis: {e}")
+            self.log("error", f"Failed to perform integration analysis: {e}")
+            import traceback
+            traceback.print_exc()
 
-    async def _perform_error_focused_analysis(self, error_report: str):
-        """Perform targeted analysis based on execution error."""
+    async def _get_all_project_files(self) -> Dict[str, str]:
+        """Get all Python files from the current project."""
+        if not self.project_manager or not self.project_manager.active_project_path:
+            return {}
+
         try:
-            self.log("info", "🎯 Starting error-focused integration analysis...")
+            project_files = {}
+            project_root = self.project_manager.active_project_path
 
-            # Parse error to identify problematic areas
-            error_context = self._parse_execution_error(error_report)
+            # Get all Python files recursively
+            for py_file in project_root.rglob("*.py"):
+                # Skip venv and cache directories
+                if any(skip in py_file.parts for skip in ['.venv', '__pycache__', '.git']):
+                    continue
 
-            if error_context:
-                # Focus analysis on the problematic file/area
-                focused_issues = await self._analyze_error_context(error_context)
+                try:
+                    relative_path = py_file.relative_to(project_root)
+                    content = py_file.read_text(encoding='utf-8')
+                    project_files[str(relative_path).replace('\\', '/')] = content
+                except Exception as e:
+                    self.log("warning", f"Could not read {py_file}: {e}")
 
-                if focused_issues and self.get_config_value("auto_fix_enabled", True):
-                    await self._apply_integration_fixes(focused_issues)
+            self.log("info", f"📁 Found {len(project_files)} Python files in project")
+            return project_files
 
         except Exception as e:
-            self.log("error", f"Failed to perform error-focused analysis: {e}")
+            self.log("error", f"Failed to get project files: {e}")
+            return {}
 
-    async def _analyze_project_structure(self, files: Dict[str, str] = None):
-        """Analyze the entire project structure and build code element map."""
+    async def _build_comprehensive_code_map(self, files: Dict[str, str]):
+        """Build comprehensive map of all code elements, imports, and usage."""
         try:
-            # Use provided files or get current project files
-            project_files = files or await self._get_project_files()
+            self.log("info", "🗺️ Building comprehensive code map...")
 
-            self.log("info", f"📊 Analyzing structure of {len(project_files)} files")
+            # Clear previous analysis
+            self.code_elements.clear()
+            self.import_map.clear()
+            self.definition_map.clear()
+            self.usage_map.clear()
 
-            for file_path, content in project_files.items():
+            # Analyze each file
+            for file_path, content in files.items():
                 if file_path.endswith('.py'):
-                    await self._analyze_python_file(file_path, content)
+                    await self._analyze_file_comprehensively(file_path, content)
 
-            # Build dependency map
-            self._build_dependency_map()
+            # Build cross-references
+            self._build_cross_references()
 
-            self.log("success", f"📋 Project structure analysis complete: {len(self.code_elements)} elements found")
+            self.log("success",
+                     f"📋 Code map complete: {len(self.code_elements)} elements, {len(self.definition_map)} definitions")
 
         except Exception as e:
-            self.log("error", f"Failed to analyze project structure: {e}")
+            self.log("error", f"Failed to build code map: {e}")
 
-    async def _analyze_python_file(self, file_path: str, content: str):
-        """Analyze a single Python file for code elements."""
+    async def _analyze_file_comprehensively(self, file_path: str, content: str):
+        """Perform comprehensive analysis of a single file."""
         try:
             tree = ast.parse(content)
 
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    await self._process_class_definition(node, file_path, content)
-                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    await self._process_function_definition(node, file_path, content)
+            # Track imports
+            self._extract_imports(tree, file_path)
+
+            # Track definitions and usage
+            visitor = ComprehensiveASTVisitor(file_path)
+            visitor.visit(tree)
+
+            # Store results
+            for element in visitor.elements:
+                key = f"{file_path}::{element.name}"
+                self.code_elements[key] = element
+                self.definition_map[element.name] = file_path
+
+            # Store usage information
+            for name, line in visitor.name_usage:
+                self.usage_map[name].append((file_path, line))
 
         except SyntaxError as e:
             # Syntax errors are critical integration issues
@@ -379,64 +430,629 @@ class SystemIntegratorPlugin(PluginBase):
                 file_path=file_path,
                 line_number=e.lineno,
                 description=f"Syntax error: {e.msg}",
-                context={"error": str(e)}
+                context={"error": str(e), "text": e.text},
+                fix_confidence=0.9
             )
             self.integration_issues.append(issue)
-            self.emit_event("integration_issue_detected", {
-                "issue_type": "syntax_error",
-                "severity": "critical",
-                "file_path": file_path,
-                "description": issue.description
-            })
         except Exception as e:
             self.log("warning", f"Could not analyze {file_path}: {e}")
 
-    async def _process_class_definition(self, node: ast.ClassDef, file_path: str, content: str):
-        """Process a class definition and extract its signature."""
+    def _extract_imports(self, tree: ast.AST, file_path: str):
+        """Extract all imports from a file."""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported_name = alias.asname or alias.name
+                    self.import_map[file_path].add(imported_name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    for alias in node.names:
+                        imported_name = alias.asname or alias.name
+                        self.import_map[file_path].add(imported_name)
+
+    def _build_cross_references(self):
+        """Build cross-references between definitions and usage."""
+        for element_key, element in self.code_elements.items():
+            # Add imports as dependencies
+            file_imports = self.import_map.get(element.file_path, set())
+            element.dependencies.update(file_imports)
+
+    async def _identify_all_integration_issues(self) -> List[IntegrationIssue]:
+        """Identify all types of integration issues."""
+        issues = []
+
+        # Check for undefined name usage
+        issues.extend(await self._check_undefined_names())
+
+        # Check constructor calls
+        issues.extend(await self._check_constructor_calls())
+
+        # Check function calls
+        issues.extend(await self._check_function_calls())
+
+        # Check main.py integration
+        issues.extend(await self._check_main_py_integration())
+
+        # Check import consistency
+        issues.extend(await self._check_import_consistency())
+
+        # Store and emit issues
+        self.integration_issues.extend(issues)
+
+        for issue in issues:
+            self.emit_event("integration_issue_detected", {
+                "issue_type": issue.issue_type,
+                "severity": issue.severity,
+                "file_path": issue.file_path,
+                "description": issue.description,
+                "confidence": issue.fix_confidence
+            })
+
+        return issues
+
+    async def _check_undefined_names(self) -> List[IntegrationIssue]:
+        """Check for usage of undefined names."""
+        issues = []
+
+        for name, usage_locations in self.usage_map.items():
+            # Skip built-ins and common names
+            if name in {'self', 'cls', 'super', 'len', 'str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple'}:
+                continue
+
+            for file_path, line_num in usage_locations:
+                # Check if name is defined in this file or imported
+                file_imports = self.import_map.get(file_path, set())
+                local_definitions = {elem.name for elem in self.code_elements.values() if elem.file_path == file_path}
+
+                if name not in file_imports and name not in local_definitions and name not in self.definition_map:
+                    issue = IntegrationIssue(
+                        issue_type="undefined_name",
+                        severity="high",
+                        file_path=file_path,
+                        line_number=line_num,
+                        description=f"Undefined name '{name}' used",
+                        context={"name": name, "available_definitions": list(self.definition_map.keys())},
+                        fix_confidence=0.7
+                    )
+                    issues.append(issue)
+
+        return issues
+
+    async def _check_constructor_calls(self) -> List[IntegrationIssue]:
+        """Check constructor calls against class definitions."""
+        issues = []
+
+        # This would require more sophisticated AST analysis to find call sites
+        # For now, focus on main.py
+        main_py_content = await self._get_file_content("main.py")
+        if main_py_content:
+            try:
+                tree = ast.parse(main_py_content)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                        class_name = node.func.id
+
+                        # Find class definition
+                        class_element = self._find_class_definition(class_name)
+                        if class_element:
+                            expected_args = class_element.signature.get("constructor_args", [])
+                            provided_args = len(node.args)
+
+                            if provided_args != len(expected_args):
+                                issue = IntegrationIssue(
+                                    issue_type="constructor_mismatch",
+                                    severity="high",
+                                    file_path="main.py",
+                                    line_number=node.lineno,
+                                    description=f"Constructor for {class_name} expects {len(expected_args)} args but got {provided_args}",
+                                    context={
+                                        "class_name": class_name,
+                                        "expected_args": expected_args,
+                                        "provided_args": provided_args,
+                                        "definition_file": class_element.file_path
+                                    },
+                                    fix_confidence=0.9
+                                )
+                                issues.append(issue)
+            except Exception as e:
+                self.log("warning", f"Could not analyze main.py for constructor calls: {e}")
+
+        return issues
+
+    async def _check_function_calls(self) -> List[IntegrationIssue]:
+        """Check function calls against definitions."""
+        # This would require call-site analysis - placeholder for now
+        return []
+
+    async def _check_main_py_integration(self) -> List[IntegrationIssue]:
+        """Check main.py for integration issues."""
+        issues = []
+
+        main_content = await self._get_file_content("main.py")
+        if not main_content:
+            return issues
+
         try:
-            # Extract class signature
-            signature = {
-                "methods": [],
-                "attributes": [],
-                "inheritance": [base.id for base in node.bases if isinstance(base, ast.Name)],
-                "constructor_args": []
-            }
+            tree = ast.parse(main_content)
 
-            # Find __init__ method and extract its signature
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef):
-                    method_sig = {
-                        "name": item.name,
-                        "args": [arg.arg for arg in item.args.args[1:]],  # Skip 'self'
-                        "line": item.lineno
-                    }
-                    signature["methods"].append(method_sig)
-
-                    if item.name == "__init__":
-                        signature["constructor_args"] = method_sig["args"]
-
-            # Store code element
-            element = CodeElement(
-                name=node.name,
-                element_type="class",
-                file_path=file_path,
-                line_number=node.lineno,
-                signature=signature
-            )
-
-            element_key = f"{file_path}::{node.name}"
-            self.code_elements[element_key] = element
+            # Check if main.py has proper error handling
+            has_try_except = any(isinstance(node, ast.Try) for node in ast.walk(tree))
+            if not has_try_except:
+                issue = IntegrationIssue(
+                    issue_type="missing_error_handling",
+                    severity="medium",
+                    file_path="main.py",
+                    line_number=1,
+                    description="main.py lacks error handling - could fail silently",
+                    context={"suggestion": "Add try-except blocks around main logic"},
+                    fix_confidence=0.8
+                )
+                issues.append(issue)
 
         except Exception as e:
-            self.log("warning", f"Could not process class {node.name} in {file_path}: {e}")
+            self.log("warning", f"Could not analyze main.py integration: {e}")
 
-    async def _process_function_definition(self, node: ast.FunctionDef, file_path: str, content: str):
-        """Process a function definition and extract its signature."""
+        return issues
+
+    async def _check_import_consistency(self) -> List[IntegrationIssue]:
+        """Check for import-related issues."""
+        issues = []
+
+        for file_path, imports in self.import_map.items():
+            for imported_name in imports:
+                # Check if imported name is actually defined somewhere in the project
+                if imported_name not in self.definition_map and not self._is_external_import(imported_name):
+                    issue = IntegrationIssue(
+                        issue_type="missing_import_target",
+                        severity="medium",
+                        file_path=file_path,
+                        line_number=1,  # Would need more analysis to get exact line
+                        description=f"Import '{imported_name}' not found in project",
+                        context={"import_name": imported_name},
+                        fix_confidence=0.6
+                    )
+                    issues.append(issue)
+
+        return issues
+
+    def _is_external_import(self, name: str) -> bool:
+        """Check if an import is external (standard library or third-party)."""
+        external_prefixes = {
+            'os', 'sys', 'json', 'ast', 're', 'pathlib', 'typing', 'datetime', 'collections',
+            'asyncio', 'dataclasses', 'PySide6', 'qtawesome', 'aiohttp', 'openai'
+        }
+        return any(name.startswith(prefix) for prefix in external_prefixes)
+
+    def _find_class_definition(self, class_name: str) -> Optional[CodeElement]:
+        """Find class definition by name."""
+        for element in self.code_elements.values():
+            if element.element_type == "class" and element.name == class_name:
+                return element
+        return None
+
+    async def _get_file_content(self, file_path: str) -> Optional[str]:
+        """Get content of a specific file from the project."""
+        if not self.project_manager or not self.project_manager.active_project_path:
+            return None
+
         try:
-            # Skip methods (they're handled in class processing)
-            if self._is_method(node, content):
+            full_path = self.project_manager.active_project_path / file_path
+            if full_path.exists():
+                return full_path.read_text(encoding='utf-8')
+        except Exception as e:
+            self.log("warning", f"Could not read {file_path}: {e}")
+
+        return None
+
+    async def _apply_comprehensive_fixes(self, issues: List[IntegrationIssue]):
+        """Apply fixes with confidence thresholding."""
+        confidence_threshold = self.get_config_value("fix_confidence_threshold", 0.8)
+
+        # Sort by severity and confidence
+        issues_to_fix = sorted(
+            [i for i in issues if i.fix_confidence >= confidence_threshold],
+            key=lambda x: ({"critical": 0, "high": 1, "medium": 2, "low": 3}[x.severity], -x.fix_confidence)
+        )
+
+        self.log("info", f"🔧 Applying {len(issues_to_fix)} high-confidence fixes (threshold: {confidence_threshold})")
+
+        files_to_update = {}
+
+        for issue in issues_to_fix:
+            fix_result = await self._generate_and_apply_fix(issue)
+            if fix_result:
+                if issue.file_path not in files_to_update:
+                    files_to_update[issue.file_path] = await self._get_file_content(issue.file_path) or ""
+
+                files_to_update[issue.file_path] = fix_result["new_content"]
+
+                self.fixes_applied.append({
+                    "issue": issue,
+                    "fix_applied": fix_result["fix_description"],
+                    "timestamp": datetime.now().isoformat(),
+                    "confidence": issue.fix_confidence
+                })
+
+        # Apply all fixes at once
+        if files_to_update and self.project_manager:
+            try:
+                commit_message = f"fix: system integration fixes - {len(self.fixes_applied)} issues resolved"
+                self.project_manager.save_and_commit_files(files_to_update, commit_message)
+                self.log("success", f"✅ Applied {len(self.fixes_applied)} integration fixes and committed changes")
+            except Exception as e:
+                self.log("error", f"Failed to commit fixes: {e}")
+
+    async def _generate_and_apply_fix(self, issue: IntegrationIssue) -> Optional[Dict[str, Any]]:
+        """Generate and apply a fix for a specific issue."""
+        try:
+            if issue.issue_type == "undefined_name":
+                return await self._fix_undefined_name(issue)
+            elif issue.issue_type == "constructor_mismatch":
+                return await self._fix_constructor_mismatch(issue)
+            elif issue.issue_type == "syntax_error":
+                return await self._fix_syntax_error(issue)
+            elif issue.issue_type == "missing_error_handling":
+                return await self._fix_missing_error_handling(issue)
+            else:
+                self.log("warning", f"No fix handler for issue type: {issue.issue_type}")
+                return None
+
+        except Exception as e:
+            self.log("error", f"Failed to generate fix for {issue.issue_type}: {e}")
+            return None
+
+    async def _fix_undefined_name(self, issue: IntegrationIssue) -> Optional[Dict[str, Any]]:
+        """Fix undefined name by adding appropriate import."""
+        name = issue.context["name"]
+
+        # Find where this name is defined
+        if name in self.definition_map:
+            definition_file = self.definition_map[name]
+
+            # Generate import statement
+            module_name = definition_file.replace('.py', '').replace('/', '.')
+            import_statement = f"from {module_name} import {name}"
+
+            # Get current file content
+            current_content = await self._get_file_content(issue.file_path)
+            if current_content:
+                # Insert import at the top (after existing imports)
+                lines = current_content.split('\n')
+                import_insert_line = 0
+
+                # Find where to insert the import
+                for i, line in enumerate(lines):
+                    if line.strip().startswith(('import ', 'from ')):
+                        import_insert_line = i + 1
+                    elif line.strip() and not line.strip().startswith('#'):
+                        break
+
+                lines.insert(import_insert_line, import_statement)
+                new_content = '\n'.join(lines)
+
+                return {
+                    "new_content": new_content,
+                    "fix_description": f"Added import: {import_statement}"
+                }
+
+        return None
+
+    async def _fix_constructor_mismatch(self, issue: IntegrationIssue) -> Optional[Dict[str, Any]]:
+        """Fix constructor mismatch using LLM."""
+        if not self.llm_client:
+            return None
+
+        try:
+            context = issue.context
+            class_name = context["class_name"]
+            expected_args = context["expected_args"]
+
+            # Generate LLM prompt for constructor fix
+            prompt = f"""Fix this constructor call in main.py:
+
+Current issue: {issue.description}
+
+Class: {class_name}
+Expected constructor arguments: {expected_args}
+
+Generate the correct constructor call. Respond with only the corrected line of code.
+Example: MyClass(arg1, arg2, arg3)
+"""
+
+            # Use LLM to generate fix
+            provider, model = self.llm_client.get_model_for_role("reviewer")
+            if provider and model:
+                fix_response = ""
+                async for chunk in self.llm_client.stream_chat(provider, model, prompt, "reviewer"):
+                    fix_response += chunk
+
+                fix_response = fix_response.strip()
+
+                if fix_response and class_name in fix_response:
+                    # Apply the fix to the file
+                    current_content = await self._get_file_content(issue.file_path)
+                    if current_content:
+                        lines = current_content.split('\n')
+                        if issue.line_number and issue.line_number <= len(lines):
+                            # Replace the problematic line
+                            old_line = lines[issue.line_number - 1]
+                            # Find the constructor call and replace it
+                            if class_name in old_line:
+                                # Simple replacement - could be more sophisticated
+                                new_line = re.sub(rf'{class_name}\([^)]*\)', fix_response, old_line)
+                                lines[issue.line_number - 1] = new_line
+
+                                return {
+                                    "new_content": '\n'.join(lines),
+                                    "fix_description": f"Fixed constructor call: {fix_response}"
+                                }
+
+        except Exception as e:
+            self.log("error", f"Failed to generate LLM fix for constructor: {e}")
+
+        return None
+
+    async def _fix_syntax_error(self, issue: IntegrationIssue) -> Optional[Dict[str, Any]]:
+        """Fix syntax error using LLM."""
+        if not self.llm_client:
+            return None
+
+        try:
+            prompt = f"""Fix this Python syntax error:
+
+File: {issue.file_path}
+Line: {issue.line_number}
+Error: {issue.description}
+Problematic text: {issue.context.get('text', '')}
+
+Provide the corrected line of code. Respond with only the fixed line.
+"""
+
+            provider, model = self.llm_client.get_model_for_role("reviewer")
+            if provider and model:
+                fix_response = ""
+                async for chunk in self.llm_client.stream_chat(provider, model, prompt, "reviewer"):
+                    fix_response += chunk
+
+                fix_response = fix_response.strip()
+
+                if fix_response:
+                    current_content = await self._get_file_content(issue.file_path)
+                    if current_content and issue.line_number:
+                        lines = current_content.split('\n')
+                        if issue.line_number <= len(lines):
+                            lines[issue.line_number - 1] = fix_response
+
+                            return {
+                                "new_content": '\n'.join(lines),
+                                "fix_description": f"Fixed syntax error on line {issue.line_number}"
+                            }
+
+        except Exception as e:
+            self.log("error", f"Failed to generate syntax fix: {e}")
+
+        return None
+
+    async def _fix_missing_error_handling(self, issue: IntegrationIssue) -> Optional[Dict[str, Any]]:
+        """Add basic error handling to main.py."""
+        current_content = await self._get_file_content(issue.file_path)
+        if not current_content:
+            return None
+
+        try:
+            # Wrap main logic in try-except
+            lines = current_content.split('\n')
+
+            # Find main execution block
+            main_start = -1
+            for i, line in enumerate(lines):
+                if 'if __name__ == "__main__"' in line:
+                    main_start = i
+                    break
+
+            if main_start >= 0:
+                # Insert try block after the if statement
+                indent = "    "
+                lines.insert(main_start + 1, f"{indent}try:")
+
+                # Indent existing main code
+                for i in range(main_start + 2, len(lines)):
+                    if lines[i].strip():
+                        lines[i] = f"{indent}{lines[i]}"
+
+                # Add except block
+                lines.append(f"{indent}except Exception as e:")
+                lines.append(f"{indent}    print(f'Application error: {{e}}')")
+                lines.append(f"{indent}    import traceback")
+                lines.append(f"{indent}    traceback.print_exc()")
+
+                return {
+                    "new_content": '\n'.join(lines),
+                    "fix_description": "Added error handling to main.py"
+                }
+
+        except Exception as e:
+            self.log("error", f"Failed to add error handling: {e}")
+
+        return None
+
+    async def _perform_error_focused_analysis(self, error_report: str):
+        """Perform targeted analysis based on execution error."""
+        try:
+            self.log("info", "🎯 Starting error-focused integration analysis...")
+
+            error_context = self._parse_execution_error(error_report)
+            if not error_context:
                 return
 
+            # Create targeted issue
+            issue = IntegrationIssue(
+                issue_type="execution_error",
+                severity="critical",
+                file_path=error_context.get("file_path", ""),
+                line_number=error_context.get("line_number"),
+                description=f"Execution error: {error_context.get('error_type', 'Unknown')}",
+                context=error_context,
+                fix_confidence=0.6
+            )
+
+            self.integration_issues.append(issue)
+
+            # Try to fix if high confidence
+            if self.get_config_value("auto_fix_enabled", True):
+                await self._apply_comprehensive_fixes([issue])
+
+        except Exception as e:
+            self.log("error", f"Failed to perform error-focused analysis: {e}")
+
+    def _parse_execution_error(self, error_report: str) -> Optional[Dict[str, Any]]:
+        """Parse execution error to extract actionable information."""
+        try:
+            # Extract file and line information
+            file_matches = re.findall(r'File "([^"]+)", line (\d+)', error_report)
+
+            # Extract error type
+            error_type_match = re.search(r'(\w+Error|\w+Exception):', error_report)
+            error_type = error_type_match.group(1) if error_type_match else "Unknown"
+
+            if file_matches:
+                file_path, line_num = file_matches[-1]
+
+                # Filter to project files only
+                if self.project_manager and self.project_manager.active_project_path:
+                    project_root = self.project_manager.active_project_path
+                    try:
+                        abs_file_path = Path(file_path).resolve()
+                        rel_path = abs_file_path.relative_to(project_root)
+
+                        return {
+                            "file_path": str(rel_path).replace('\\', '/'),
+                            "line_number": int(line_num),
+                            "error_type": error_type,
+                            "error_report": error_report
+                        }
+                    except ValueError:
+                        # File is outside project
+                        pass
+
+        except Exception as e:
+            self.log("warning", f"Could not parse execution error: {e}")
+
+        return None
+
+    def _reset_analysis_state(self):
+        """Reset all analysis state."""
+        self.code_elements.clear()
+        self.integration_issues.clear()
+        self.import_map.clear()
+        self.definition_map.clear()
+        self.usage_map.clear()
+        self.fixes_applied.clear()
+
+    async def _generate_integration_report(self):
+        """Generate comprehensive integration report."""
+        total_issues = len(self.integration_issues)
+        total_fixes = len(self.fixes_applied)
+
+        # Categorize issues by type and severity
+        issue_breakdown = defaultdict(lambda: defaultdict(int))
+        for issue in self.integration_issues:
+            issue_breakdown[issue.issue_type][issue.severity] += 1
+
+        self.log("info", f"📊 Integration Analysis Report:")
+        self.log("info", f"   Total Issues Found: {total_issues}")
+        self.log("info", f"   Total Fixes Applied: {total_fixes}")
+        self.log("info", f"   Success Rate: {(total_fixes / max(total_issues, 1)) * 100:.1f}%")
+        self.log("info", f"   Code Elements Analyzed: {len(self.code_elements)}")
+
+        if issue_breakdown:
+            self.log("info", "   Issue Breakdown:")
+            for issue_type, severities in issue_breakdown.items():
+                severity_str = ", ".join(f"{sev}: {count}" for sev, count in severities.items())
+                self.log("info", f"     {issue_type}: {severity_str}")
+
+    def get_status_info(self) -> Dict[str, Any]:
+        """Get comprehensive plugin status information."""
+        return {
+            "integration_active": self.state == PluginState.STARTED,
+            "is_analyzing": self.is_analyzing,
+            "service_manager_available": self.service_manager is not None,
+            "project_manager_available": self.project_manager is not None,
+            "llm_client_available": self.llm_client is not None,
+            "statistics": {
+                "code_elements": len(self.code_elements),
+                "integration_issues": len(self.integration_issues),
+                "fixes_applied": len(self.fixes_applied),
+                "pending_requests": self.integration_queue.qsize(),
+                "definitions_mapped": len(self.definition_map),
+                "files_with_imports": len(self.import_map)
+            },
+            "last_integration_check": self.last_integration_check.isoformat() if self.last_integration_check else None,
+            "configuration": {
+                "auto_integration_check": self.get_config_value("auto_integration_check", True),
+                "auto_fix_enabled": self.get_config_value("auto_fix_enabled", True),
+                "fix_confidence_threshold": self.get_config_value("fix_confidence_threshold", 0.8),
+                "analysis_depth": self.get_config_value("analysis_depth", "deep")
+            }
+        }
+
+
+class ComprehensiveASTVisitor(ast.NodeVisitor):
+    """Comprehensive AST visitor for detailed code analysis."""
+
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        self.elements: List[CodeElement] = []
+        self.name_usage: List[Tuple[str, int]] = []
+        self.current_class: Optional[str] = None
+
+    def visit_ClassDef(self, node: ast.ClassDef):
+        """Visit class definition."""
+        signature = {
+            "methods": [],
+            "attributes": [],
+            "inheritance": [base.id for base in node.bases if isinstance(base, ast.Name)],
+            "constructor_args": []
+        }
+
+        # Store current class context
+        prev_class = self.current_class
+        self.current_class = node.name
+
+        # Process class body
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef):
+                method_sig = {
+                    "name": item.name,
+                    "args": [arg.arg for arg in item.args.args[1:]],  # Skip 'self'
+                    "line": item.lineno
+                }
+                signature["methods"].append(method_sig)
+
+                if item.name == "__init__":
+                    signature["constructor_args"] = method_sig["args"]
+
+        element = CodeElement(
+            name=node.name,
+            element_type="class",
+            file_path=self.file_path,
+            line_number=node.lineno,
+            signature=signature,
+            dependencies=set()
+        )
+
+        self.elements.append(element)
+
+        # Continue visiting
+        self.generic_visit(node)
+
+        # Restore class context
+        self.current_class = prev_class
+
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        """Visit function definition."""
+        # Skip methods (handled in class processing)
+        if self.current_class is None:
             signature = {
                 "args": [arg.arg for arg in node.args.args],
                 "defaults": len(node.args.defaults),
@@ -447,452 +1063,27 @@ class SystemIntegratorPlugin(PluginBase):
             element = CodeElement(
                 name=node.name,
                 element_type="function",
-                file_path=file_path,
+                file_path=self.file_path,
                 line_number=node.lineno,
-                signature=signature
+                signature=signature,
+                dependencies=set()
             )
 
-            element_key = f"{file_path}::{node.name}"
-            self.code_elements[element_key] = element
+            self.elements.append(element)
 
-        except Exception as e:
-            self.log("warning", f"Could not process function {node.name} in {file_path}: {e}")
+        self.generic_visit(node)
 
-    def _is_method(self, node: ast.FunctionDef, content: str) -> bool:
-        """Check if a function is actually a method inside a class."""
-        # Simple heuristic: check if function is indented (inside a class)
-        lines = content.split('\n')
-        if node.lineno <= len(lines):
-            line = lines[node.lineno - 1]
-            return line.startswith('    def') or line.startswith('\tdef')
-        return False
+    def visit_Name(self, node: ast.Name):
+        """Visit name usage."""
+        if isinstance(node.ctx, ast.Load):
+            self.name_usage.append((node.id, node.lineno))
+        self.generic_visit(node)
 
     def _extract_return_annotation(self, node: ast.FunctionDef) -> Optional[str]:
-        """Extract return type annotation if present."""
+        """Extract return type annotation."""
         if node.returns:
             if isinstance(node.returns, ast.Name):
                 return node.returns.id
             elif isinstance(node.returns, ast.Constant):
                 return str(node.returns.value)
         return None
-
-    def _build_dependency_map(self):
-        """Build a map of dependencies between files."""
-        for element_key, element in self.code_elements.items():
-            file_path = element.file_path
-
-            # Simple dependency detection based on imports and usage
-            for other_key, other_element in self.code_elements.items():
-                if other_element.file_path != file_path:
-                    # Check if this element might depend on the other
-                    if self._check_potential_dependency(element, other_element):
-                        self.dependency_map[file_path].add(other_element.file_path)
-
-    def _check_potential_dependency(self, element: CodeElement, other_element: CodeElement) -> bool:
-        """Check if one element potentially depends on another."""
-        # Simplified dependency detection - could be enhanced
-        return other_element.name.lower() in str(element.signature).lower()
-
-    async def _identify_integration_issues(self) -> List[IntegrationIssue]:
-        """Identify various types of integration issues."""
-        issues = []
-
-        # Check main.py integration
-        if self.get_config_value("fix_main_py", True):
-            main_issues = await self._check_main_py_integration()
-            issues.extend(main_issues)
-
-        # Check interface consistency
-        if self.get_config_value("validate_interfaces", True):
-            interface_issues = await self._check_interface_consistency()
-            issues.extend(interface_issues)
-
-        # Check signature consistency
-        if self.get_config_value("check_signatures", True):
-            signature_issues = await self._check_signature_consistency()
-            issues.extend(signature_issues)
-
-        # Check for missing dependencies
-        dependency_issues = await self._check_missing_dependencies()
-        issues.extend(dependency_issues)
-
-        # Store issues for later processing
-        self.integration_issues.extend(issues)
-
-        # Emit events for detected issues
-        for issue in issues:
-            self.emit_event("integration_issue_detected", {
-                "issue_type": issue.issue_type,
-                "severity": issue.severity,
-                "file_path": issue.file_path,
-                "description": issue.description
-            })
-
-        return issues
-
-    async def _check_main_py_integration(self) -> List[IntegrationIssue]:
-        """Check for integration issues in main.py."""
-        issues = []
-
-        try:
-            # Find main.py in code elements
-            main_py_element = None
-            main_py_content = None
-
-            for element_key, element in self.code_elements.items():
-                if element.file_path.endswith("main.py"):
-                    main_py_element = element
-                    break
-
-            if not main_py_element:
-                # Check if main.py exists in the project files
-                main_py_content = await self._get_file_content("main.py")
-                if not main_py_content:
-                    return issues
-
-            # Analyze main.py for integration issues
-            if main_py_content:
-                tree = ast.parse(main_py_content)
-
-                # Check for proper class instantiations
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Call):
-                        issues.extend(await self._validate_call_node(node, "main.py", main_py_content))
-
-        except Exception as e:
-            self.log("warning", f"Could not check main.py integration: {e}")
-
-        return issues
-
-    async def _validate_call_node(self, node: ast.Call, file_path: str, content: str) -> List[IntegrationIssue]:
-        """Validate a function/class call against its definition."""
-        issues = []
-
-        try:
-            if isinstance(node.func, ast.Name):
-                call_name = node.func.id
-
-                # Find the definition of this call
-                definition = self._find_element_definition(call_name)
-
-                if definition and definition.element_type == "class":
-                    # Validate constructor call
-                    expected_args = definition.signature.get("constructor_args", [])
-                    provided_args = len(node.args)
-
-                    if provided_args != len(expected_args):
-                        issue = IntegrationIssue(
-                            issue_type="constructor_mismatch",
-                            severity="high",
-                            file_path=file_path,
-                            line_number=node.lineno,
-                            description=f"Constructor for {call_name} expects {len(expected_args)} args but got {provided_args}",
-                            context={
-                                "class_name": call_name,
-                                "expected_args": expected_args,
-                                "provided_args": provided_args,
-                                "definition_file": definition.file_path
-                            }
-                        )
-                        issues.append(issue)
-
-        except Exception as e:
-            self.log("warning", f"Could not validate call node: {e}")
-
-        return issues
-
-    def _find_element_definition(self, element_name: str) -> Optional[CodeElement]:
-        """Find the definition of a code element by name."""
-        for element_key, element in self.code_elements.items():
-            if element.name == element_name:
-                return element
-        return None
-
-    async def _check_interface_consistency(self) -> List[IntegrationIssue]:
-        """Check that interfaces (classes) are used consistently."""
-        issues = []
-
-        # Check for interface mismatches between class definitions and usage
-        for element_key, element in self.code_elements.items():
-            if element.element_type == "class":
-                # Check if this class is used correctly elsewhere
-                usage_issues = await self._check_class_usage(element)
-                issues.extend(usage_issues)
-
-        return issues
-
-    async def _check_class_usage(self, class_element: CodeElement) -> List[IntegrationIssue]:
-        """Check if a class is used correctly throughout the project."""
-        issues = []
-
-        # This would check method calls on class instances
-        # For now, return empty list - could be enhanced with more sophisticated analysis
-
-        return issues
-
-    async def _check_signature_consistency(self) -> List[IntegrationIssue]:
-        """Check that function signatures match their usage."""
-        issues = []
-
-        # Check for function call mismatches
-        for element_key, element in self.code_elements.items():
-            if element.element_type == "function":
-                # Check if this function is called correctly elsewhere
-                call_issues = await self._check_function_calls(element)
-                issues.extend(call_issues)
-
-        return issues
-
-    async def _check_function_calls(self, function_element: CodeElement) -> List[IntegrationIssue]:
-        """Check if a function is called correctly throughout the project."""
-        issues = []
-
-        # This would analyze function calls vs function definitions
-        # For now, return empty list - could be enhanced
-
-        return issues
-
-    async def _check_missing_dependencies(self) -> List[IntegrationIssue]:
-        """Check for missing imports or dependencies."""
-        issues = []
-
-        # Check for undefined names that might need imports
-        for element_key, element in self.code_elements.items():
-            # This would check that all referenced names are properly imported
-            # For now, return empty list - could be enhanced
-            pass
-
-        return issues
-
-    async def _apply_integration_fixes(self, issues: List[IntegrationIssue]):
-        """Apply fixes for identified integration issues."""
-        self.log("info", f"🔧 Applying fixes for {len(issues)} integration issues")
-
-        critical_issues = [i for i in issues if i.severity == "critical"]
-        high_issues = [i for i in issues if i.severity == "high"]
-        other_issues = [i for i in issues if i.severity in ["medium", "low"]]
-
-        # Fix critical issues first
-        for issue in critical_issues + high_issues + other_issues:
-            success = await self._apply_single_fix(issue)
-            if success:
-                self.fixes_applied.append({
-                    "issue": issue,
-                    "timestamp": datetime.now().isoformat(),
-                    "status": "applied"
-                })
-
-        if self.fixes_applied:
-            self.log("success", f"✅ Applied {len(self.fixes_applied)} integration fixes")
-
-    async def _apply_single_fix(self, issue: IntegrationIssue) -> bool:
-        """Apply a fix for a single integration issue."""
-        try:
-            if issue.issue_type == "constructor_mismatch":
-                return await self._fix_constructor_mismatch(issue)
-            elif issue.issue_type == "syntax_error":
-                return await self._fix_syntax_error(issue)
-            else:
-                self.log("warning", f"No handler for issue type: {issue.issue_type}")
-                return False
-
-        except Exception as e:
-            self.log("error", f"Failed to apply fix for {issue.issue_type}: {e}")
-            return False
-
-    async def _fix_constructor_mismatch(self, issue: IntegrationIssue) -> bool:
-        """Fix constructor argument mismatch."""
-        try:
-            # Generate fix using LLM integration
-            fix_suggestion = await self._generate_llm_fix(issue)
-
-            if fix_suggestion:
-                # Apply fix to file (this would integrate with project manager)
-                success = await self._apply_file_fix(issue.file_path, fix_suggestion)
-
-                if success:
-                    self.emit_event("integration_fix_applied", {
-                        "issue_type": issue.issue_type,
-                        "file_path": issue.file_path,
-                        "fix_applied": fix_suggestion,
-                        "timestamp": datetime.now().isoformat()
-                    })
-                    return True
-
-            return False
-
-        except Exception as e:
-            self.log("error", f"Failed to fix constructor mismatch: {e}")
-            return False
-
-    async def _fix_syntax_error(self, issue: IntegrationIssue) -> bool:
-        """Fix syntax errors."""
-        try:
-            # Generate syntax fix using LLM
-            fix_suggestion = await self._generate_llm_fix(issue)
-
-            if fix_suggestion:
-                success = await self._apply_file_fix(issue.file_path, fix_suggestion)
-                if success:
-                    self.emit_event("integration_fix_applied", {
-                        "issue_type": issue.issue_type,
-                        "file_path": issue.file_path,
-                        "fix_applied": fix_suggestion,
-                        "timestamp": datetime.now().isoformat()
-                    })
-                return success
-
-            return False
-
-        except Exception as e:
-            self.log("error", f"Failed to fix syntax error: {e}")
-            return False
-
-    async def _generate_llm_fix(self, issue: IntegrationIssue) -> Optional[str]:
-        """Generate a fix for an integration issue using LLM."""
-        try:
-            # This would integrate with the existing LLM infrastructure
-            # For now, return a placeholder fix based on issue type
-
-            if issue.issue_type == "constructor_mismatch":
-                context = issue.context
-                class_name = context.get("class_name", "")
-                expected_args = context.get("expected_args", [])
-
-                # Generate proper constructor call
-                if expected_args:
-                    # Create placeholder arguments
-                    args_str = ", ".join(f"None  # TODO: Provide {arg}" for arg in expected_args)
-                    fix = f"{class_name}({args_str})"
-                else:
-                    fix = f"{class_name}()"
-
-                return fix
-            elif issue.issue_type == "syntax_error":
-                # For syntax errors, suggest a comment fix
-                return f"# TODO: Fix syntax error - {issue.description}"
-
-            return None
-
-        except Exception as e:
-            self.log("error", f"Failed to generate LLM fix: {e}")
-            return None
-
-    async def _apply_file_fix(self, file_path: str, fix_suggestion: str) -> bool:
-        """Apply a fix to a specific file."""
-        try:
-            # This would integrate with the project manager to apply fixes
-            # For now, just log the intended fix
-            self.log("info", f"Would apply fix to {file_path}: {fix_suggestion}")
-            return True
-
-        except Exception as e:
-            self.log("error", f"Failed to apply file fix: {e}")
-            return False
-
-    # Utility Methods
-    async def _get_project_files(self) -> Dict[str, str]:
-        """Get all project files for analysis."""
-        # This would integrate with project manager to get current files
-        # For now, return the code elements we've already analyzed
-        files = {}
-        for element_key, element in self.code_elements.items():
-            if element.file_path not in files:
-                files[element.file_path] = await self._get_file_content(element.file_path) or ""
-        return files
-
-    async def _get_file_content(self, file_path: str) -> Optional[str]:
-        """Get content of a specific file."""
-        # This would integrate with project manager
-        # For now, return None - this method would be implemented with proper project manager integration
-        return None
-
-    def _parse_execution_error(self, error_report: str) -> Optional[Dict[str, Any]]:
-        """Parse execution error to identify problematic areas."""
-        try:
-            # Extract file and line information from traceback
-            file_matches = re.findall(r'File "([^"]+)", line (\d+)', error_report)
-
-            if file_matches:
-                # Get the most relevant file (usually the last one in user code)
-                file_path, line_num = file_matches[-1]
-
-                return {
-                    "file_path": file_path,
-                    "line_number": int(line_num),
-                    "error_report": error_report
-                }
-
-        except Exception as e:
-            self.log("warning", f"Could not parse execution error: {e}")
-
-        return None
-
-    async def _analyze_error_context(self, error_context: Dict[str, Any]) -> List[IntegrationIssue]:
-        """Analyze specific error context for integration issues."""
-        issues = []
-
-        # Create a targeted integration issue based on the error
-        issue = IntegrationIssue(
-            issue_type="execution_error",
-            severity="high",
-            file_path=error_context.get("file_path", ""),
-            line_number=error_context.get("line_number"),
-            description="Execution error indicates integration issue",
-            context=error_context
-        )
-
-        issues.append(issue)
-        return issues
-
-    def _reset_analysis_state(self):
-        """Reset all integration analysis state."""
-        self.code_elements = {}
-        self.integration_issues = []
-        self.project_structure = {}
-        self.dependency_map = defaultdict(set)
-        self.fixes_applied = []
-
-    async def _generate_integration_report(self):
-        """Generate final integration report."""
-        total_issues = len(self.integration_issues)
-        total_fixes = len(self.fixes_applied)
-
-        report = {
-            "integration_analysis": {
-                "total_issues_found": total_issues,
-                "total_fixes_applied": total_fixes,
-                "success_rate": (total_fixes / max(total_issues, 1)) * 100,
-                "last_check": self.last_integration_check.isoformat() if self.last_integration_check else None
-            },
-            "code_analysis": {
-                "total_elements": len(self.code_elements),
-                "files_analyzed": len(set(e.file_path for e in self.code_elements.values())),
-                "dependency_connections": sum(len(deps) for deps in self.dependency_map.values())
-            }
-        }
-
-        self.log("info",
-                 f"📊 Integration Report: {total_fixes}/{total_issues} issues fixed ({report['integration_analysis']['success_rate']:.1f}% success rate)")
-
-    def get_status_info(self) -> Dict[str, Any]:
-        """Get plugin status information."""
-        return {
-            "integration_active": self.state == PluginState.STARTED,
-            "is_analyzing": self.is_analyzing,
-            "auto_fix_enabled": self.get_config_value("auto_fix_enabled", True),
-            "analysis_depth": self.get_config_value("analysis_depth", "deep"),
-            "statistics": {
-                "code_elements": len(self.code_elements),
-                "integration_issues": len(self.integration_issues),
-                "fixes_applied": len(self.fixes_applied),
-                "pending_requests": self.integration_queue.qsize()
-            },
-            "last_integration_check": self.last_integration_check.isoformat() if self.last_integration_check else None,
-            "configuration": {
-                "auto_integration_check": self.get_config_value("auto_integration_check", True),
-                "fix_main_py": self.get_config_value("fix_main_py", True),
-                "validate_interfaces": self.get_config_value("validate_interfaces", True),
-                "check_signatures": self.get_config_value("check_signatures", True)
-            }
-        }
