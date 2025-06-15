@@ -1,5 +1,5 @@
 # kintsugi_ava/prompts/prompts.py
-# V5: A much more robust REFINEMENT_PROMPT to fix logical loops.
+# V6: Enhanced REFINEMENT_PROMPT to handle multi-file architectural fixes.
 
 import textwrap
 
@@ -115,36 +115,51 @@ CODER_PROMPT = textwrap.dedent("""
     5.  Use the "FULL PROJECT PLAN" and "SUMMARIES OF COMPLETED FILES" to write correct import statements.
     """)
 
-# V5: This new prompt encourages a holistic review of the file, not just a line-by-line fix.
+# --- FIX: V6 - This new prompt gives the AI the ability to fix multiple files at once. ---
 REFINEMENT_PROMPT = textwrap.dedent("""
-    You are a senior software engineer acting as a master debugger. Your task is to fix a Python script that failed to run by rewriting it completely.
+    You are a senior software engineer and an expert Python debugger. Your task is to analyze an error in a multi-file Python project and provide the necessary code changes to fix it. The root cause may be in a different file from where the error was reported.
 
     **THE GOAL:**
-    Rewrite the file `{filename}` to fix the bug reported below. The entire file should be analyzed and corrected to ensure it is logically sound and works correctly within the project. Do not just fix the single line of the error; fix the underlying logical problem.
+    Fix the bug described in the error report by providing the complete, corrected source code for ALL files that need to be changed.
 
-    **CONTEXT: SUMMARIES OF OTHER PROJECT FILES**
-    Use these summaries to understand how to correctly call functions and instantiate classes from other modules.
+    **CONTEXT: ENTIRE PROJECT SOURCE CODE**
+    You have access to all files in the project. Analyze them to understand the project's architecture and find the true source of the error.
     ```json
-    {{code_summaries_json}}
+    {project_source_json}
     ```
 
-    **FILE TO FIX:** `{filename}`
-
-    **ORIGINAL (BROKEN) CODE for `{filename}`:**
-    ```python
-    {code}
+    **THE ERROR THAT OCCURRED:**
+    This is the error report. Pay close attention to the file where the error occurred (`{error_filename}`) and the specific error message.
     ```
-
-    **THE ERROR THAT OCCURRED WHEN RUNNING THE CODE:**
-    This is the error that you must fix. It may point to a specific line, but the root cause might be the logical interaction between multiple parts of the file.
-    ```
-    {error}
+    {error_report}
     ```
 
     **CRITICAL INSTRUCTIONS:**
-    1.  Analyze the error and the entire original file. Identify the root cause of the bug.
-    2.  Your response **MUST** be only the **complete, corrected, and full source code** for the file `{filename}`.
-    3.  Rewrite the file to be robust and correct. Pay attention to the order of initializations and dependencies between objects and functions within the file.
-    4.  **DO NOT** include explanations, comments, or markdown formatting like ```python.
-    5.  Just return the raw, fixed code that will run without errors.
+    1.  **Identify the Root Cause:** The error is an `ImportError` in `{error_filename}`. This means a variable is being imported that doesn't exist in its source file. The architectural convention is that shared constants should be defined in `config.py`. The correct fix is to add the missing variable to `config.py` and ensure the import is correct in `{error_filename}`, not to define it locally.
+    2.  **Formulate the Fix:** Determine which file(s) must be changed. This will likely include `config.py` and the file that crashed, `{error_filename}`.
+    3.  **Provide Complete Files:** Your response MUST be a single, valid JSON object. The keys of the object are the filenames (e.g., "config.py"), and the values are the **complete, new source code** for those files.
+    4.  **DO NOT** include files that do not need to be changed.
+    5.  **DO NOT** include any explanations, comments, or markdown formatting outside of the JSON object.
+
+    **EXAMPLE RESPONSE (if 'config.py' and 'main.py' need fixing):**
+    ```json
+    {{
+      "config.py": "
+    # config.py
+    APP_TITLE = 'My Awesome App'
+    DEFAULT_PORT = 8080
+    # ... other constants ...
+    ",
+      "main.py": "
+    # main.py
+    from config import APP_TITLE, DEFAULT_PORT
+
+    def run_app():
+        print(f'Starting {{APP_TITLE}} on port {{DEFAULT_PORT}}')
+
+    if __name__ == '__main__':
+        run_app()
+    "
+    }}
+    ```
     """)
