@@ -5,10 +5,12 @@ from gui.main_window import MainWindow
 from gui.code_viewer import CodeViewerWindow
 from gui.workflow_monitor_window import WorkflowMonitorWindow
 from gui.model_config_dialog import ModelConfigurationDialog
+from gui.plugin_management_dialog import PluginManagementDialog
 from gui.terminals import TerminalsWindow
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
+from core.managers.service_manager import ServiceManager
 
 
 class WindowManager:
@@ -28,15 +30,17 @@ class WindowManager:
 
         # Dialogs
         self.model_config_dialog: ModelConfigurationDialog = None
+        self.plugin_management_dialog: PluginManagementDialog = None
 
         print("[WindowManager] Initialized")
 
-    def initialize_windows(self, llm_client: LLMClient):
+    def initialize_windows(self, llm_client: LLMClient, service_manager: ServiceManager):
         """
         Initialize all GUI windows.
 
         Args:
             llm_client: LLM client needed for model configuration dialog
+            service_manager: ServiceManager to get the PluginManager
         """
         print("[WindowManager] Initializing windows...")
 
@@ -48,6 +52,10 @@ class WindowManager:
 
         # Create dialogs (parent will be set when shown)
         self.model_config_dialog = ModelConfigurationDialog(llm_client, self.main_window)
+
+        # Instantiate the new plugin dialog
+        plugin_manager = service_manager.get_plugin_manager()
+        self.plugin_management_dialog = PluginManagementDialog(plugin_manager, self.event_bus, self.main_window)
 
         print("[WindowManager] Windows initialized")
 
@@ -70,6 +78,10 @@ class WindowManager:
     def get_model_config_dialog(self) -> ModelConfigurationDialog:
         """Get the model configuration dialog instance."""
         return self.model_config_dialog
+
+    def get_plugin_management_dialog(self) -> PluginManagementDialog:
+        """Get the plugin management dialog instance."""
+        return self.plugin_management_dialog
 
     def show_main_window(self):
         """Show the main application window."""
@@ -95,6 +107,11 @@ class WindowManager:
         """Show the model configuration dialog."""
         if self.model_config_dialog:
             self.model_config_dialog.exec()
+
+    def show_plugin_management_dialog(self):
+        """Show the plugin management dialog."""
+        if self.plugin_management_dialog:
+            self.plugin_management_dialog.exec()
 
     def update_project_display(self, project_name: str):
         """
@@ -128,7 +145,8 @@ class WindowManager:
             self.code_viewer,
             self.workflow_monitor,
             self.terminals,
-            self.model_config_dialog
+            self.model_config_dialog,
+            self.plugin_management_dialog
         ])
 
     def get_initialization_status(self) -> dict:
@@ -139,5 +157,6 @@ class WindowManager:
             "workflow_monitor": self.workflow_monitor is not None,
             "terminals": self.terminals is not None,
             "model_config_dialog": self.model_config_dialog is not None,
+            "plugin_management_dialog": self.plugin_management_dialog is not None,
             "fully_initialized": self.is_fully_initialized()
         }

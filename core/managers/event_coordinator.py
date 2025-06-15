@@ -2,6 +2,7 @@
 # Centralized event subscription management
 # V2: Added plugin system event wiring
 
+import asyncio
 from core.event_bus import EventBus
 
 
@@ -136,9 +137,19 @@ class EventCoordinator:
             return
 
         # Plugin management events
-        self.event_bus.subscribe("plugin_enable_requested", self._handle_plugin_enable_request)
-        self.event_bus.subscribe("plugin_disable_requested", self._handle_plugin_disable_request)
-        self.event_bus.subscribe("plugin_reload_requested", self._handle_plugin_reload_request)
+        self.event_bus.subscribe("plugin_management_requested", self.window_manager.show_plugin_management_dialog)
+
+        # --- THIS IS THE FIX ---
+        # The event bus is sync, but the handlers are async. We use a lambda to schedule the
+        # async handler as a task on the event loop, preventing the "never awaited" warning.
+        self.event_bus.subscribe("plugin_enable_requested",
+                                 lambda name: asyncio.create_task(self._handle_plugin_enable_request(name)))
+        self.event_bus.subscribe("plugin_disable_requested",
+                                 lambda name: asyncio.create_task(self._handle_plugin_disable_request(name)))
+        self.event_bus.subscribe("plugin_reload_requested",
+                                 lambda name: asyncio.create_task(self._handle_plugin_reload_request(name)))
+        # ----------------------
+
         self.event_bus.subscribe("plugin_settings_requested", self._handle_plugin_settings_request)
 
         # Plugin status and logging
@@ -187,6 +198,8 @@ class EventCoordinator:
         plugin_manager = self.service_manager.get_plugin_manager()
         if plugin_manager:
             # Disable then re-enable to reload
+            self.event_bus.emit("log_message_received", "PluginSystem", "info",
+                                f"Reloading plugin '{plugin_name}'...")
             disable_success = await plugin_manager.disable_plugin(plugin_name)
             if disable_success:
                 enable_success = await plugin_manager.enable_plugin(plugin_name)

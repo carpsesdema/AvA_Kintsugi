@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# V13: Updated to pass role parameter for temperature settings.
+# V13: Now uses ProjectIndexerService and ImportFixerService for robust imports.
 
 import asyncio
 import json
@@ -10,25 +10,28 @@ from core.event_bus import EventBus
 from core.llm_client import LLMClient
 from core.project_manager import ProjectManager
 from prompts.prompts import (
-    MODIFICATION_PLANNER_PROMPT, HIERARCHICAL_PLANNER_PROMPT,
+    HIERARCHICAL_PLANNER_PROMPT,
     CODER_PROMPT
 )
 from services.rag_service import RAGService
-from utils.code_summarizer import CodeSummarizer
+from services.project_indexer_service import ProjectIndexerService
+from services.import_fixer_service import ImportFixerService
 
 
 class ArchitectService:
     """
-    Handles the AI-driven planning and code generation/modification process.
-    Uses architect role for planning, coder role for actual code generation.
+    Handles AI-driven planning and code generation, now with a post-processing
+    step to fix imports, ensuring greater reliability.
     """
 
     def __init__(self, event_bus: EventBus, llm_client: LLMClient, project_manager: ProjectManager,
-                 rag_service: RAGService):
+                 rag_service: RAGService, project_indexer: ProjectIndexerService, import_fixer: ImportFixerService):
         self.event_bus = event_bus
         self.llm_client = llm_client
         self.project_manager = project_manager
-        self.rag_service = rag_service  # This is now the lightweight RAG client
+        self.rag_service = rag_service
+        self.project_indexer = project_indexer
+        self.import_fixer = import_fixer
 
     async def generate_or_modify(self, prompt: str, existing_files: dict | None) -> bool:
         """Determines whether to start a new project or modify an existing one."""
@@ -40,19 +43,19 @@ class ArchitectService:
                 success = await self._execute_artisanal_generation(plan)
         else:
             self.log("info", "Modification of existing project is not fully implemented yet.")
-            success = False  # Placeholder
+            success = False
 
         if success:
             self.update_status("coder", "success", "Code generation complete.")
+        else:
+            self.handle_error("coder", f"Code generation failed.")
         return success
 
     async def _generate_hierarchical_plan(self, prompt: str) -> dict | None:
         """Generates a structured, multi-file plan for a new project."""
         self.update_status("architect", "working", "Designing project structure...")
 
-        # Query the RAG service for context. The service itself handles connection errors.
         rag_context = await self.rag_service.query(prompt)
-
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
 
         provider, model = self.llm_client.get_model_for_role("architect")
@@ -60,9 +63,8 @@ class ArchitectService:
             self.handle_error("architect", "No model configured.")
             return None
 
-        # Pass the "architect" role for proper temperature setting
         raw_plan_response = "".join(
-            [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt, "architect")])
+            [chunk async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt)])
 
         try:
             plan = self._parse_json_response(raw_plan_response)
@@ -74,57 +76,85 @@ class ArchitectService:
             self.handle_error("architect", f"Hierarchical plan creation failed: {e}", raw_plan_response)
             return None
 
+    async def _create_package_structure(self, files: list):
+        """Creates __init__.py files in all necessary subdirectories to ensure they are packages."""
+        project_root = self.project_manager.active_project_path
+        if not project_root: return
+
+        dirs_that_need_init = {Path(f['filename']).parent for f in files if '/' in f['filename']}
+        init_files_to_create = {}
+
+        for d in dirs_that_need_init:
+            init_path = d / "__init__.py"
+            # Check if an __init__.py is already planned by the AI
+            is_planned = any(f['filename'] == str(init_path).replace('\\', '/') for f in files)
+            # Check if the file already exists on disk (from a previous run, etc.)
+            exists_on_disk = (project_root / init_path).exists()
+
+            if not is_planned and not exists_on_disk:
+                init_files_to_create[str(init_path).replace('\\', '/')] = "# This file makes this a Python package\n"
+
+        if init_files_to_create:
+            self.log("info", f"Creating missing __init__.py files: {list(init_files_to_create.keys())}")
+            # Use save_and_commit_files to write them to disk
+            self.project_manager.save_and_commit_files(init_files_to_create, "chore: add package markers")
+            await asyncio.sleep(0.1)  # Give a moment for files to be written to disk before indexing
+
     async def _execute_artisanal_generation(self, plan: dict) -> bool:
-        """
-        Generates all files in-memory first, then saves and commits them all
-        at once for maximum performance.
-        """
+        """Generates all files, using micro-agents to fix imports before saving."""
         files_to_generate = plan.get("files", [])
         dependencies = plan.get("dependencies", [])
+        project_root = self.project_manager.active_project_path
 
         all_filenames = [f['filename'] for f in files_to_generate]
         if dependencies and "requirements.txt" not in all_filenames:
             all_filenames.append("requirements.txt")
 
-        project_path = str(self.project_manager.active_project_path)
-        self.event_bus.emit("prepare_for_generation", all_filenames, project_path)
-        await asyncio.sleep(0.1)  # Give UI time to prepare
+        self.event_bus.emit("prepare_for_generation", all_filenames, str(project_root))
+        await asyncio.sleep(0.1)
+
+        # Create package structure first so the indexer can see it
+        await self._create_package_structure(files_to_generate)
 
         generated_files = {}
-        summarized_context = {}
 
         if dependencies:
-            self.update_status("coder", "working", "Preparing requirements.txt...")
             req_content = "\n".join(dependencies) + "\n"
             generated_files["requirements.txt"] = req_content
             self.event_bus.emit("code_generation_complete", {"requirements.txt": req_content})
-            summarized_context["requirements.txt"] = "File containing project dependencies."
 
-        code_files_to_generate = [f for f in files_to_generate if f.get("filename") != "requirements.txt"]
+        # --- NEW: Build the project index AFTER initial files are on disk ---
+        self.update_status("coder", "working", "Indexing project structure...")
+        project_index = self.project_indexer.build_index(project_root)
+
+        code_files_to_generate = [f for f in files_to_generate if not f['filename'].endswith(('.txt', '.md'))]
 
         for file_info in code_files_to_generate:
             filename = file_info['filename']
             purpose = file_info['purpose']
             self.update_status("coder", "working", f"Writing {filename}...")
 
-            file_content = await self._generate_one_file_with_context(plan, filename, purpose, summarized_context)
-
-            if file_content is None:
+            raw_code = await self._generate_one_file_with_context(plan, filename, purpose, project_index)
+            if raw_code is None:
                 self.handle_error("coder", f"Failed to generate content for {filename}.")
                 return False
 
-            generated_files[filename] = file_content
-            self.log("info", f"Successfully generated content for {filename}.")
+            self.log("info", f"Generated raw code for {filename}. Now fixing imports...")
 
-            self.event_bus.emit("code_generation_complete", {filename: file_content})
+            # --- NEW: Use the Import Fixer micro-agent ---
+            module_path = filename.replace('.py', '').replace('/', '.')
+            fixed_code = self.import_fixer.fix_imports(raw_code, project_index, module_path)
+            # -------------------------------------------
 
-            summarized_context[filename] = f"File '{filename}' is being generated. Purpose: {purpose}"
+            generated_files[filename] = fixed_code
+            self.event_bus.emit("code_generation_complete", {filename: fixed_code})
+
+            # Update the index with the newly created file's contents for subsequent files
+            self.project_indexer.index.update(self.project_indexer.build_index(project_root))
 
         self.log("success", "Code generation complete. Saving all files to disk...")
         self.update_status("coder", "working", "Saving files...")
-
-        self.project_manager.save_and_commit_files(generated_files, "feat: Initial project generation")
-
+        self.project_manager.save_and_commit_files(generated_files, "feat: initial project generation")
         self.log("success", "Project foundation committed successfully.")
         return True
 
@@ -143,8 +173,7 @@ class ArchitectService:
         )
 
         file_content = ""
-        # Pass the "coder" role for proper temperature setting
-        async for chunk in self.llm_client.stream_chat(provider, model, code_prompt, "coder"):
+        async for chunk in self.llm_client.stream_chat(provider, model, code_prompt):
             file_content += chunk
             self.event_bus.emit("stream_code_chunk", filename, chunk)
         return self._clean_code_output(file_content)

@@ -74,7 +74,7 @@ class Application:
 
         # 4. Initialize windows (depends on core components, may be used by plugins)
         llm_client = self.service_manager.get_llm_client()
-        self.window_manager.initialize_windows(llm_client)
+        self.window_manager.initialize_windows(llm_client, self.service_manager)
 
         # 5. Initialize services (some depend on windows being available)
         code_viewer = self.window_manager.get_code_viewer()

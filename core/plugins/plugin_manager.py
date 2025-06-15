@@ -1,7 +1,7 @@
 # kintsugi_ava/core/plugins/plugin_manager.py
 # Plugin lifecycle management and coordination
 
-import asyncio
+import asyncio  # <--- IMPORT ASYNCIO
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 from collections import defaultdict
@@ -40,7 +40,12 @@ class PluginManager:
     def _connect_events(self):
         """Connect to event bus for plugin-related events."""
         self.event_bus.subscribe("plugin_state_changed", self._on_plugin_state_changed)
-        self.event_bus.subscribe("application_shutdown", self._on_application_shutdown)
+
+        # --- THIS IS THE FIX ---
+        # Wrap the async handler in asyncio.create_task to prevent the "never awaited" warning.
+        self.event_bus.subscribe("application_shutdown",
+                                 lambda: asyncio.create_task(self._on_application_shutdown()))
+        # ----------------------
 
     def add_discovery_path(self, path: Path):
         """

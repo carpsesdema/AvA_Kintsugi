@@ -17,6 +17,8 @@ from services.architect_service import ArchitectService
 from services.reviewer_service import ReviewerService
 from services.validation_service import ValidationService
 from services.terminal_service import TerminalService
+from services.project_indexer_service import ProjectIndexerService
+from services.import_fixer_service import ImportFixerService
 
 
 class ServiceManager:
@@ -43,6 +45,8 @@ class ServiceManager:
         self.reviewer_service: ReviewerService = None
         self.validation_service: ValidationService = None
         self.terminal_service: TerminalService = None
+        self.project_indexer_service: ProjectIndexerService = None
+        self.import_fixer_service: ImportFixerService = None
 
         print("[ServiceManager] Initialized")
 
@@ -122,6 +126,11 @@ class ServiceManager:
         """
         print("[ServiceManager] Initializing services...")
 
+        # --- NEW: Instantiate our micro-agents ---
+        self.project_indexer_service = ProjectIndexerService()
+        self.import_fixer_service = ImportFixerService()
+        # ----------------------------------------
+
         # RAG Manager (no dependencies on other services)
         self.rag_manager = RAGManager(self.event_bus)
 
@@ -129,12 +138,14 @@ class ServiceManager:
         if self.project_manager:
             self.rag_manager.set_project_manager(self.project_manager)
 
-        # Architect Service (depends on rag_manager)
+        # Architect Service (now depends on our new micro-agents)
         self.architect_service = ArchitectService(
             self.event_bus,
             self.llm_client,
             self.project_manager,
-            self.rag_manager.rag_service
+            self.rag_manager.rag_service,
+            self.project_indexer_service,
+            self.import_fixer_service
         )
 
         # Reviewer Service
@@ -217,6 +228,16 @@ class ServiceManager:
         """Get the terminal service instance."""
         return self.terminal_service
 
+    # --- NEW: Getters for our new micro-agents ---
+    def get_project_indexer_service(self) -> ProjectIndexerService:
+        """Get the project indexer service instance."""
+        return self.project_indexer_service
+
+    def get_import_fixer_service(self) -> ImportFixerService:
+        """Get the import fixer service instance."""
+        return self.import_fixer_service
+    # -------------------------------------------
+
     def is_fully_initialized(self) -> bool:
         """Check if all services are initialized."""
         core_ready = all([
@@ -232,7 +253,9 @@ class ServiceManager:
             self.architect_service,
             self.reviewer_service,
             self.validation_service,
-            self.terminal_service
+            self.terminal_service,
+            self.project_indexer_service,
+            self.import_fixer_service
         ])
 
         return core_ready and plugin_ready and services_ready
@@ -268,7 +291,9 @@ class ServiceManager:
                 "architect_service": self.architect_service is not None,
                 "reviewer_service": self.reviewer_service is not None,
                 "validation_service": self.validation_service is not None,
-                "terminal_service": self.terminal_service is not None
+                "terminal_service": self.terminal_service is not None,
+                "project_indexer_service": self.project_indexer_service is not None,
+                "import_fixer_service": self.import_fixer_service is not None
             },
             "fully_initialized": self.is_fully_initialized()
         }
