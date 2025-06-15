@@ -2,7 +2,8 @@
 
 import os
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any
 import chromadb
 from sentence_transformers import SentenceTransformer
 import uvicorn
@@ -10,8 +11,6 @@ import sys
 from pathlib import Path
 
 # --- Configuration ---
-# Ensure the script can find other project modules if needed later
-# This helps if you run it from a different directory
 project_root = Path(__file__).parent
 sys.path.append(str(project_root))
 
@@ -27,10 +26,18 @@ class QueryRequest(BaseModel):
     query_text: str
     n_results: int = 5
 
-
 class QueryResponse(BaseModel):
     context: str
 
+# --- FIX: Add data models for ingesting new documents ---
+class Document(BaseModel):
+    id: str
+    content: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class AddRequest(BaseModel):
+    documents: List[Document]
+# --- END FIX ---
 
 # --- Global State (loaded once on startup) ---
 app_state = {}
@@ -42,29 +49,18 @@ app = FastAPI(title="Kintsugi AvA RAG Service")
 # --- Startup and Shutdown Events ---
 @app.on_event("startup")
 def startup_event():
-    """
-    This function runs once when the server starts.
-    It's responsible for the slow, one-time loading of the model and DB client.
-    """
     print("--- RAG Server Startup ---")
-
-    # 1. Load the SentenceTransformer model
     print(f"Loading embedding model: '{MODEL_NAME}' into memory...")
     try:
-        # This is the slow part. It will only happen ONCE when this server starts.
         app_state["embedding_model"] = SentenceTransformer(MODEL_NAME)
         print("Embedding model loaded successfully.")
     except Exception as e:
         print(f"FATAL: Could not load embedding model. Error: {e}", file=sys.stderr)
-        # In a real production app, you might want to exit here, but for this
-        # we'll let it run so the user can see the error.
         app_state["embedding_model"] = None
 
-    # 2. Connect to the ChromaDB persistent client
     print(f"Connecting to ChromaDB at: '{PERSIST_DIRECTORY}'...")
     try:
         client = chromadb.PersistentClient(path=PERSIST_DIRECTORY)
-        # Get or create the collection. This is fast.
         app_state["collection"] = client.get_or_create_collection(name=COLLECTION_NAME)
         print("ChromaDB connection successful.")
     except Exception as e:
@@ -76,7 +72,6 @@ def startup_event():
 
 @app.on_event("shutdown")
 def shutdown_event():
-    """Function to run on server shutdown for cleanup."""
     print("--- RAG Server Shutdown ---")
     app_state.clear()
     print("Cleaned up resources.")
@@ -85,32 +80,64 @@ def shutdown_event():
 # --- API Endpoints ---
 @app.get("/")
 def read_root():
-    """A simple root endpoint to check if the server is running."""
     return {"status": "Kintsugi RAG Server is running"}
+
+
+# --- FIX: New endpoint to add documents to the knowledge base ---
+@app.post("/add")
+def add_documents(request: AddRequest):
+    if not app_state.get("embedding_model") or not app_state.get("collection"):
+        raise HTTPException(status_code=503, detail="RAG service is not initialized or has failed.")
+
+    embedding_model = app_state["embedding_model"]
+    collection = app_state["collection"]
+    docs = request.documents
+
+    if not docs:
+        return {"status": "success", "message": "No documents provided to add."}
+
+    print(f"Received request to add {len(docs)} document chunks.")
+
+    try:
+        # Prepare data for ChromaDB
+        ids = [doc.id for doc in docs]
+        contents = [doc.content for doc in docs]
+        metadatas = [doc.metadata for doc in docs]
+
+        # Embed all contents in a batch for efficiency
+        print("Embedding document chunks...")
+        embeddings = embedding_model.encode(contents).tolist()
+        print("Embedding complete.")
+
+        # Add to the collection
+        collection.add(
+            embeddings=embeddings,
+            documents=contents,
+            metadatas=metadatas,
+            ids=ids
+        )
+        print(f"Successfully added {len(docs)} chunks to the collection '{COLLECTION_NAME}'.")
+        return {"status": "success", "message": f"Added {len(docs)} documents."}
+
+    except Exception as e:
+        print(f"ERROR during document addition: {e}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during document addition: {e}")
+# --- END FIX ---
 
 
 @app.post("/query", response_model=QueryResponse)
 def query_rag(request: QueryRequest) -> QueryResponse:
-    """
-    Receives a query, embeds it, queries the vector DB, and returns the context.
-    """
     if not app_state.get("embedding_model") or not app_state.get("collection"):
         raise HTTPException(status_code=503, detail="RAG service is not initialized or has failed. Check server logs.")
 
     try:
         embedding_model = app_state["embedding_model"]
         collection = app_state["collection"]
-
-        # 1. Embed the query text
         query_embedding = embedding_model.encode(request.query_text).tolist()
-
-        # 2. Query the ChromaDB collection
         results = collection.query(
             query_embeddings=[query_embedding],
             n_results=request.n_results
         )
-
-        # 3. Format the results into a single context string
         documents = results.get('documents', [[]])[0]
         if not documents:
             return QueryResponse(context="No relevant documents found in the knowledge base.")
@@ -128,8 +155,6 @@ def query_rag(request: QueryRequest) -> QueryResponse:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during the query: {e}")
 
 
-# --- Main entry point to run the server ---
 if __name__ == "__main__":
     print("Starting Kintsugi RAG Server...")
-    # uvicorn.run is a blocking call that starts the server
     uvicorn.run(app, host=HOST, port=PORT)

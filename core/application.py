@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V12: Implements launching and terminating the external RAG server.
+# V13: Implements RAG ingestion workflow.
 
 import asyncio
 from pathlib import Path
@@ -21,6 +21,11 @@ from core.execution_engine import ExecutionEngine
 # Service Imports
 from services.architect_service import ArchitectService
 from services.rag_manager import RAGManager
+# --- FIX: Import new services ---
+from services.rag_service import RAGService
+from services.directory_scanner_service import DirectoryScannerService
+from services.chunking_service import ChunkingService
+# --- END FIX ---
 from services.terminal_service import TerminalService
 from services.reviewer_service import ReviewerService
 from services.validation_service import ValidationService
@@ -45,10 +50,18 @@ class Application:
         self.terminals = TerminalsWindow(self.event_bus)
         self.model_config_dialog = ModelConfigurationDialog(self.llm_client, self.main_window)
 
+        # --- FIX: Instantiate all RAG-related services ---
+        self.rag_service = RAGService()
+        self.scanner = DirectoryScannerService()
+        self.chunker = ChunkingService()
+        self.rag_manager = RAGManager(
+            self.event_bus, self.project_manager, self.rag_service, self.scanner, self.chunker
+        )
+        # --- END FIX ---
+
         # --- Services ---
-        self.rag_manager = RAGManager(self.event_bus) # Manages the RAG server process
         self.architect_service = ArchitectService(
-            self.event_bus, self.llm_client, self.project_manager, self.rag_manager.rag_service)
+            self.event_bus, self.llm_client, self.project_manager, self.rag_service)
         self.reviewer_service = ReviewerService(self.event_bus, self.llm_client)
         self.validation_service = ValidationService(
             self.event_bus, self.execution_engine, self.project_manager, self.reviewer_service)
@@ -75,10 +88,12 @@ class Application:
         self.event_bus.subscribe("configure_models_requested", self.model_config_dialog.exec)
         self.event_bus.subscribe("launch_rag_server_requested", self._handle_launch_rag_server)
 
-        # --- THE FIX: Removing subscriptions to methods that no longer exist ---
-        # The following buttons are now placeholders and their events are removed to prevent crashes.
-        # self.event_bus.subscribe("scan_directory_requested", self.rag_manager.open_scan_directory_dialog)
-        # self.event_bus.subscribe("add_active_project_to_rag_requested", self.rag_manager.ingest_active_project)
+        # --- THE FIX: Re-enable the RAG button subscriptions ---
+        self.event_bus.subscribe(
+            "scan_directory_requested",
+            lambda: self.rag_manager.open_scan_directory_dialog(self.main_window)
+        )
+        self.event_bus.subscribe("add_active_project_to_rag_requested", self.rag_manager.ingest_active_project)
         # --- END OF FIX ---
 
         # Execution & Fixing
