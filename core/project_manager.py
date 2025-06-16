@@ -57,6 +57,26 @@ class ProjectManager:
         python_exe = venv_dir / "Scripts" / "python.exe" if sys.platform == "win32" else venv_dir / "bin" / "python"
         return python_exe if python_exe.exists() else None
 
+    @property
+    def is_venv_active(self) -> bool:
+        """Check if the virtual environment is active and usable."""
+        return self.venv_python_path is not None and self.venv_python_path.exists()
+
+    def get_venv_info(self) -> dict:
+        """Get information about the virtual environment status."""
+        if not self.active_project_path:
+            return {"active": False, "reason": "No project"}
+
+        venv_path = self.active_project_path / ".venv"
+        if not venv_path.exists():
+            return {"active": False, "reason": "No venv"}
+
+        python_path = self.venv_python_path
+        if not python_path or not python_path.exists():
+            return {"active": False, "reason": "No Python"}
+
+        return {"active": True}
+
     def _get_base_python_executable(self) -> str:
         """
         Determines the path to the base Python executable with comprehensive validation and fallback logic.
@@ -212,59 +232,67 @@ class ProjectManager:
         if not self.repo:
             return None
 
+        dev_branch_name = f"dev_{datetime.now().strftime('%Ym%d_%H%M%S')}"
         try:
-            # Try to switch to main/master first
-            main_branch = next((b for b in self.repo.heads if b.name in ['main', 'master']), None)
-            if main_branch:
-                main_branch.checkout()
-        except GitCommandError as e:
-            print(f"[ProjectManager] Warning: Could not switch to main/master. Error: {e}")
-
-        # Create new development branch
-        timestamp = datetime.now().strftime("%Ym%d_%H%M%S")
-        branch_name = f"kintsugi-ava/dev-session-{timestamp}"
-
-        try:
-            self.active_dev_branch = self.repo.create_head(branch_name)
+            self.active_dev_branch = self.repo.create_head(dev_branch_name)
             self.active_dev_branch.checkout()
-            return branch_name
+            return dev_branch_name
         except GitCommandError as e:
-            print(f"[ProjectManager] Could not create sandbox branch. Error: {e}")
+            return f"Error creating branch: {e}"
+
+    def write_file(self, relative_path: str, content: str) -> str:
+        """Writes a file in the active project and stages it."""
+        if not self.active_project_path:
+            return "Error: No active project."
+
+        full_path = self.active_project_path / relative_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            full_path.write_text(content, encoding='utf-8')
+            self.repo.index.add([str(relative_path)])
+            return f"Written and staged: {relative_path}"
+        except Exception as e:
+            return f"Error writing file '{relative_path}': {e}"
+
+    def read_file(self, relative_path: str) -> str | None:
+        """Reads a file from the active project."""
+        if not self.active_project_path:
             return None
 
-    def save_and_commit_files(self, files: dict[str, str], commit_message: str):
-        """Saves and commits multiple files."""
-        if not self.repo or not self.active_project_path:
-            return
-
-        file_paths_to_add = []
-
-        for filename, content in files.items():
-            file_path = self.active_project_path / filename
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(content, encoding='utf-8')
-            file_paths_to_add.append(str(file_path.relative_to(self.repo.working_dir)))
+        full_path = self.active_project_path / relative_path
+        if not full_path.exists():
+            return None
 
         try:
-            self.repo.index.add(file_paths_to_add)
-            if self.repo.index.diff("HEAD"):
-                self.repo.index.commit(commit_message)
-            else:
-                print(f"[ProjectManager] Saved {len(files)} files. No changes to commit.")
-        except GitCommandError as e:
-            print(f"[ProjectManager] Failed to commit changes. Error: {e}")
+            return full_path.read_text(encoding='utf-8')
+        except Exception:
+            return None
 
-    def stage_file(self, file_path_str: str) -> str:
+    def delete_file(self, relative_path: str) -> str:
+        """Deletes a file from the active project."""
+        if not self.active_project_path or not self.repo:
+            return "Error: No active project."
+
+        full_path = self.active_project_path / relative_path
+        if not full_path.exists():
+            return f"Error: File not found: {relative_path}"
+
+        try:
+            full_path.unlink()
+            self.repo.index.remove([str(relative_path)])
+            return f"Deleted and staged removal: {relative_path}"
+        except GitCommandError as e:
+            return f"Error removing file from Git: {e}"
+        except Exception as e:
+            return f"Error deleting file: {e}"
+
+    def stage_file(self, relative_path: str) -> str:
         """Stages a file for commit."""
-        if not self.repo or not self.active_project_path:
+        if not self.repo:
             return "Error: No active Git repository."
 
-        try:
-            relative_path = Path(file_path_str).relative_to(self.active_project_path)
-            full_path = self.active_project_path / relative_path
-        except ValueError:
-            return f"Error: File '{file_path_str}' is not within the project directory."
-
+        full_path = self.active_project_path / relative_path
         if not full_path.exists():
             return f"Error: File not found: {relative_path}"
 

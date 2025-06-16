@@ -3,9 +3,9 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit,
-    QLabel, QPushButton, QTabWidget, QFrame, QSplitter
+    QLabel, QPushButton, QFrame
 )
-from PySide6.QtGui import QFont, QTextCursor, QTextCharFormat, QColor
+from PySide6.QtGui import QFont, QTextCursor, QTextCharFormat, QColor, QKeyEvent
 from PySide6.QtCore import Signal, Qt, QTimer
 import qtawesome as qta
 from datetime import datetime
@@ -187,7 +187,6 @@ class TerminalWidget(QWidget):
             }}
         """)
         self.command_input.returnPressed.connect(self._on_command_entered)
-        self.command_input.keyPressEvent = self._handle_key_press
         input_layout.addWidget(self.command_input, 1)
 
         # Quick action buttons
@@ -263,24 +262,40 @@ class TerminalWidget(QWidget):
 
     def update_prompt(self):
         """Update the command prompt display."""
-        if self.session.project_path:
-            project_name = Path(self.session.project_path).name
-            if self.project_manager and self.project_manager.is_venv_active:
-                prompt = f"(venv) {project_name}>"
-            else:
-                prompt = f"{project_name}>"
+        if self.project_manager and self.project_manager.active_project_path:
+            project_name = self.project_manager.active_project_name
+            venv_indicator = "🐍" if self.project_manager.is_venv_active else "❌"
+            prompt = f"{venv_indicator} {project_name}>"
         else:
             prompt = "terminal>"
 
         self.prompt_label.setText(prompt)
 
-    def _insert_command(self, command):
-        """Insert a command into the input field."""
-        self.command_input.setText(command)
-        self.command_input.setFocus()
+    def _on_command_entered(self):
+        """Handle when a command is entered."""
+        command = self.command_input.text().strip()
+        if not command:
+            return
 
-    def _handle_key_press(self, event):
-        """Handle key press events for command history navigation."""
+        # Add to history
+        if command not in self.session.command_history:
+            self.session.command_history.append(command)
+        self.session.history_index = len(self.session.command_history)
+        self.session.last_command = command
+        self.session.is_busy = True
+
+        # Display command in output
+        prompt_text = self.prompt_label.text()
+        self.append_output(f"{prompt_text} {command}\n")
+
+        # Clear input
+        self.command_input.clear()
+
+        # Emit command signal
+        self.command_entered.emit(command, self.session_id)
+
+    def _handle_key_press(self, event: QKeyEvent):
+        """Handle special key presses for command history navigation."""
         if event.key() == Qt.Key.Key_Up:
             self._navigate_history(-1)
         elif event.key() == Qt.Key.Key_Down:
@@ -289,43 +304,30 @@ class TerminalWidget(QWidget):
             # Call the original keyPressEvent
             QLineEdit.keyPressEvent(self.command_input, event)
 
-    def _navigate_history(self, direction):
+    def _navigate_history(self, direction: int):
         """Navigate through command history."""
         if not self.session.command_history:
             return
 
-        self.session.history_index += direction
-
-        if self.session.history_index < 0:
+        new_index = self.session.history_index + direction
+        if 0 <= new_index < len(self.session.command_history):
+            self.session.history_index = new_index
+            self.command_input.setText(self.session.command_history[new_index])
+        elif new_index < 0:
             self.session.history_index = 0
-        elif self.session.history_index >= len(self.session.command_history):
-            self.session.history_index = len(self.session.command_history) - 1
+            if self.session.command_history:
+                self.command_input.setText(self.session.command_history[0])
+        elif new_index >= len(self.session.command_history):
+            self.session.history_index = len(self.session.command_history)
+            self.command_input.clear()
 
-        if 0 <= self.session.history_index < len(self.session.command_history):
-            command = self.session.command_history[self.session.history_index]
-            self.command_input.setText(command)
-
-    def _on_command_entered(self):
-        """Handle command submission."""
-        command_text = self.command_input.text().strip()
-        if not command_text:
-            return
-
-        # Add to history
-        if command_text not in self.session.command_history:
-            self.session.command_history.append(command_text)
-        self.session.history_index = len(self.session.command_history)
-
-        # Display the command with prompt
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        prompt = self.prompt_label.text()
-        self.append_output(f"[{timestamp}] {prompt} {command_text}\n")
-
-        # Emit the command
-        self.command_entered.emit(command_text, self.session_id)
-        self.command_input.clear()
-        self.session.last_command = command_text
-        self.session.is_busy = True
+    def _insert_command(self, command: str):
+        """Insert a command into the input field."""
+        current_text = self.command_input.text()
+        if current_text and not current_text.endswith(" "):
+            current_text += " "
+        self.command_input.setText(current_text + command)
+        self.command_input.setFocus()
 
     def append_output(self, text: str):
         """Append text to the output view."""

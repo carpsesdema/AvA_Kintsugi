@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QMenuBar, QMenu, QStatusBar, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QFont
 import qtawesome as qta
 
 from .terminal_widget import TerminalWidget
@@ -44,54 +44,53 @@ class TerminalsWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(5, 5, 5, 5)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
-        # Header with controls and info
         self.setup_header(main_layout)
 
         # Tab widget for multiple terminals
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
-        self.tab_widget.setMovable(True)
+        self.tab_widget.tabCloseRequested.connect(self.close_terminal_tab)
         self.tab_widget.setStyleSheet(f"""
             QTabWidget::pane {{
                 border: 1px solid {Colors.BORDER_DEFAULT.name()};
+                background-color: {Colors.SECONDARY_BG.name()};
                 border-radius: 6px;
-                background-color: {Colors.PRIMARY_BG.name()};
-            }}
-            QTabWidget::tab-bar {{
-                alignment: left;
             }}
             QTabBar::tab {{
-                background-color: {Colors.SECONDARY_BG.name()};
-                color: {Colors.TEXT_SECONDARY.name()};
-                padding: 8px 12px;
-                margin-right: 2px;
-                border: 1px solid {Colors.BORDER_DEFAULT.name()};
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
+                background-color: {Colors.ELEVATED_BG.name()};
+                color: {Colors.TEXT_PRIMARY.name()};
+                padding: 8px 15px;
+                margin: 2px;
+                border-radius: 4px;
             }}
             QTabBar::tab:selected {{
-                background-color: {Colors.PRIMARY_BG.name()};
-                color: {Colors.TEXT_PRIMARY.name()};
-                border-bottom: 1px solid {Colors.PRIMARY_BG.name()};
+                background-color: {Colors.ACCENT_BLUE.name()};
             }}
             QTabBar::tab:hover {{
-                background-color: {Colors.ELEVATED_BG.name()};
+                background-color: {Colors.ACCENT_GREEN.name()};
             }}
         """)
 
-        self.tab_widget.tabCloseRequested.connect(self.close_terminal_tab)
         main_layout.addWidget(self.tab_widget, 1)
 
+        # Style the window
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {Colors.PRIMARY_BG.name()};
+                color: {Colors.TEXT_PRIMARY.name()};
+            }}
+        """)
+
     def setup_header(self, main_layout):
-        """Set up the header with terminal controls."""
+        """Set up the header with title and controls."""
         header_layout = QHBoxLayout()
 
         # Title
         title_label = QLabel("Terminal Sessions")
-        title_label.setFont(Typography.get_font(14, bold=True))
+        title_label.setFont(Typography.get_font(14, QFont.Weight.Bold))
         title_label.setStyleSheet(f"color: {Colors.TEXT_PRIMARY.name()};")
         header_layout.addWidget(title_label)
 
@@ -144,24 +143,23 @@ class TerminalsWindow(QMainWindow):
         terminal_menu = menubar.addMenu("Terminal")
 
         new_action = QAction("New Terminal", self)
-        new_action.setShortcut("Ctrl+Shift+T")
+        new_action.setShortcut("Ctrl+T")
         new_action.triggered.connect(self.create_new_terminal)
         terminal_menu.addAction(new_action)
 
         close_action = QAction("Close Current Terminal", self)
-        close_action.setShortcut("Ctrl+Shift+W")
+        close_action.setShortcut("Ctrl+W")
         close_action.triggered.connect(self.close_current_terminal)
         terminal_menu.addAction(close_action)
-
-        terminal_menu.addSeparator()
 
         clear_action = QAction("Clear Current Terminal", self)
         clear_action.setShortcut("Ctrl+L")
         clear_action.triggered.connect(self.clear_current_terminal)
         terminal_menu.addAction(clear_action)
 
+        terminal_menu.addSeparator()
+
         clear_all_action = QAction("Clear All Terminals", self)
-        clear_all_action.setShortcut("Ctrl+Shift+L")
         clear_all_action.triggered.connect(self.clear_all_terminals)
         terminal_menu.addAction(clear_all_action)
 
@@ -182,6 +180,13 @@ class TerminalsWindow(QMainWindow):
         """Set up the status bar."""
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+        self.status_bar.setStyleSheet(f"""
+            QStatusBar {{
+                background-color: {Colors.SECONDARY_BG.name()};
+                color: {Colors.TEXT_SECONDARY.name()};
+                border-top: 1px solid {Colors.BORDER_DEFAULT.name()};
+            }}
+        """)
         self.update_status_bar()
 
     def create_new_terminal(self):
@@ -190,79 +195,47 @@ class TerminalsWindow(QMainWindow):
         self.next_session_id += 1
 
         # Create the terminal widget
-        terminal_widget = TerminalWidget(
-            self.event_bus,
-            session_id,
-            self.project_manager
-        )
+        terminal_widget = TerminalWidget(self.event_bus, session_id, self.project_manager)
 
         # Connect signals
         terminal_widget.command_entered.connect(self.handle_terminal_command)
-        terminal_widget.new_terminal_requested.connect(self.create_new_terminal)
-        terminal_widget.close_terminal_requested.connect(self.close_terminal_by_id)
+
+        # Store session info
+        self.terminal_sessions[session_id] = {
+            "widget": terminal_widget,
+            "created_at": self._get_current_time()
+        }
 
         # Add to tab widget
         tab_title = f"Terminal {session_id + 1}"
-        tab_index = self.tab_widget.addTab(terminal_widget, tab_title)
-        self.tab_widget.setCurrentIndex(tab_index)
+        self.tab_widget.addTab(terminal_widget, tab_title)
+        self.tab_widget.setCurrentWidget(terminal_widget)
 
-        # Store reference
-        self.terminal_sessions[session_id] = {
-            "widget": terminal_widget,
-            "tab_index": tab_index,
-            "title": tab_title
-        }
-
-        # Update status
         self.update_status_bar()
-
         print(f"[TerminalsWindow] Created new terminal session {session_id}")
 
-    def close_terminal_tab(self, tab_index):
-        """Close a terminal tab by tab index."""
-        # Find the session ID for this tab
-        session_id = None
-        for sid, session_info in self.terminal_sessions.items():
-            if session_info["tab_index"] == tab_index:
-                session_id = sid
-                break
-
-        if session_id is not None:
-            self.close_terminal_by_id(session_id)
-
-    def close_terminal_by_id(self, session_id):
-        """Close a terminal by session ID."""
-        if session_id not in self.terminal_sessions:
+    def close_terminal_tab(self, index):
+        """Close a specific terminal tab."""
+        if self.tab_widget.count() <= 1:
+            QMessageBox.warning(self, "Warning", "Cannot close the last terminal.")
             return
 
-        # Don't close the last terminal
-        if len(self.terminal_sessions) == 1:
-            QMessageBox.information(
-                self,
-                "Cannot Close",
-                "Cannot close the last terminal. Create a new one first if needed."
-            )
-            return
+        widget = self.tab_widget.widget(index)
+        if isinstance(widget, TerminalWidget):
+            session_id = widget.session_id
 
-        session_info = self.terminal_sessions[session_id]
-        tab_index = session_info["tab_index"]
+            # Remove from sessions
+            if session_id in self.terminal_sessions:
+                del self.terminal_sessions[session_id]
 
-        # Remove the tab
-        self.tab_widget.removeTab(tab_index)
+            # Remove tab
+            self.tab_widget.removeTab(index)
 
-        # Remove from sessions
-        del self.terminal_sessions[session_id]
+            # Clean up widget
+            widget.deleteLater()
 
-        # Update tab indices for remaining sessions
-        for i in range(self.tab_widget.count()):
-            widget = self.tab_widget.widget(i)
-            for sid, info in self.terminal_sessions.items():
-                if info["widget"] == widget:
-                    info["tab_index"] = i
-                    break
-
-        self.update_status_bar()
-        print(f"[TerminalsWindow] Closed terminal session {session_id}")
+            self.update_status_bar()
+            print(f"[TerminalsWindow] Closed terminal session {session_id}")
 
     def close_current_terminal(self):
         """Close the currently active terminal."""
@@ -271,7 +244,7 @@ class TerminalsWindow(QMainWindow):
             self.close_terminal_tab(current_index)
 
     def clear_current_terminal(self):
-        """Clear the currently active terminal."""
+        """Clear the current terminal's output."""
         current_widget = self.tab_widget.currentWidget()
         if isinstance(current_widget, TerminalWidget):
             current_widget.clear_output()
@@ -394,3 +367,8 @@ class TerminalsWindow(QMainWindow):
         super().show()
         self.activateWindow()
         self.raise_()
+
+    def _get_current_time(self):
+        """Get current time as string."""
+        from datetime import datetime
+        return datetime.now().strftime("%H:%M:%S")

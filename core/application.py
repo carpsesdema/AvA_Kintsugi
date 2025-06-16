@@ -96,8 +96,8 @@ class Application:
         self.event_coordinator.set_managers(
             self.service_manager,
             self.window_manager,
-            self.workflow_manager,
-            self.task_manager
+            self.task_manager,
+            self.workflow_manager
         )
 
         # WorkflowManager needs other managers for orchestration

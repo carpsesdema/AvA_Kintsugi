@@ -372,6 +372,37 @@ class PluginManager:
         self.config.save_config()
         return True
 
+    async def reload_plugin(self, plugin_name: str) -> bool:
+        """
+        Unloads and then reloads a plugin.
+
+        Args:
+            plugin_name: The name of the plugin to reload.
+
+        Returns:
+            True if reloading succeeded, False otherwise.
+        """
+        print(f"[PluginManager] Reloading plugin: {plugin_name}")
+
+        original_state = self.config.is_plugin_enabled(plugin_name)
+
+        if not await self.unload_plugin(plugin_name):
+            print(f"[PluginManager] Reload failed: could not unload {plugin_name}")
+            return False
+
+        if not await self.load_plugin(plugin_name):
+            print(f"[PluginManager] Reload failed: could not load {plugin_name}")
+            return False
+
+        if original_state:
+            if not await self.start_plugin(plugin_name):
+                print(f"[PluginManager] Reload warning: could not restart {plugin_name}")
+                return False
+
+        print(f"[PluginManager] Plugin '{plugin_name}' reloaded successfully.")
+        return True
+
+
     def get_active_plugin_instance(self, plugin_name: str) -> Optional[PluginBase]:
         """
         Retrieves an active plugin instance if it's loaded or started.

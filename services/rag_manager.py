@@ -47,17 +47,7 @@ class RAGManager(QObject):
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
         )
 
-        # Wire up events
-        self._connect_events()
-
         print("[RAGManager] Initialized with enhanced error capture.")
-
-    def _connect_events(self):
-        """Connect to relevant events."""
-        self.event_bus.subscribe("scan_directory_requested",
-                                 lambda: self.open_scan_directory_dialog())
-        self.event_bus.subscribe("add_active_project_to_rag_requested",
-                                 lambda: self.ingest_active_project())
 
     def set_project_manager(self, project_manager):
         """Set the project manager reference after it's available."""
@@ -329,7 +319,7 @@ class RAGManager(QObject):
             self.log_message.emit("RAGManager", "info", f"Starting ingestion from: {directory_path}")
 
             # Scan directory
-            scanned_files = self.scanner.scan_directory(directory_path)
+            scanned_files = self.scanner.scan(directory_path)
             if not scanned_files:
                 self.log_message.emit("RAGManager", "warning", "No supported files found for ingestion.")
                 return
@@ -340,11 +330,12 @@ class RAGManager(QObject):
             all_chunks = []
             for file_path in scanned_files:
                 try:
-                    chunks = self.chunker.chunk_file(file_path)
+                    content = file_path.read_text(encoding='utf-8', errors='ignore')
+                    chunks = self.chunker.chunk_document(content, str(file_path))
                     all_chunks.extend(chunks)
-                    self.log_message.emit("RAGManager", "info", f"Chunked {file_path}: {len(chunks)} chunks")
+                    self.log_message.emit("RAGManager", "info", f"Chunked {file_path.name}: {len(chunks)} chunks")
                 except Exception as e:
-                    self.log_message.emit("RAGManager", "warning", f"Failed to chunk {file_path}: {e}")
+                    self.log_message.emit("RAGManager", "warning", f"Failed to chunk {file_path.name}: {e}")
 
             if not all_chunks:
                 self.log_message.emit("RAGManager", "warning", "No chunks generated. Ingestion aborted.")
@@ -360,6 +351,7 @@ class RAGManager(QObject):
 
         except Exception as e:
             self.log_message.emit("RAGManager", "error", f"Ingestion process failed: {e}")
+
 
     def check_server_status_async(self):
         """Check server status asynchronously."""

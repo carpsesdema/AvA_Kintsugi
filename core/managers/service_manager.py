@@ -7,7 +7,7 @@ from core.project_manager import ProjectManager
 from core.execution_engine import ExecutionEngine
 
 # Services that actually exist in your project
-from services.terminal_service import TerminalSession
+from services.terminal_service import TerminalService
 from services.rag_manager import RAGManager
 from services.architect_service import ArchitectService
 from services.reviewer_service import ReviewerService
@@ -40,7 +40,7 @@ class ServiceManager:
         self.execution_engine: ExecutionEngine = None
 
         # Initialize all service properties to None
-        self.terminal_service: TerminalSession = None
+        self.terminal_service: TerminalService = None
         self.rag_manager: RAGManager = None
         self.architect_service: ArchitectService = None
         self.reviewer_service: ReviewerService = None
@@ -89,9 +89,6 @@ class ServiceManager:
 
     def initialize_services(self, code_viewer=None):
         """Initialize services with proper dependency order."""
-        """
-        Initialize all services with proper dependency order.
-        """
         print("[ServiceManager] Initializing services...")
 
         # Basic services (no dependencies)
@@ -139,15 +136,11 @@ class ServiceManager:
             self.reviewer_service
         )
 
-        # Terminal Service (no GUI dependencies)
-        self.terminal_service = TerminalSession(
+        # Terminal Service (now using the correct TerminalService)
+        self.terminal_service = TerminalService(
             self.event_bus,
-            self.project_manager,
-            self.execution_engine
+            self.project_manager
         )
-
-        # Plugin Manager
-        self.plugin_manager = PluginManager(self.event_bus)
 
         print("[ServiceManager] Services initialized")
 
@@ -164,7 +157,7 @@ class ServiceManager:
         """Get the execution engine instance."""
         return self.execution_engine
 
-    def get_terminal_service(self) -> TerminalSession:
+    def get_terminal_service(self) -> TerminalService:
         """Get the terminal service instance."""
         return self.terminal_service
 
@@ -257,13 +250,19 @@ class ServiceManager:
             for name, service in services.items()
         }
 
-    def shutdown_services(self):
+    async def shutdown_services(self):
         """Shutdown all services gracefully."""
         print("[ServiceManager] Shutting down services...")
 
-        # Simple shutdown - most services don't need explicit cleanup
+        # Handle plugin manager specially since it has async shutdown
+        if self.plugin_manager and hasattr(self.plugin_manager, 'shutdown'):
+            try:
+                await self.plugin_manager.shutdown()
+            except Exception as e:
+                print(f"[ServiceManager] Error shutting down plugin manager: {e}")
+
+        # Simple shutdown for other services - most don't need explicit cleanup
         services_to_shutdown = [
-            self.plugin_manager,
             self.terminal_service,
             self.validation_service,
             self.reviewer_service,
@@ -288,4 +287,4 @@ class ServiceManager:
 
     async def shutdown(self):
         """Async shutdown method for compatibility with Application."""
-        self.shutdown_services()
+        await self.shutdown_services()
