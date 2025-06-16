@@ -4,6 +4,7 @@
 from pathlib import Path
 from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget, QSplitter
 from PySide6.QtCore import Qt
+import qasync # <-- FIX: Import qasync
 
 from gui.project_context_manager import ProjectContextManager
 from gui.file_tree_manager import FileTreeManager
@@ -130,14 +131,22 @@ class CodeViewerWindow(QMainWindow):
             if abs_path:
                 self.editor_manager.stream_content_to_editor(str(abs_path.resolve()), chunk)
 
+    # --- FIX: Ensure this is treated as a Qt slot for thread safety ---
+    @qasync.Slot(dict)
     def display_code(self, files: dict):
         """Displays the final, complete code in the editor tabs."""
+        print(f"[CodeViewer] Received request to display {len(files)} file(s).")
         for filename, content in files.items():
             if self.project_context.is_valid:
                 abs_path = self.project_context.get_absolute_path(filename)
                 if abs_path:
                     path_key = str(abs_path.resolve())
                     self.editor_manager.create_or_update_tab(path_key, content)
+                else:
+                    print(f"[CodeViewer] Warning: Could not resolve absolute path for '{filename}'.")
+            else:
+                print("[CodeViewer] Warning: Project context is invalid, cannot display code.")
+    # --- END FIX ---
 
     def _on_file_selected(self, file_path: Path):
         self.editor_manager.open_file_in_tab(file_path)

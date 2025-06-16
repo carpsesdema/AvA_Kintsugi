@@ -118,10 +118,11 @@ class TaskManager:
             QMessageBox.critical(main_window, "Workflow Error",
                                  f"The AI workflow failed unexpectedly.\n\nError: {e}")
         finally:
-            # Clean up UI state
-            code_viewer = self.window_manager.get_code_viewer() if self.window_manager else None
-            if code_viewer:
-                code_viewer.hide_fix_button()
+            # --- THIS IS THE FIX ---
+            # This event tells the UI that the AI workflow is completely finished,
+            # so it can clean up things like the "AI is fixing..." label.
+            self.event_bus.emit("ai_fix_workflow_complete")
+            # --- END OF FIX ---
 
     def _on_terminal_task_done(self, task: asyncio.Task, session_id: int):
         """Handle terminal task completion."""

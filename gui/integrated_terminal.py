@@ -173,12 +173,9 @@ class IntegratedTerminal(QWidget):
     def _close_tab(self, index: int):
         widget = self.tab_widget.widget(index)
         if isinstance(widget, TerminalWidget):
-            # --- THIS IS THE FIX ---
-            # Get the session_id from the widget *before* using it.
             session_id_to_close = widget.session_id
             if session_id_to_close in self.sessions:
                 del self.sessions[session_id_to_close]
-            # --- END FIX ---
             self.tab_widget.removeTab(index)
             widget.deleteLater()
 
@@ -187,6 +184,12 @@ class IntegratedTerminal(QWidget):
         self.event_bus.subscribe("terminal_error_received", self._route_error)
         self.event_bus.subscribe("terminal_success_received", self._route_success)
         self.event_bus.subscribe("terminal_command_finished", self._route_command_finished)
+        self.event_bus.subscribe("ai_fix_workflow_complete", self._on_ai_fix_complete) # <-- FIX
+
+    def _on_ai_fix_complete(self):
+        """Hides the 'AI is fixing...' label when the task is done."""
+        if self.fixing_label:
+            self.fixing_label.hide()
 
     def _route_output(self, text, session_id):
         if session_id in self.sessions:
