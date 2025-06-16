@@ -26,10 +26,12 @@ class TerminalService:
     async def execute_command(self, command: str, session_id: int):
         """
         Executes a command in a subprocess, using the project's venv if available.
-        Streams stdout and stderr back to the GUI.
+        Streams stdout and stderr back to the GUI and emits a detailed 'execution_failed'
+        event if the command fails, triggering the review-and-fix workflow.
         """
         if session_id in self.processes and self.processes[session_id].returncode is None:
-            self.event_bus.emit("terminal_error_received", f"Session {session_id} is already running a command.\n", session_id)
+            self.event_bus.emit("terminal_error_received", f"Session {session_id} is already running a command.\n",
+                                session_id)
             return
 
         project_path = self.project_manager.active_project_path
@@ -37,12 +39,13 @@ class TerminalService:
             self.event_bus.emit("terminal_error_received", "No active project. Cannot execute command.\n", session_id)
             return
 
+        full_error_output = []  # Collector for the full error traceback
+
         try:
             python_executable = self.project_manager.venv_python_path
             env = self._get_subprocess_env(python_executable)
             cmd_to_run = self._prepare_command(command, python_executable)
 
-            # For Windows, prevent the console window from appearing
             creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
             process = await asyncio.create_subprocess_shell(
@@ -55,9 +58,11 @@ class TerminalService:
             )
             self.processes[session_id] = process
 
+            # We now gather output and errors simultaneously.
+            # The 'full_error_output' list will be populated by the stderr stream.
             await asyncio.gather(
-                self._stream_output(process.stdout, "terminal_output_received", session_id),
-                self._stream_output(process.stderr, "terminal_error_received", session_id)
+                self._stream_output(process.stdout, "terminal_output_received", session_id, None),
+                self._stream_output(process.stderr, "terminal_error_received", session_id, full_error_output)
             )
 
             await process.wait()
@@ -67,6 +72,15 @@ class TerminalService:
                 self.event_bus.emit("terminal_success_received", exit_message, session_id)
             else:
                 self.event_bus.emit("terminal_error_received", exit_message, session_id)
+
+                # --- THIS IS THE FIX ---
+                # When a command fails, we now collect all the error text and emit
+                # the critical 'execution_failed' event that the entire "fix it"
+                # workflow depends on.
+                error_report = "".join(full_error_output)
+                if error_report:
+                    self.event_bus.emit("execution_failed", error_report)
+                # --- END OF FIX ---
 
         except FileNotFoundError:
             self.event_bus.emit("terminal_error_received", f"Command not found: {command.split()[0]}\n", session_id)
@@ -104,14 +118,18 @@ class TerminalService:
             env['VIRTUAL_ENV'] = str(venv_dir)
         return env
 
-    async def _stream_output(self, stream: asyncio.StreamReader, event_name: str, session_id: int):
-        """Reads from a stream and emits events line by line."""
+    async def _stream_output(self, stream: asyncio.StreamReader, event_name: str, session_id: int,
+                             collector: list | None):
+        """Reads from a stream, emits events, and optionally collects the output."""
         while not stream.at_eof():
             try:
                 line = await stream.readline()
                 if line:
                     decoded_line = line.decode('utf-8', errors='replace')
                     self.event_bus.emit(event_name, decoded_line, session_id)
+                    # If a collector list is provided, append the line to it.
+                    if collector is not None:
+                        collector.append(decoded_line)
             except Exception as e:
                 error_line = f"[Stream Read Error]: {e}\n"
                 self.event_bus.emit("terminal_error_received", error_line, session_id)
