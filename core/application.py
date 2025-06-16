@@ -2,6 +2,7 @@
 # Fixed to match your existing application pattern and fix the terminal system
 
 import asyncio
+from pathlib import Path
 
 from core.event_bus import EventBus
 from core.managers import (
@@ -63,6 +64,9 @@ class Application:
 
         # 2. Initialize plugin system (depends on core components)
         self.service_manager.initialize_plugin_system()
+        # FIX: Tell the plugin manager where to look for plugins
+        self.service_manager.get_plugin_manager().add_discovery_path(Path("plugins"))
+
 
         # 3. Discover and load plugins (async operation)
         plugin_success = await self.service_manager.initialize_plugins()
