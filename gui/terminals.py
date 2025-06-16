@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/terminals.py
-# V3: Refactored to be a dedicated, read-only Log Viewer.
+# V4: Added missing methods to support event coordinator wiring
 
 from PySide6.QtWidgets import QMainWindow, QTextEdit
 from PySide6.QtGui import QTextCursor
@@ -13,7 +13,7 @@ class TerminalsWindow(QMainWindow):
     """
     A window that acts as a dedicated Log Viewer, showing formatted,
     real-time log messages from the application's various services.
-    It contains no interactive elements.
+    It contains no interactive elements but supports terminal output events.
     """
 
     def __init__(self, event_bus):
@@ -62,6 +62,22 @@ class TerminalsWindow(QMainWindow):
 
         self.log_view.append(log_html)
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
+
+    def handle_output(self, text: str):
+        """
+        Handle terminal output events - converts to log format.
+        This method is expected by the event coordinator.
+        """
+        # Convert terminal output to a log message
+        self.add_log_message("Terminal", "info", text)
+
+    def clear_terminal(self):
+        """
+        Clear the terminal/log view.
+        This method is expected by the event coordinator.
+        """
+        self.log_view.clear()
+        self.log_view.setHtml("<h3>Kintsugi AvA Log Viewer - Cleared</h3>")
 
     def show(self):
         """Overridden show method to ensure window comes to front."""
