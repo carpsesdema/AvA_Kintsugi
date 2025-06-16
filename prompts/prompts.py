@@ -88,40 +88,46 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     }}
     """)
 
+# --- THIS IS THE FIX ---
+# A completely new, more intelligent prompt for the coder.
 CODER_PROMPT = textwrap.dedent("""
-    You are an expert Python developer. Your task is to write the code for a single file within a larger project.
+    You are an expert Python developer tasked with writing a single, complete file for a larger application. Your code must be robust, correct, and integrate perfectly with the rest of the project.
 
+    **YOUR ASSIGNED FILE:** `{filename}`
+    **PURPOSE OF THIS FILE:** `{purpose}`
+
+    ---
     **CONTEXT: FULL PROJECT PLAN**
-    This is the complete plan for the application you are helping to build. Use it to understand the relationships between files.
+    This is the complete plan for the application. Use it to understand the overall architecture.
     ```json
     {file_plan_json}
     ```
 
-    **CONTEXT: LIVING DESIGN DOCUMENT (REAL-TIME ANALYSIS)**
-    This is a real-time architectural analysis of the project as it's being built. It contains detailed information about classes, functions, and dependencies in already-generated files. Use this as your primary source of truth for how to interact with other parts of the code.
+    ---
+    **CONTEXT: REAL-TIME PROJECT ANALYSIS (Most Important)**
+    This is a live analysis of the project's structure, including other files that have already been written in this session. Use this as your primary source of truth for class names, method signatures, and how to import from other modules.
+
+    **Living Design Document:**
     ```json
     {living_design_context_json}
     ```
 
-    **CONTEXT: BASIC FILE INDEX (FALLBACK)**
-    If the Living Design Document is empty, use this basic index of symbols to modules.
+    **Basic File Index (Symbol -> Module Path):**
     ```json
     {code_summaries_json}
     ```
-
-    **YOUR ASSIGNED TASK**
-    - **File to Write:** `{filename}`
-    - **Purpose of this File:** `{purpose}`
+    ---
 
     **CRITICAL INSTRUCTIONS:**
-    1.  Your response **MUST ONLY** contain the complete, raw code for the single file you were assigned: `{filename}`.
-    2.  **DO NOT** include any explanations, comments, or markdown formatting like ```python.
-    3.  **DO NOT** write `__init__` methods that just print "Error:". They should properly initialize the class with `self.attribute = value`.
-    4.  Ensure the code is robust, clean, and professional.
-    5.  Use the "LIVING DESIGN DOCUMENT" and "BASIC FILE INDEX" to write correct and complete import statements.
-    """)
+    1.  **Write a complete, runnable file.** You MUST include all necessary import statements.
+    2.  **Adhere to the context.** Your code MUST correctly call classes and methods from other files as defined in the "REAL-TIME PROJECT ANALYSIS". If the context says `engine/player.py` has a `Player` class, you must `from engine.player import Player` and instantiate it correctly.
+    3.  **Implement the full logic.** Do not write placeholder or incomplete code. Fulfill the file's stated "purpose".
+    4.  **Raw Code Only:** Your response must ONLY be the raw source code for `{filename}`. Do not include any explanations, comments, or markdown formatting like ```python.
 
-# --- FIX: V6 - This new prompt gives the AI the ability to fix multiple files at once. ---
+    Begin writing the code for `{filename}` now.
+    """)
+# --- END OF FIX ---
+
 REFINEMENT_PROMPT = textwrap.dedent("""
     You are an expert Python game developer specializing in the Ursina engine. Your task is to fix a critical bug in a multi-file voxel game project.
 
