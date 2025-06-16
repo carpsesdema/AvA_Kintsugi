@@ -64,8 +64,12 @@ class Application:
 
         # 2. Initialize plugin system (depends on core components)
         self.service_manager.initialize_plugin_system()
-        # FIX: Tell the plugin manager where to look for plugins
-        self.service_manager.get_plugin_manager().add_discovery_path(Path("plugins"))
+        # FIX: Tell the plugin manager where to look for plugins.
+        # The user's example plugin is in `core/plugins/examples`, so we add that path.
+        # We also add the root `plugins` directory for any user-added plugins.
+        plugin_manager = self.service_manager.get_plugin_manager()
+        plugin_manager.add_discovery_path(Path("core/plugins/examples"))
+        plugin_manager.add_discovery_path(Path("plugins"))
 
 
         # 3. Discover and load plugins (async operation)

@@ -1,5 +1,5 @@
 # kintsugi_ava/core/managers/event_coordinator.py
-# FINAL FIX: Correctly wires the Log Viewer and Integrated Terminal events.
+# FINAL FIX: Correctly wires the Log Viewer and all Code Viewer events.
 
 import asyncio
 from core.event_bus import EventBus
@@ -63,7 +63,8 @@ class EventCoordinator:
                                      lambda name: asyncio.create_task(plugin_manager.enable_plugin(name)))
             self.event_bus.subscribe("plugin_disable_requested",
                                      lambda name: asyncio.create_task(plugin_manager.disable_plugin(name)))
-            # self.event_bus.subscribe("plugin_reload_requested", lambda name: asyncio.create_task(plugin_manager.reload_plugin(name))) # Assuming reload exists
+            self.event_bus.subscribe("plugin_reload_requested",
+                                     lambda name: asyncio.create_task(plugin_manager.reload_plugin(name)))
 
         # Session & Tools
         self.event_bus.subscribe("new_session_requested", self.workflow_manager.handle_new_session)
@@ -76,6 +77,16 @@ class EventCoordinator:
         if self.workflow_manager:
             self.event_bus.subscribe("user_request_submitted", self.workflow_manager.handle_user_request)
             self.event_bus.subscribe("review_and_fix_requested", self.workflow_manager.handle_review_and_fix)
+
+        # --- THIS IS THE FIX ---
+        # Wire generation events to the Code Viewer window
+        code_viewer = self.window_manager.get_code_viewer()
+        if code_viewer:
+            self.event_bus.subscribe("prepare_for_generation", code_viewer.prepare_for_generation)
+            self.event_bus.subscribe("stream_code_chunk", code_viewer.stream_code_chunk)
+            self.event_bus.subscribe("code_generation_complete", code_viewer.display_code)
+        # --- END FIX ---
+
         print("[EventCoordinator] ✓ AI workflow events wired")
 
     def _wire_execution_events(self):
@@ -85,8 +96,8 @@ class EventCoordinator:
         if code_viewer:
             self.event_bus.subscribe("error_highlight_requested", code_viewer.highlight_error_in_editor)
             self.event_bus.subscribe("clear_error_highlights", code_viewer.clear_all_error_highlights)
-            self.event_bus.subscribe("show_fix_button", code_viewer.show_fix_button)
-            self.event_bus.subscribe("hide_fix_button", code_viewer.hide_fix_button)
+            # The 'show_fix_button' is now handled inside the IntegratedTerminal.
+            # We no longer need to subscribe to it here for the CodeViewer.
 
         if self.workflow_manager:
             self.event_bus.subscribe("execution_failed", self.workflow_manager.handle_execution_failed)
@@ -98,17 +109,15 @@ class EventCoordinator:
         """Wire integrated terminal events."""
         if not (self.task_manager and self.service_manager): return
 
-        # This event now comes from the IntegratedTerminal within the CodeViewer
         self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
         print("[EventCoordinator] ✓ Terminal events wired")
 
     def _handle_terminal_command(self, command: str, session_id: int):
-        """Handle a command from the integrated terminal."""
+        """Handle a command from any terminal session."""
         terminal_service = self.service_manager.get_terminal_service()
         if not terminal_service: return
 
         command_coroutine = terminal_service.execute_command(command, session_id)
-        # Note: session_id will be 0 for the integrated terminal
         self.task_manager.start_terminal_command_task(command_coroutine, session_id)
 
     def _wire_plugin_events(self):

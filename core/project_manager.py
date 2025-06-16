@@ -240,20 +240,32 @@ class ProjectManager:
         except GitCommandError as e:
             return f"Error creating branch: {e}"
 
-    def write_file(self, relative_path: str, content: str) -> str:
-        """Writes a file in the active project and stages it."""
-        if not self.active_project_path:
-            return "Error: No active project."
+    def write_and_stage_files(self, files: dict[str, str]):
+        """Writes multiple files to the project and stages them in Git."""
+        if not self.active_project_path or not self.repo:
+            print("[ProjectManager] Error: No active project or repository.")
+            return
 
-        full_path = self.active_project_path / relative_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
+        for relative_path, content in files.items():
+            full_path = self.active_project_path / relative_path
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                full_path.write_text(content, encoding='utf-8')
+            except Exception as e:
+                print(f"[ProjectManager] Error writing file {relative_path}: {e}")
 
-        try:
-            full_path.write_text(content, encoding='utf-8')
-            self.repo.index.add([str(relative_path)])
-            return f"Written and staged: {relative_path}"
-        except Exception as e:
-            return f"Error writing file '{relative_path}': {e}"
+        # Stage all written files in a single operation for efficiency
+        paths_to_stage = [str(self.active_project_path / p) for p in files.keys()]
+        if paths_to_stage:
+            try:
+                self.repo.index.add(paths_to_stage)
+            except GitCommandError as e:
+                print(f"[ProjectManager] Error staging files: {e}")
+
+    def save_and_commit_files(self, files: dict[str, str], commit_message: str):
+        """A convenience method to write, stage, and commit files in one go."""
+        self.write_and_stage_files(files)
+        self.commit_staged_files(commit_message)
 
     def read_file(self, relative_path: str) -> str | None:
         """Reads a file from the active project."""

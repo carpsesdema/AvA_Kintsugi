@@ -3,11 +3,12 @@
 
 import importlib
 import inspect
+import sys
 from pathlib import Path
 from typing import Dict, List, Type, Optional
-import sys
+import traceback
 
-from .plugin_system import PluginBase, PluginMetadata, PluginError
+from .plugin_system import PluginBase, PluginMetadata
 
 
 class PluginRegistry:
@@ -29,12 +30,18 @@ class PluginRegistry:
         Args:
             path: Directory path to search for plugin modules
         """
-        if not path.exists() or not path.is_dir():
-            print(f"[PluginRegistry] Warning: Discovery path does not exist: {path}")
+        resolved_path = path.resolve()
+        if not resolved_path.exists() or not resolved_path.is_dir():
+            print(f"[PluginRegistry] Warning: Discovery path does not exist: {resolved_path}")
             return
 
-        self._discovery_paths.append(path)
-        print(f"[PluginRegistry] Added discovery path: {path}")
+        # Ensure the project root is in the path to allow for package imports like 'core.plugins'
+        project_root = Path.cwd()
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
+        self._discovery_paths.append(resolved_path)
+        print(f"[PluginRegistry] Added discovery path: {resolved_path}")
 
     def discover_plugins(self) -> int:
         """
@@ -44,7 +51,6 @@ class PluginRegistry:
             Number of plugins discovered and registered
         """
         discovered_count = 0
-
         for discovery_path in self._discovery_paths:
             discovered_count += self._scan_directory(discovery_path)
 
@@ -62,57 +68,54 @@ class PluginRegistry:
             Number of plugins found in this directory
         """
         count = 0
+        project_root = Path.cwd()
 
         try:
-            # Add the parent directory to Python path if needed
-            parent_path = str(directory.parent)
-            if parent_path not in sys.path:
-                sys.path.append(parent_path)
-
             # Look for Python packages (directories with __init__.py)
             for item in directory.iterdir():
                 if item.is_dir() and (item / "__init__.py").exists():
-                    if self._try_load_plugin_from_package(item):
-                        count += 1
+                    try:
+                        # Construct the fully qualified module name from the project root
+                        # e.g., 'core.plugins.examples.living_design_agent'
+                        module_path_str = ".".join(item.relative_to(project_root).parts)
+
+                        if self._try_load_plugin_from_module(module_path_str):
+                            count += 1
+                    except Exception as e:
+                        print(f"[PluginRegistry] Failed to process potential plugin at {item}: {e}")
 
         except Exception as e:
             print(f"[PluginRegistry] Error scanning directory {directory}: {e}")
 
         return count
 
-    def _try_load_plugin_from_package(self, package_path: Path) -> bool:
+    def _try_load_plugin_from_module(self, module_path: str) -> bool:
         """
-        Attempt to load a plugin from a package directory.
+        Attempt to load a plugin from a fully qualified module path.
 
         Args:
-            package_path: Path to the plugin package directory
+            module_path: The dot-separated path to the module (e.g., 'plugins.my_plugin')
 
         Returns:
-            True if plugin was successfully loaded, False otherwise
+            True if a plugin was successfully loaded, False otherwise
         """
         try:
-            package_name = package_path.name
-
-            # Import the package
-            spec = importlib.util.spec_from_file_location(
-                package_name,
-                package_path / "__init__.py"
-            )
-            if not spec or not spec.loader:
-                return False
-
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            # Dynamically import the module
+            module = importlib.import_module(module_path)
+            print(f"[PluginRegistry] Inspecting module: {module_path}")
 
             # Look for plugin classes that inherit from PluginBase
             for name, obj in inspect.getmembers(module, inspect.isclass):
-                if (issubclass(obj, PluginBase) and
-                        obj is not PluginBase and
-                        not inspect.isabstract(obj)):
-                    return self._register_plugin_class(obj, package_name)
+                if issubclass(obj, PluginBase) and obj is not PluginBase and not inspect.isabstract(obj):
+                    # Found a plugin class, now register it
+                    return self._register_plugin_class(obj)
 
+        except ImportError as e:
+            print(f"[PluginRegistry] ImportError loading plugin from {module_path}: {e}")
         except Exception as e:
-            print(f"[PluginRegistry] Error loading plugin from {package_path}: {e}")
+            # Catch other potential errors during import or inspection
+            print(f"[PluginRegistry] Error loading plugin from {module_path}: {e}")
+            traceback.print_exc()
 
         return False
 
@@ -128,13 +131,12 @@ class PluginRegistry:
         """
         return self._register_plugin_class(plugin_class)
 
-    def _register_plugin_class(self, plugin_class: Type[PluginBase], package_name: str = None) -> bool:
+    def _register_plugin_class(self, plugin_class: Type[PluginBase]) -> bool:
         """
         Internal method to register a plugin class.
 
         Args:
             plugin_class: Plugin class to register
-            package_name: Optional package name override
 
         Returns:
             True if registration succeeded, False otherwise
@@ -142,10 +144,12 @@ class PluginRegistry:
         try:
             # Create a temporary instance to get metadata
             # This is safe because plugins should not have side effects in __init__
-            temp_instance = plugin_class(None, {})
+            temp_instance = plugin_class(event_bus=None, plugin_config={})
             metadata = temp_instance.metadata
-
             plugin_name = metadata.name
+
+            if not plugin_name:
+                raise ValueError("Plugin metadata must have a 'name'.")
 
             # Check for name conflicts
             if plugin_name in self._registered_plugins:
@@ -165,8 +169,9 @@ class PluginRegistry:
             return True
 
         except Exception as e:
-            class_name = plugin_class.__name__ if plugin_class else "Unknown"
+            class_name = plugin_class.__name__ if hasattr(plugin_class, '__name__') else "Unknown"
             print(f"[PluginRegistry] Error registering plugin class {class_name}: {e}")
+            traceback.print_exc()
             return False
 
     def _validate_plugin_metadata(self, metadata: PluginMetadata) -> bool:
@@ -179,18 +184,12 @@ class PluginRegistry:
         Returns:
             True if metadata is valid, False otherwise
         """
-        if not metadata.name or not isinstance(metadata.name, str):
+        if not all([metadata.name, metadata.version, metadata.description, metadata.author]):
+            print("[PluginRegistry] Validation failed: name, version, description, and author are required.")
             return False
-
-        if not metadata.version or not isinstance(metadata.version, str):
+        if not isinstance(metadata.name, str) or not metadata.name.strip():
+            print("[PluginRegistry] Validation failed: name must be a non-empty string.")
             return False
-
-        if not metadata.description or not isinstance(metadata.description, str):
-            return False
-
-        if not metadata.author or not isinstance(metadata.author, str):
-            return False
-
         return True
 
     def get_registered_plugins(self) -> Dict[str, Type[PluginBase]]:
@@ -265,24 +264,6 @@ class PluginRegistry:
 
         print(f"[PluginRegistry] Unregistered plugin: {plugin_name}")
         return True
-
-    def get_plugins_by_dependency(self, dependency: str) -> List[str]:
-        """
-        Get all plugins that depend on a specific plugin.
-
-        Args:
-            dependency: Name of the dependency plugin
-
-        Returns:
-            List of plugin names that depend on the given plugin
-        """
-        dependent_plugins = []
-
-        for plugin_name, metadata in self._plugin_metadata.items():
-            if dependency in metadata.dependencies:
-                dependent_plugins.append(plugin_name)
-
-        return dependent_plugins
 
     def check_dependencies(self, plugin_name: str) -> List[str]:
         """

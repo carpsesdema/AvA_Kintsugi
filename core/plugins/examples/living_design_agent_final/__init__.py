@@ -38,9 +38,6 @@ class LivingDesignAgentPlugin(PluginBase):
         self.monitored_files = set()
         self.last_analysis_time = None
 
-        # Task management
-        self._periodic_task = None
-
     @property
     def metadata(self) -> PluginMetadata:
         return PluginMetadata(
@@ -64,7 +61,7 @@ class LivingDesignAgentPlugin(PluginBase):
                 "auto_update_frequency": {
                     "type": "int",
                     "default": 300,
-                    "description": "How often to automatically analyze the project (seconds)"
+                    "description": "How often to automatically analyze project (seconds)"
                 },
                 "generate_diagrams": {
                     "type": "bool",
@@ -111,11 +108,9 @@ class LivingDesignAgentPlugin(PluginBase):
             self.subscribe_to_event("new_project_requested", self._on_new_project)
             self.subscribe_to_event("load_project_requested", self._on_project_loaded)
 
-            # Schedule periodic analysis task to start after startup completes
+            # Start automatic analysis timer
             if self.get_config_value("auto_update_frequency", 300) > 0:
-                # Use call_soon to avoid the task conflict during startup
-                loop = asyncio.get_event_loop()
-                loop.call_soon(self._schedule_periodic_analysis)
+                asyncio.create_task(self._start_periodic_analysis())
 
             self.set_state(PluginState.STARTED)
             self.log("info", "🏗️ Living Design Agent active - monitoring project architecture")
@@ -127,27 +122,9 @@ class LivingDesignAgentPlugin(PluginBase):
             self.set_state(PluginState.ERROR)
             return False
 
-    def _schedule_periodic_analysis(self):
-        """Creates the background task after the main event loop is settled."""
-        try:
-            if self.state == PluginState.STARTED:
-                self._periodic_task = asyncio.create_task(self._start_periodic_analysis())
-                self.log("info", "Periodic analysis task scheduled.")
-        except Exception as e:
-            self.log("error", f"Failed to schedule periodic analysis: {e}")
-
     async def stop(self) -> bool:
         try:
             self.log("info", "Stopping Living Design Agent...")
-
-            # Cancel periodic task if running
-            if self._periodic_task and not self._periodic_task.done():
-                self._periodic_task.cancel()
-                try:
-                    await self._periodic_task
-                except asyncio.CancelledError:
-                    pass  # This is expected, we can ignore it
-                self.log("info", "Periodic analysis task stopped.")
 
             # Generate final documentation
             await self._generate_final_documentation()
@@ -163,11 +140,6 @@ class LivingDesignAgentPlugin(PluginBase):
     async def unload(self) -> bool:
         try:
             self.log("info", "Unloading Living Design Agent...")
-
-            # Ensure task is cancelled
-            if self._periodic_task and not self._periodic_task.done():
-                self._periodic_task.cancel()
-            self._periodic_task = None
 
             # Clear state
             self._reset_documentation_state()

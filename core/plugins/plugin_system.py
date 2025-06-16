@@ -118,6 +118,7 @@ class PluginBase(ABC):
             event_name: Name of the event to subscribe to
             callback: Function to call when event is emitted
         """
+        if not self.event_bus: return
         self.event_bus.subscribe(event_name, callback)
         self._subscribed_events.append((event_name, callback))
 
@@ -135,6 +136,7 @@ class PluginBase(ABC):
             event_name: Name of the event to emit
             *args, **kwargs: Arguments to pass with the event
         """
+        if not self.event_bus: return
         self.event_bus.emit(event_name, *args, **kwargs)
 
     def log(self, level: str, message: str):

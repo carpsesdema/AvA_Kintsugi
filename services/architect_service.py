@@ -1,5 +1,5 @@
 # services/architect_service.py
-# V16: Implemented the modification planning logic for true iteration.
+# V18: Final polish on commit message logic.
 
 from __future__ import annotations
 import asyncio
@@ -13,7 +13,7 @@ from core.llm_client import LLMClient
 from core.project_manager import ProjectManager
 from prompts.prompts import (
     HIERARCHICAL_PLANNER_PROMPT,
-    MODIFICATION_PLANNER_PROMPT,  # <-- Import the new prompt
+    MODIFICATION_PLANNER_PROMPT,
     CODER_PROMPT
 )
 from services.rag_service import RAGService
@@ -46,7 +46,6 @@ class ArchitectService:
         self.project_indexer = project_indexer
         self.import_fixer = import_fixer
 
-        # The Architect now owns the full generation pipeline coordination
         self.context_manager = ContextManager(service_manager)
         self.dependency_planner = DependencyPlanner(service_manager)
         self.integration_validator = IntegrationValidator(service_manager)
@@ -56,25 +55,17 @@ class ArchitectService:
         )
 
     async def generate_or_modify(self, prompt: str, existing_files: dict | None) -> bool:
-        """Determines whether to start a new project or modify an existing one."""
         self.log("info", f"Task received: '{prompt}'")
-        success = False
         plan = None
-
-        # Get RAG context. This is useful for both new projects and modifications.
         rag_context = await self.rag_service.query(prompt)
 
         if not existing_files:
-            # --- NEW PROJECT FLOW ---
             self.log("info", "No existing project detected. Generating new project plan...")
             plan = await self._generate_hierarchical_plan(prompt, rag_context)
         else:
-            # --- MODIFICATION FLOW (The New Logic!) ---
             self.log("info", "Existing project detected. Generating modification plan...")
             plan = await self._generate_modification_plan(prompt, existing_files)
 
-        # --- UNIFIED GENERATION ---
-        # The coordinator runs with whatever plan we give it.
         if plan:
             success = await self._execute_coordinated_generation(plan, rag_context)
         else:
@@ -89,28 +80,21 @@ class ArchitectService:
         return success
 
     async def _generate_hierarchical_plan(self, prompt: str, rag_context: str) -> dict | None:
-        """Generates a structured, multi-file plan for a new project."""
         self.log("info", "Designing project structure...")
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
         return await self._get_plan_from_llm(plan_prompt)
 
     async def _generate_modification_plan(self, prompt: str, existing_files: dict) -> dict | None:
-        """Generates a plan to modify an existing project."""
         self.log("info", "Analyzing existing files to create a modification plan...")
         try:
-            # The context for the modification prompt IS the existing file content
             existing_files_json = json.dumps(existing_files, indent=2)
-            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
-                prompt=prompt,
-                existing_files_json=existing_files_json
-            )
+            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt, existing_files_json=existing_files_json)
             return await self._get_plan_from_llm(plan_prompt)
         except Exception as e:
-            self.handle_error("architect", f"An unexpected error occurred during modification planning: {e}")
+            self.handle_error("architect", f"An unexpected error during modification planning: {e}")
             return None
 
     async def _get_plan_from_llm(self, plan_prompt: str) -> dict | None:
-        """Helper function to get a plan from the LLM and parse it."""
         provider, model = self.llm_client.get_model_for_role("architect")
         if not provider or not model:
             self.handle_error("architect", "No model configured for architect role.")
@@ -133,15 +117,11 @@ class ArchitectService:
             return None
 
     async def _execute_coordinated_generation(self, plan: dict, rag_context: str) -> bool:
-        """
-        Executes the entire generation process using the unified GenerationCoordinator.
-        """
         try:
             files_to_generate = plan.get("files", [])
             project_root = self.project_manager.active_project_path
-
-            # Prepare UI and file structure
             all_filenames = [f['filename'] for f in files_to_generate]
+
             self.event_bus.emit("prepare_for_generation", all_filenames, str(project_root))
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
@@ -154,13 +134,9 @@ class ArchitectService:
                          f"Generation failed. Expected {len(all_filenames)} files, but got {len(generated_files)}.")
                 return False
 
-            # Determine the commit message based on whether it was a new creation or modification
-            commit_message = "feat: initial project generation"
-            if self.project_manager.is_existing_project:
-                commit_message = f"refactor: AI-driven modification for plan\n\nFiles changed: {', '.join(generated_files.keys())}"
+            commit_message = f"feat: AI-driven changes for '{plan['files'][0]['purpose'][:50]}...'"
 
-            self.project_manager.write_and_stage_files(generated_files)
-            self.project_manager.commit_staged_files(commit_message)
+            self.project_manager.save_and_commit_files(generated_files, commit_message)
             self.log("success", "Project changes committed successfully.")
 
             self.event_bus.emit("code_generation_complete", generated_files)
@@ -173,7 +149,6 @@ class ArchitectService:
             return False
 
     async def _create_package_structure(self, files: list):
-        """Ensures that all necessary __init__.py files are created for packages."""
         project_root = self.project_manager.active_project_path
         if not project_root: return
 
@@ -182,9 +157,7 @@ class ArchitectService:
 
         for d in dirs_that_need_init:
             init_path = d / "__init__.py"
-            # Check if an __init__.py is already planned for this directory
             is_planned = any(f['filename'] == str(init_path).replace('\\', '/') for f in files)
-            # Check if it already exists on disk (e.g., from a previous run)
             exists_on_disk = (project_root / init_path).exists()
 
             if not is_planned and not exists_on_disk:
@@ -192,12 +165,10 @@ class ArchitectService:
 
         if init_files_to_create:
             self.log("info", f"Creating missing __init__.py files: {list(init_files_to_create.keys())}")
-            self.project_manager.write_and_stage_files(init_files_to_create)
-            self.project_manager.commit_staged_files("chore: add package markers")
+            self.project_manager.save_and_commit_files(init_files_to_create, "chore: add package markers")
             await asyncio.sleep(0.1)
 
     def _parse_json_response(self, response: str) -> dict:
-        """Extracts a JSON object from a string, tolerating surrounding text."""
         match = re.search(r'\{.*\}', response, re.DOTALL)
         if not match:
             raise ValueError("No JSON object found in the response.")
