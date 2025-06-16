@@ -1,5 +1,5 @@
 # kintsugi_ava/core/application.py
-# V14: Added plugin system integration to clean SRP-based architecture
+# Fixed to match your existing application pattern and fix the terminal system
 
 import asyncio
 
@@ -17,7 +17,6 @@ class Application:
     """
     The main application coordinator - now lean and focused.
     Single responsibility: Initialize and coordinate managers.
-    V14: Now includes plugin system integration.
     """
 
     def __init__(self):
@@ -141,69 +140,21 @@ class Application:
     async def cancel_all_tasks(self):
         """
         Cleanly shuts down all background processes, plugins, and tasks.
-        This is called when the application is about to quit.
         """
-        print("[Application] Starting shutdown sequence...")
+        print("[Application] Cancelling all tasks and shutting down...")
 
-        # 1. Emit application shutdown event for plugins and other components
-        self.event_bus.emit("application_shutdown")
+        # 1. Cancel task manager tasks
+        if self.task_manager:
+            await self.task_manager.cancel_all_tasks()
 
-        # 2. Cancel all background tasks
-        await self.task_manager.cancel_all_tasks()
+        # 2. Shutdown service manager (includes plugins)
+        if self.service_manager:
+            await self.service_manager.shutdown()
 
-        # 3. Shutdown services and plugins through service manager
-        await self.service_manager.shutdown()
+        print("[Application] All tasks cancelled and plugins shut down")
 
-        print("[Application] Shutdown sequence complete")
-
-    def get_system_status(self) -> dict:
-        """Get comprehensive system status for debugging."""
-        plugin_status = {}
-        plugin_manager = self.service_manager.get_plugin_manager()
-        if plugin_manager:
-            plugin_status = {
-                "plugin_count": len(plugin_manager.get_all_plugin_status()),
-                "enabled_plugins": [name for name, status in plugin_manager.get_all_plugin_status().items()
-                                    if status.get("enabled", False)],
-                "loaded_plugins": [name for name, status in plugin_manager.get_all_plugin_status().items()
-                                   if status.get("loaded", False)]
-            }
-
-        return {
-            "application": "Plugin-Enabled Manager Architecture v14",
-            "initialization_complete": self._initialization_complete,
-            "plugin_system": plugin_status,
-            "managers": {
-                "service_manager": self.service_manager.get_initialization_status(),
-                "window_manager": self.window_manager.get_initialization_status(),
-                "event_coordinator": self.event_coordinator.get_subscription_status(),
-                "workflow_manager": self.workflow_manager.get_workflow_status(),
-                "task_manager": self.task_manager.get_task_status()
-            },
-            "overall_health": self._assess_overall_health()
-        }
-
-    def _assess_overall_health(self) -> str:
-        """Assess overall application health."""
-        try:
-            if not self._initialization_complete:
-                return "Initializing"
-
-            service_ok = self.service_manager.is_fully_initialized()
-            window_ok = self.window_manager.is_fully_initialized()
-
-            if service_ok and window_ok:
-                return "Healthy"
-            elif service_ok or window_ok:
-                return "Partially Initialized"
-            else:
-                return "Initialization Failed"
-
-        except Exception as e:
-            return f"Error: {e}"
-
-    def is_ready(self) -> bool:
-        """Check if the application is fully initialized and ready to use."""
+    def is_fully_initialized(self) -> bool:
+        """Check if the application is fully initialized and ready."""
         return (self._initialization_complete and
                 self.service_manager.is_fully_initialized() and
                 self.window_manager.is_fully_initialized())

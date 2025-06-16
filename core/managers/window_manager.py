@@ -1,5 +1,5 @@
 # kintsugi_ava/core/managers/window_manager.py
-# Creates and manages all GUI windows
+# Fixed window manager with proper terminal integration
 
 from gui.main_window import MainWindow
 from gui.code_viewer import CodeViewerWindow
@@ -10,7 +10,6 @@ from gui.terminals import TerminalsWindow
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
-from core.managers.service_manager import ServiceManager
 
 
 class WindowManager:
@@ -34,26 +33,26 @@ class WindowManager:
 
         print("[WindowManager] Initialized")
 
-    def initialize_windows(self, llm_client: LLMClient, service_manager: ServiceManager):
-        """
-        Initialize all GUI windows.
-
-        Args:
-            llm_client: LLM client needed for model configuration dialog
-            service_manager: ServiceManager to get the PluginManager
-        """
+    def initialize_windows(self, llm_client: LLMClient, service_manager, project_manager=None):
+        """Initialize all GUI windows."""
         print("[WindowManager] Initializing windows...")
+
+        # Get project manager from service manager if not provided
+        if project_manager is None:
+            project_manager = service_manager.get_project_manager()
 
         # Create main windows
         self.main_window = MainWindow(self.event_bus)
         self.code_viewer = CodeViewerWindow(self.event_bus)
         self.workflow_monitor = WorkflowMonitorWindow(self.event_bus)
-        self.terminals = TerminalsWindow(self.event_bus)
 
-        # Create dialogs (parent will be set when shown)
+        # Create terminals window with project manager
+        self.terminals = TerminalsWindow(self.event_bus, project_manager)
+
+        # Create dialogs
         self.model_config_dialog = ModelConfigurationDialog(llm_client, self.main_window)
 
-        # Instantiate the new plugin dialog
+        # Plugin management dialog
         plugin_manager = service_manager.get_plugin_manager()
         self.plugin_management_dialog = PluginManagementDialog(plugin_manager, self.event_bus, self.main_window)
 
@@ -114,12 +113,7 @@ class WindowManager:
             self.plugin_management_dialog.exec()
 
     def update_project_display(self, project_name: str):
-        """
-        Update project name display across windows.
-
-        Args:
-            project_name: Name of the active project
-        """
+        """Update project name display across windows."""
         if self.main_window and hasattr(self.main_window, 'sidebar'):
             self.main_window.sidebar.update_project_display(project_name)
 
@@ -129,34 +123,73 @@ class WindowManager:
             self.code_viewer.prepare_for_new_project_session()
 
     def load_project_in_code_viewer(self, project_path: str):
-        """
-        Load project in code viewer.
-
-        Args:
-            project_path: Path to the project to load
-        """
+        """Load project in code viewer."""
         if self.code_viewer:
             self.code_viewer.load_project(project_path)
+
+    def update_terminals_project_manager(self, project_manager):
+        """Update the project manager in the terminals window."""
+        if self.terminals:
+            self.terminals.set_project_manager(project_manager)
+
+    def handle_terminal_output(self, text: str, session_id: int = None):
+        """Route terminal output to the terminals window."""
+        if self.terminals:
+            self.terminals.handle_terminal_output(text, session_id)
+
+    def handle_terminal_error(self, text: str, session_id: int = None):
+        """Route terminal error output to the terminals window."""
+        if self.terminals:
+            self.terminals.handle_terminal_error(text, session_id)
+
+    def handle_terminal_success(self, text: str, session_id: int = None):
+        """Route terminal success output to the terminals window."""
+        if self.terminals:
+            self.terminals.handle_terminal_success(text, session_id)
+
+    def clear_terminal(self, session_id: int = None):
+        """Clear terminal output."""
+        if self.terminals:
+            if session_id is not None:
+                # Clear specific session
+                if session_id in self.terminals.terminal_sessions:
+                    self.terminals.terminal_sessions[session_id]["widget"].clear_output()
+            else:
+                # Clear current terminal
+                self.terminals.clear_current_terminal()
+
+    def mark_terminal_command_finished(self, session_id: int = None):
+        """Mark terminal command as finished."""
+        if self.terminals:
+            self.terminals.mark_command_finished(session_id)
+
+    def get_terminal_session_info(self) -> dict:
+        """Get information about terminal sessions."""
+        if self.terminals:
+            return {
+                "active_session": self.terminals.get_active_session_info(),
+                "all_sessions": self.terminals.get_all_session_info()
+            }
+        return {"active_session": {}, "all_sessions": []}
 
     def is_fully_initialized(self) -> bool:
         """Check if all windows are initialized."""
         return all([
-            self.main_window,
-            self.code_viewer,
-            self.workflow_monitor,
-            self.terminals,
-            self.model_config_dialog,
-            self.plugin_management_dialog
+            self.main_window is not None,
+            self.code_viewer is not None,
+            self.workflow_monitor is not None,
+            self.terminals is not None,
+            self.model_config_dialog is not None,
+            self.plugin_management_dialog is not None
         ])
 
-    def get_initialization_status(self) -> dict:
-        """Get detailed initialization status for debugging."""
-        return {
-            "main_window": self.main_window is not None,
-            "code_viewer": self.code_viewer is not None,
-            "workflow_monitor": self.workflow_monitor is not None,
-            "terminals": self.terminals is not None,
-            "model_config_dialog": self.model_config_dialog is not None,
-            "plugin_management_dialog": self.plugin_management_dialog is not None,
-            "fully_initialized": self.is_fully_initialized()
-        }
+    def is_fully_initialized(self) -> bool:
+        """Check if all windows are initialized."""
+        return all([
+            self.main_window is not None,
+            self.code_viewer is not None,
+            self.workflow_monitor is not None,
+            self.terminals is not None,
+            self.model_config_dialog is not None,
+            self.plugin_management_dialog is not None
+        ])

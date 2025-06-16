@@ -11,7 +11,7 @@ import qtawesome as qta
 from datetime import datetime
 from pathlib import Path
 
-from gui.components import Colors, Typography, ModernButton
+from .components import Colors, Typography, ModernButton
 
 
 class TerminalSession:
