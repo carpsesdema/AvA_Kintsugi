@@ -57,8 +57,12 @@ HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
     }}
     """)
 
+# --- THIS IS THE NEW "RENOVATION" PROMPT ---
 MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
-    You are an expert software architect specializing in refactoring and modifying existing Python codebases.
+    You are an expert senior software developer specializing in refactoring and modifying existing Python codebases.
+
+    **YOUR TASK:**
+    Analyze the user's modification request in the context of the COMPLETE existing project source code. Your goal is to produce a JSON plan that outlines which files to create or modify.
 
     **USER'S MODIFICATION REQUEST:** "{prompt}"
 
@@ -66,27 +70,38 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     ```json
     {existing_files_json}
     ```
-    **INSTRUCTIONS:**
-    Analyze the user's request and the existing files.
-    Determine which files need to be modified and which new files need to be created.
-    Your response MUST be ONLY a valid JSON object listing all files that need to be generated.
-    For files that need to be MODIFIED, the purpose should describe the change.
-    For NEW files, the purpose should describe the file's role.
+    ---
+    **CRITICAL INSTRUCTIONS:**
+    1.  **Analyze the Entire Project:** Read through all the existing files to understand the current architecture.
+    2.  **Determine Necessary Changes:** Based on the user's request, decide which files need to be modified and which new files (if any) need to be created.
+    3.  **Write High-Level Purposes:** For each file in your plan, write a concise, high-level "purpose".
+        - For files that need to be MODIFIED, the purpose should clearly state the required changes (e.g., "Modify the 'Player' class to include an 'inventory' attribute and a 'use_item' method.").
+        - For NEW files, the purpose should describe the file's role in the project (e.g., "A new module to handle all inventory-related database operations.").
+    4.  **JSON Output ONLY:** Your response MUST be ONLY a valid JSON object. Do not include any other text, explanations, or markdown. The JSON object should contain a single key "files".
 
-    **EXAMPLE RESPONSE:**
+    **EXAMPLE RESPONSE (for adding a feature):**
+    ```json
     {{
-        "files": [
-            {{
-                "filename": "ui_manager.py",
-                "purpose": "Modify the main UI class to add a new 'Reset' button and connect it to the timer logic."
-            }},
-            {{
-                "filename": "new_feature.py",
-                "purpose": "A new module to house the logic for the requested feature."
-            }}
-        ]
+      "files": [
+        {{
+          "filename": "game/player.py",
+          "purpose": "Modify the Player class to add a 'health' attribute and a 'take_damage' method."
+        }},
+        {{
+          "filename": "game/combat.py",
+          "purpose": "A new file to contain all combat-related logic, including the main combat loop."
+        }},
+        {{
+           "filename": "main.py",
+           "purpose": "Modify the main game loop to import the new combat module and trigger a combat encounter on a key press."
+        }}
+      ]
     }}
+    ```
+    ---
+    **Now, generate the JSON modification plan:**
     """)
+
 
 # ENHANCED CODER PROMPT - This is the main fix!
 CODER_PROMPT = textwrap.dedent("""

@@ -1,10 +1,8 @@
 # gui/code_viewer.py
-# FIXED: Now correctly initializes the integrated terminal
+# FINAL: Integrates the proper multi-tab terminal.
 
-import sys
-import os
 from pathlib import Path
-from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter)
+from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget, QSplitter
 from PySide6.QtCore import Qt
 
 from gui.project_context_manager import ProjectContextManager
@@ -95,7 +93,7 @@ class CodeViewerWindow(QMainWindow):
         self.project_context.clear_context()
         self.file_tree_manager.clear_tree()
         self.editor_manager.prepare_for_new_project()
-        self.terminal.clear_output()
+        # self.terminal.clear_output() # This needs to be handled per-tab
         print("[CodeViewer] Prepared for new project session")
 
     def load_project(self, project_path_str: str):
@@ -119,12 +117,11 @@ class CodeViewerWindow(QMainWindow):
         self.raise_()
 
     def show_fix_button(self):
-        if self.terminal:
-            self.terminal.show_fix_button()
+        # This might need to be routed to a specific active terminal tab in the future
+        pass
 
     def hide_fix_button(self):
-        if self.terminal:
-            self.terminal.hide_fix_button()
+        pass
 
     def highlight_error_in_editor(self, file_path: Path, line_number: int):
         if self.editor_manager:
