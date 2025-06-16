@@ -35,13 +35,11 @@ class ValidationService:
 
         self.update_status("reviewer", "working", f"Analyzing error in {crashing_file}...")
 
-        # --- FIX: Call the single, powerful review method ---
         changes_json = await self.reviewer_service.review_and_correct_code(
             project_source=all_project_files,
             error_filename=crashing_file,
             error_report=error_report
         )
-        # --- END FIX ---
 
         if not changes_json:
             self.handle_error("reviewer", "Could not generate a valid fix for the error.")
@@ -66,22 +64,56 @@ class ValidationService:
         return True
 
     def _parse_error_traceback(self, error_str: str) -> tuple[str | None, int]:
+        """
+        Parses a traceback string to find the last file mentioned that is part
+        of the user's project, not a system or venv library.
+        """
         project_root = self.project_manager.active_project_path
-        if not project_root: return None, -1
-        traceback_lines = re.findall(r'File "(.+?)", line (\d+)', error_str)
-        for file_path_str, line_num_str in reversed(traceback_lines):
+        if not project_root:
+            return None, -1
+
+        # --- THIS IS THE DEFINITIVE FIX ---
+        # A robust regex to capture both standard tracebacks (`File "..."`) and
+        # common warning formats (`path/to/file.py:line_number:`).
+        traceback_pattern = re.compile(
+            r'File "(.+?)", line (\d+)|(.*?\.py):(\d+):'
+        )
+        matches = traceback_pattern.findall(error_str)
+
+        # Iterate through all found matches in reverse (from last call to first)
+        for tb_path, tb_line, warn_path, warn_line in reversed(matches):
+            file_path_str = tb_path or warn_path
+            line_num_str = tb_line or warn_line
+
+            if not file_path_str or not line_num_str:
+                continue
+
             try:
+                # Resolve the path to an absolute path
                 file_path = Path(file_path_str).resolve()
+
+                # CRITICAL LOGIC: Check if the file is part of the project
+                # This is the key check that prevents us from stopping on a library file.
                 if project_root in file_path.parents or project_root == file_path.parent:
-                    if ".venv" in file_path.parts or "site-packages" in file_path.parts: continue
+                    # Now, explicitly IGNORE files inside the virtual environment.
+                    if ".venv" in file_path.parts or "site-packages" in file_path.parts:
+                        continue  # Skip this match and check the next one up the stack
+
+                    # This is a valid project file! We've found our target.
                     relative_path = file_path.relative_to(project_root)
                     posix_path_str = relative_path.as_posix()
-                    self.log("info", f"Pinpointed error in project source: {posix_path_str} at line {line_num_str}")
+                    self.log("info", f"Pinpointed error origin in project source: {posix_path_str} at line {line_num_str}")
                     return posix_path_str, int(line_num_str)
+
             except (ValueError, FileNotFoundError):
+                # If path resolution fails for any reason, just move to the next match
                 continue
+        # --- END OF FIX ---
+
+        # If the loop completes without finding a valid project file, then we fail.
         self.log("warning", "Could not pinpoint error to a specific project source file.")
         return None, -1
+
 
     def _clean_json_output(self, response: str) -> str:
         response = response.strip()

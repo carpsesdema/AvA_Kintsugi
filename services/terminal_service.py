@@ -25,9 +25,9 @@ class TerminalService:
 
     async def execute_command(self, command: str, session_id: int):
         """
-        Executes a command in a subprocess, using the project's venv if available.
-        Streams stdout and stderr back to the GUI and emits a detailed 'execution_failed'
-        event if the command fails, triggering the review-and-fix workflow.
+        Executes a command, capturing stdout and stderr. It now considers
+        runtime warnings and non-crashing tracebacks as failures, triggering
+        the full 'review-and-fix' workflow.
         """
         if session_id in self.processes and self.processes[session_id].returncode is None:
             self.event_bus.emit("terminal_error_received", f"Session {session_id} is already running a command.\n",
@@ -39,7 +39,7 @@ class TerminalService:
             self.event_bus.emit("terminal_error_received", "No active project. Cannot execute command.\n", session_id)
             return
 
-        full_error_output = []  # Collector for the full error traceback
+        full_error_output = []
 
         try:
             python_executable = self.project_manager.venv_python_path
@@ -58,8 +58,6 @@ class TerminalService:
             )
             self.processes[session_id] = process
 
-            # We now gather output and errors simultaneously.
-            # The 'full_error_output' list will be populated by the stderr stream.
             await asyncio.gather(
                 self._stream_output(process.stdout, "terminal_output_received", session_id, None),
                 self._stream_output(process.stderr, "terminal_error_received", session_id, full_error_output)
@@ -68,19 +66,19 @@ class TerminalService:
             await process.wait()
 
             exit_message = f"\nProcess finished with exit code {process.returncode}\n"
-            if process.returncode == 0:
-                self.event_bus.emit("terminal_success_received", exit_message, session_id)
-            else:
-                self.event_bus.emit("terminal_error_received", exit_message, session_id)
+            error_report = "".join(full_error_output)
 
-                # --- THIS IS THE FIX ---
-                # When a command fails, we now collect all the error text and emit
-                # the critical 'execution_failed' event that the entire "fix it"
-                # workflow depends on.
-                error_report = "".join(full_error_output)
+            # A failure is now any non-zero exit code. The '-W error' flag handles the rest.
+            if process.returncode != 0:
+                self.event_bus.emit("terminal_error_received", exit_message, session_id)
                 if error_report:
                     self.event_bus.emit("execution_failed", error_report)
-                # --- END OF FIX ---
+            else:
+                # Even with a 0 exit code, check for collected stderr output that isn't just a benign warning
+                if error_report and "deprecationwarning" not in error_report.lower():
+                     self.event_bus.emit("execution_failed", error_report)
+                else:
+                    self.event_bus.emit("terminal_success_received", exit_message, session_id)
 
         except FileNotFoundError:
             self.event_bus.emit("terminal_error_received", f"Command not found: {command.split()[0]}\n", session_id)
@@ -92,14 +90,22 @@ class TerminalService:
             self.event_bus.emit("terminal_command_finished", session_id)
 
     def _prepare_command(self, command: str, python_executable: Path | None) -> str:
-        """Modifies the command to use the virtual environment's executables if applicable."""
+        """
+        Modifies the command to use the venv, force unbuffered output (-u),
+        and force warnings to raise exceptions (-W error) for better analysis.
+        """
         parts = command.split()
         if not parts:
             return ""
 
         if python_executable and python_executable.exists():
             if parts[0] == 'python':
-                parts[0] = f'"{python_executable}"'
+                # --- THIS IS THE FIX ---
+                # -u: Force unbuffered stdout and stderr. CRITICAL for real-time output from GUI apps.
+                # -W error: Treat warnings as errors to generate a full traceback.
+                parts = [f'"{python_executable}"', '-u', '-W', 'error'] + parts[1:]
+                # --- END OF FIX ---
+
             elif parts[0] == 'pip':
                 parts = [f'"{python_executable}"', '-m', 'pip'] + parts[1:]
 
@@ -127,7 +133,6 @@ class TerminalService:
                 if line:
                     decoded_line = line.decode('utf-8', errors='replace')
                     self.event_bus.emit(event_name, decoded_line, session_id)
-                    # If a collector list is provided, append the line to it.
                     if collector is not None:
                         collector.append(decoded_line)
             except Exception as e:
