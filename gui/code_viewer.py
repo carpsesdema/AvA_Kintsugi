@@ -158,3 +158,15 @@ class CodeViewerWindow(QMainWindow):
     def clear_all_error_highlights(self):
         if self.editor_manager:
             self.editor_manager.clear_all_error_highlights()
+        # Also hide the fix button when errors are cleared
+        self.hide_fix_button()
+
+    def show_fix_button(self):
+        """Shows the 'Review & Fix' button in the integrated terminal."""
+        if self.terminal:
+            self.terminal.show_fix_button()
+
+    def hide_fix_button(self):
+        """Hides the 'Review & Fix' button in the integrated terminal."""
+        if self.terminal:
+            self.terminal.hide_fix_button()
