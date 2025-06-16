@@ -1,5 +1,5 @@
-# kintsugi_ava/prompts/prompts.py
-# V7: Enhanced CODER_PROMPT to use Living Design Agent context.
+# prompts/prompts.py
+# ENHANCED: Now includes comprehensive project context for perfect import awareness
 
 import textwrap
 
@@ -88,8 +88,7 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     }}
     """)
 
-# --- THIS IS THE FIX ---
-# A completely new, more intelligent prompt for the coder.
+# ENHANCED CODER PROMPT - This is the main fix!
 CODER_PROMPT = textwrap.dedent("""
     You are an expert Python developer tasked with writing a single, complete file for a larger application. Your code must be robust, correct, and integrate perfectly with the rest of the project.
 
@@ -97,70 +96,155 @@ CODER_PROMPT = textwrap.dedent("""
     **PURPOSE OF THIS FILE:** `{purpose}`
 
     ---
-    **CONTEXT: FULL PROJECT PLAN**
-    This is the complete plan for the application. Use it to understand the overall architecture.
+    **🔍 COMPLETE PROJECT CONTEXT (CRITICAL - READ CAREFULLY)**
+
+    **Full Project Plan:**
     ```json
     {file_plan_json}
     ```
 
-    ---
-    **CONTEXT: REAL-TIME PROJECT ANALYSIS (Most Important)**
-    This is a live analysis of the project's structure, including other files that have already been written in this session. Use this as your primary source of truth for class names, method signatures, and how to import from other modules.
-
-    **Living Design Document:**
+    **🎯 PROJECT-WIDE SYMBOL INDEX (Your primary reference for imports!):**
     ```json
-    {living_design_context_json}
+    {symbol_index_json}
     ```
 
-    **Basic File Index (Symbol -> Module Path):**
+    **📁 EXISTING FILE CONTENTS (Files already written in this session):**
     ```json
-    {code_summaries_json}
+    {existing_files_json}
     ```
+
+    **🔗 DEPENDENCY MAP (Who imports what):**
+    ```json
+    {dependency_map_json}
+    ```
+
+    **🏗️ PROJECT STRUCTURE:**
+    ```json
+    {project_structure_json}
+    ```
+
+    **📚 RELEVANT KNOWLEDGE BASE CONTEXT:**
+    ```
+    {rag_context}
+    ```
+
     ---
+    **⚡ CRITICAL IMPORT AND INTEGRATION RULES:**
 
-    **CRITICAL INSTRUCTIONS:**
-    1.  **Write a complete, runnable file.** You MUST include all necessary import statements.
-    2.  **Adhere to the context.** Your code MUST correctly call classes and methods from other files as defined in the "REAL-TIME PROJECT ANALYSIS". If the context says `engine/player.py` has a `Player` class, you must `from engine.player import Player` and instantiate it correctly.
-    3.  **Implement the full logic.** Do not write placeholder or incomplete code. Fulfill the file's stated "purpose".
-    4.  **Raw Code Only:** Your response must ONLY be the raw source code for `{filename}`. Do not include any explanations, comments, or markdown formatting like ```python.
+    1. **PERFECT IMPORT ACCURACY**: Use the symbol index above to ensure 100% accurate imports:
+       - If you need class `Player` and the symbol index shows it's in `engine/player.py`, use: `from engine.player import Player`
+       - If you need function `calculate_score` and it's in `utils/scoring.py`, use: `from utils.scoring import calculate_score`
+       - NEVER guess import paths - always reference the symbol index!
 
-    Begin writing the code for `{filename}` now.
+    2. **DEPENDENCY AWARENESS**: Check the dependency map to see what other files import:
+       - If `main.py` imports from your module, ensure you provide the expected classes/functions
+       - If your module depends on others, import them correctly using the symbol index
+
+    3. **INTEGRATION REQUIREMENTS**:
+       - Your code must work seamlessly with all existing files shown above
+       - Use exact class names, method signatures, and module paths from the context
+       - Follow the architectural patterns established in existing files
+
+    4. **FILE STRUCTURE COMPLIANCE**:
+       - Respect the project structure shown above
+       - If creating a class in a subdirectory, ensure proper package imports
+       - Add `__init__.py` imports if your code will be imported by others
+
+    ---
+    **📋 IMPLEMENTATION CHECKLIST:**
+
+    ✅ **Import Statements**: Use EXACT paths from symbol index
+    ✅ **Class Names**: Match EXACT names from existing files  
+    ✅ **Method Signatures**: Follow patterns in existing code
+    ✅ **Dependencies**: Import everything you need, nothing you don't
+    ✅ **Integration**: Your code must work with main.py and other modules
+    ✅ **Error Handling**: Include proper exception handling
+    ✅ **Documentation**: Add docstrings for classes and complex methods
+
+    ---
+    **🎯 OUTPUT REQUIREMENTS:**
+
+    1. **Complete Implementation**: Write the full, working code for `{filename}` 
+    2. **Perfect Imports**: Every import must be accurate based on the symbol index
+    3. **Seamless Integration**: Your code must integrate flawlessly with existing files
+    4. **Production Ready**: Include error handling, docstrings, and clean code
+    5. **Raw Code Only**: Return ONLY the Python code - no explanations or markdown
+
+    **🚀 BEGIN IMPLEMENTATION:**
+    Write the complete, integration-ready code for `{filename}` now:
     """)
-# --- END OF FIX ---
 
+# REFINEMENT PROMPT for fixing existing code
 REFINEMENT_PROMPT = textwrap.dedent("""
-    You are an expert Python game developer specializing in the Ursina engine. Your task is to fix a critical bug in a multi-file voxel game project.
+    You are an expert Python developer specializing in fixing integration and import issues. Your task is to analyze a multi-file project and fix the specific error that occurred.
 
     **THE GOAL:**
     Analyze the complete project source code and the provided error traceback. Identify the root cause of the bug and provide the corrected, complete source code for **only the file(s) that need to be changed.**
 
-    **CONTEXT: ENTIRE PROJECT SOURCE CODE**
-    This JSON object contains the full source for every file in the project. Use this to understand the relationships and dependencies between modules.
+    **🔍 COMPLETE PROJECT ANALYSIS:**
     ```json
     {project_source_json}
     ```
 
-    **THE ERROR THAT OCCURRED:**
-    This is the error report. The error occurred in `{error_filename}`.
+    **🚨 THE ERROR THAT OCCURRED:**
+    The error occurred in `{error_filename}`:
     ```
     {error_report}
     ```
 
-    **CRITICAL INSTRUCTIONS & DEBUGGING HINTS:**
-    1.  **Analyze the Full Picture:** The bug might be a simple typo in `{error_filename}`, or it could be a deeper architectural issue, like a mismatch in how two files interact. Use the full project context to find the true root cause.
-    2.  **Common Ursina `Mesh` Error:** If the error is a `ValueError` related to `Mesh` creation, the most common cause is mismatched data lengths or incorrect data types for `vertices`, `triangles`, or `uvs`. Specifically, `uvs` must be a list of 2D coordinates (like tuples `(u, v)` or `Vec2`), NOT 3D vectors (`Vec3`).
-    3.  **Output Format:** Your response MUST be a single, valid JSON object. The keys are the filenames that need to change, and the values are their complete, new source code.
-    4.  **Be Precise:** Only include files that require changes. If only `chunk.py` needs a fix, only include `chunk.py` in your response.
-    5.  **No Explanations:** Do not include any explanations, comments, or markdown formatting outside of the JSON object.
+    **⚡ CRITICAL DEBUGGING APPROACH:**
 
-    **EXAMPLE RESPONSE (if only chunk.py needs fixing):**
+    1. **Root Cause Analysis**: The bug might be:
+       - Import path errors (wrong module names)
+       - Missing imports (forgot to import required classes/functions)  
+       - Class/method name mismatches between files
+       - Circular import dependencies
+       - Missing `__init__.py` files
+       - Incorrect instantiation (wrong constructor parameters)
+
+    2. **Cross-File Integration Issues**: Look for:
+       - File A tries to import class X from file B, but file B defines class Y
+       - main.py imports from module C, but module C doesn't exist or has wrong name
+       - Method calls that don't match the actual method signatures
+
+    3. **Common Fixes**:
+       - Correct import paths: `from engine.player import Player` not `from player import Player`
+       - Add missing imports: import all required classes/functions
+       - Fix class/method names to match across files
+       - Create missing `__init__.py` files
+       - Fix constructor calls to match class definitions
+
+    **📋 ANALYSIS CHECKLIST:**
+    ✅ Check all import statements in error file
+    ✅ Verify imported classes/functions exist in target files  
+    ✅ Confirm method names match between caller and callee
+    ✅ Ensure constructor parameters match class definitions
+    ✅ Check for missing `__init__.py` files
+    ✅ Look for circular import issues
+
+    **🎯 OUTPUT FORMAT:**
+    Your response MUST be a single, valid JSON object with filename keys and complete corrected code values:
+
     ```json
     {{
-      "world/chunk.py": "
-    # kintsugi_ava/world/chunk.py
-    import numpy as np
-    from ursina import Entity, Mesh, Vec3, Vec2
-    # ... the rest of the complete, corrected code for chunk.py ...
-    "
+      "path/to/file.py": "complete corrected Python code here..."
     }}
-    ```    """)
+    ```
+
+    **CRITICAL**: 
+    - Only include files that need changes
+    - Provide complete file contents, not just diffs
+    - Ensure all imports are correct and all integration issues are fixed
+    - Do not include explanations outside the JSON
+
+    **🚀 BEGIN ANALYSIS AND FIX:**
+    """)
+
+# Export all prompts
+__all__ = [
+    'PLANNER_PROMPT',
+    'HIERARCHICAL_PLANNER_PROMPT',
+    'MODIFICATION_PLANNER_PROMPT',
+    'CODER_PROMPT',
+    'REFINEMENT_PROMPT'
+]

@@ -1,30 +1,44 @@
 # services/generation_coordinator.py
-# Orchestrates coordinated code generation with cross-file awareness
-# Single Responsibility: Coordinate the generation of multiple files as a cohesive system
+# ENHANCED: Better project context building for coder prompt
 
-from __future__ import annotations
 import asyncio
 import json
+from typing import Dict, Any, List, Optional
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
+from collections import defaultdict
+
 from core.event_bus import EventBus
 
-if TYPE_CHECKING:
-    from services.context_manager import GenerationContext, ContextManager
-    from services.dependency_planner import FileGenerationSpec, DependencyPlanner
-    from services.integration_validator import IntegrationValidator
+
+@dataclass
+class FileGenerationSpec:
+    """Specification for generating a single file."""
+    filename: str
+    purpose: str
+    context: 'GenerationContext'
+
+
+@dataclass
+class GenerationContext:
+    """Complete context for code generation session."""
+    plan: Dict[str, Any]
+    project_index: Dict[str, Any]
+    living_design_context: Dict[str, Any]
+    dependency_order: List[str]
+    generation_session: Dict[str, Any]
+    rag_context: str
+    relevance_scores: Dict[str, float]
 
 
 class GenerationCoordinator:
     """
-    Orchestrates coordinated code generation.
+    Coordinates intelligent, context-aware code generation.
+    ENHANCED: Now builds comprehensive project context for perfect import awareness.
     """
 
-    def __init__(self, service_manager, event_bus: EventBus,
-                 context_manager: 'ContextManager',
-                 dependency_planner: 'DependencyPlanner',
-                 integration_validator: 'IntegrationValidator'):
+    def __init__(self, service_manager, event_bus: EventBus, context_manager,
+                 dependency_planner, integration_validator):
         self.service_manager = service_manager
         self.event_bus = event_bus
         self.context_manager = context_manager
@@ -33,87 +47,255 @@ class GenerationCoordinator:
 
     async def coordinate_generation(self, plan: Dict[str, Any], rag_context: str) -> Dict[str, str]:
         """
-        Coordinate the generation of all files with full cross-file awareness.
+        Coordinate generation of all files with enhanced project context awareness.
         """
-        context = await self.context_manager.build_generation_context(plan, rag_context)
-        generation_specs = await self.dependency_planner.plan_generation_order(context)
-        return await self._execute_coordinated_generation(generation_specs, context)
+        try:
+            self.event_bus.emit("log_message_received", "GenerationCoordinator", "info",
+                                "🚀 Starting coordinated generation with enhanced context...")
 
-    async def _execute_coordinated_generation(self,
-                                              generation_specs: List['FileGenerationSpec'],
-                                              context: 'GenerationContext') -> Dict[str, str]:
-        """Execute generation with real-time coordination and validation."""
+            # 1. Build comprehensive generation context
+            context = await self.context_manager.build_generation_context(plan, rag_context)
+
+            # 2. Create generation specifications with enhanced context
+            generation_specs = await self._create_enhanced_generation_specs(plan, context)
+
+            # 3. Generate files in dependency order with full context
+            generated_files = await self._generate_files_with_context(generation_specs)
+
+            # 4. Validate and fix integration issues
+            validated_files = await self._validate_and_fix_integration(generated_files, context)
+
+            self.event_bus.emit("log_message_received", "GenerationCoordinator", "success",
+                                f"✅ Coordinated generation complete: {len(validated_files)} files")
+
+            return validated_files
+
+        except Exception as e:
+            self.event_bus.emit("log_message_received", "GenerationCoordinator", "error",
+                                f"Coordinated generation failed: {e}")
+            return {}
+
+    async def _create_enhanced_generation_specs(self, plan: Dict[str, Any],
+                                                context: GenerationContext) -> List[FileGenerationSpec]:
+        """Create generation specs with enhanced context for each file."""
+        specs = []
+
+        files_to_generate = plan.get("files", [])
+
+        for file_info in files_to_generate:
+            if file_info["filename"].endswith('.py'):
+                spec = FileGenerationSpec(
+                    filename=file_info["filename"],
+                    purpose=file_info["purpose"],
+                    context=context
+                )
+                specs.append(spec)
+
+        return specs
+
+    async def _generate_files_with_context(self, generation_specs: List[FileGenerationSpec]) -> Dict[str, str]:
+        """Generate files with comprehensive project context."""
         generated_files = {}
-        import_fixer = self.service_manager.get_import_fixer_service()
 
-        for spec in generation_specs:
+        for i, spec in enumerate(generation_specs):
             try:
-                spec.context = self.context_manager.update_session_context(
-                    spec.context, generated_files
-                )
+                self.event_bus.emit("log_message_received", "GenerationCoordinator", "info",
+                                    f"📝 Generating {spec.filename} ({i + 1}/{len(generation_specs)})...")
 
-                # Step 1: Generate the code with focused context
-                generated_code = await self._generate_coordinated_file(spec)
-                if generated_code is None:
-                    raise Exception(f"Failed to generate {spec.filename}")
+                # Build enhanced prompt with full project context
+                enhanced_prompt = await self._build_enhanced_context_prompt(spec, generated_files)
 
-                # Step 2: Use the import fixer as a safety net
-                self.event_bus.emit("log_message_received", "ImportFixer", "info",
-                                    f"Verifying imports for {spec.filename}...")
-                try:
-                    fixed_code = import_fixer.fix_imports(
-                        code=generated_code,
-                        project_index=spec.context.project_index,
-                        current_module=spec.filename.replace('.py', '').replace('/', '.')
+                # Generate the file
+                generated_code = await self._generate_file_with_enhanced_prompt(spec, enhanced_prompt)
+
+                if generated_code:
+                    generated_files[spec.filename] = generated_code
+
+                    # Update context with newly generated file
+                    spec.context = self.context_manager.update_session_context(
+                        spec.context, {spec.filename: generated_code}
                     )
-                    generated_code = fixed_code
-                except Exception as e:
-                    self.event_bus.emit("log_message_received", "ImportFixer", "warning",
-                                        f"Import fixing failed for {spec.filename}: {e}")
-
-                # Step 3: Validate the complete code
-                validation_result = await self.integration_validator.validate_integration(
-                    spec.filename, generated_code, generated_files, spec.context
-                )
-
-                if not validation_result.is_valid:
-                    try:
-                        fixed_code = await self.integration_validator.fix_integration_issues(
-                            spec.filename, generated_code, validation_result, spec.context
-                        )
-                        generated_code = fixed_code if fixed_code else generated_code
-                    except Exception as e:
-                        self.event_bus.emit("log_message_received", "IntegrationValidator", "warning",
-                                            f"Integration fixing failed for {spec.filename}: {e}")
-
-                generated_files[spec.filename] = generated_code
 
                 self.event_bus.emit("coordinated_generation_progress", {
-                    "filename": spec.filename, "completed": len(generated_files),
-                    "total": len(generation_specs), "validation_passed": validation_result.is_valid
+                    "filename": spec.filename,
+                    "completed": len(generated_files),
+                    "total": len(generation_specs)
                 })
 
             except Exception as e:
                 self.event_bus.emit("log_message_received", "GenerationCoordinator", "error",
                                     f"Failed to generate {spec.filename}: {e}")
-                # Continue with other files rather than failing completely
+                # Continue with a placeholder
                 generated_files[spec.filename] = f"# ERROR: Failed to generate {spec.filename}\n# {str(e)}\npass"
 
         return generated_files
 
-    async def _generate_coordinated_file(self, spec: 'FileGenerationSpec') -> Optional[str]:
-        """Generate a single file with focused, relevant context."""
+    async def _build_enhanced_context_prompt(self, spec: FileGenerationSpec,
+                                             generated_files: Dict[str, str]) -> str:
+        """
+        Build enhanced context prompt with comprehensive project awareness.
+        This is the key fix for import/integration issues!
+        """
+        try:
+            # Build comprehensive symbol index
+            symbol_index = await self._build_comprehensive_symbol_index(generated_files, spec.context)
+
+            # Build dependency map
+            dependency_map = await self._build_dependency_map(generated_files, spec.context)
+
+            # Build project structure
+            project_structure = await self._build_project_structure(spec.context.plan, generated_files)
+
+            # Enhanced coder prompt with all context
+            from prompts.prompts import CODER_PROMPT
+
+            enhanced_prompt = CODER_PROMPT.format(
+                filename=spec.filename,
+                purpose=spec.purpose,
+                file_plan_json=json.dumps(spec.context.plan, indent=2),
+                symbol_index_json=json.dumps(symbol_index, indent=2),
+                existing_files_json=json.dumps(generated_files, indent=2),
+                dependency_map_json=json.dumps(dependency_map, indent=2),
+                project_structure_json=json.dumps(project_structure, indent=2),
+                rag_context=spec.context.rag_context
+            )
+
+            return enhanced_prompt
+
+        except Exception as e:
+            self.event_bus.emit("log_message_received", "GenerationCoordinator", "warning",
+                                f"Failed to build enhanced context for {spec.filename}, using fallback: {e}")
+            return self._build_fallback_prompt(spec)
+
+    async def _build_comprehensive_symbol_index(self, generated_files: Dict[str, str],
+                                                context: GenerationContext) -> Dict[str, Any]:
+        """Build comprehensive index of all classes and functions."""
+        import ast
+        import re
+
+        symbol_index = {}
+
+        # Analyze generated files
+        for filename, content in generated_files.items():
+            if filename.endswith('.py'):
+                symbols = {"classes": [], "functions": [], "imports": []}
+
+                try:
+                    # AST-based analysis for accurate symbol extraction
+                    tree = ast.parse(content)
+
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.ClassDef):
+                            symbols["classes"].append(node.name)
+                        elif isinstance(node, ast.FunctionDef):
+                            symbols["functions"].append(node.name)
+                        elif isinstance(node, ast.Import):
+                            for alias in node.names:
+                                symbols["imports"].append(alias.name)
+                        elif isinstance(node, ast.ImportFrom):
+                            module = node.module or ""
+                            for alias in node.names:
+                                symbols["imports"].append(f"{module}.{alias.name}" if module else alias.name)
+
+                except SyntaxError:
+                    # Fallback to regex-based analysis
+                    symbols["classes"] = re.findall(r'^class\s+(\w+)', content, re.MULTILINE)
+                    symbols["functions"] = re.findall(r'^def\s+(\w+)', content, re.MULTILINE)
+                    symbols["imports"] = re.findall(r'^(?:import|from)\s+(\w+)', content, re.MULTILINE)
+
+                symbol_index[filename] = symbols
+
+        # Add planned files (not yet generated)
+        for file_info in context.plan.get("files", []):
+            filename = file_info["filename"]
+            if filename.endswith('.py') and filename not in symbol_index:
+                # Predict likely symbols based on purpose
+                predicted_symbols = self._predict_symbols_from_purpose(file_info["purpose"], filename)
+                symbol_index[filename] = predicted_symbols
+
+        return symbol_index
+
+    async def _build_dependency_map(self, generated_files: Dict[str, str],
+                                    context: GenerationContext) -> Dict[str, List[str]]:
+        """Build map of file dependencies."""
+        import re
+
+        dependency_map = {}
+
+        for filename, content in generated_files.items():
+            if filename.endswith('.py'):
+                dependencies = []
+
+                # Extract import statements
+                import_patterns = [
+                    r'^from\s+(\w+(?:\.\w+)*)\s+import',
+                    r'^import\s+(\w+(?:\.\w+)*)'
+                ]
+
+                for pattern in import_patterns:
+                    matches = re.findall(pattern, content, re.MULTILINE)
+                    dependencies.extend(matches)
+
+                dependency_map[filename] = dependencies
+
+        return dependency_map
+
+    async def _build_project_structure(self, plan: Dict[str, Any],
+                                       generated_files: Dict[str, str]) -> Dict[str, Any]:
+        """Build project structure information."""
+        all_files = list(generated_files.keys())
+        planned_files = [f["filename"] for f in plan.get("files", [])]
+
+        # Combine generated and planned files
+        all_files.extend([f for f in planned_files if f not in all_files])
+
+        structure = {
+            "total_files": len(all_files),
+            "python_files": [f for f in all_files if f.endswith('.py')],
+            "directories": list(set([
+                '/'.join(f.split('/')[:-1]) for f in all_files
+                if '/' in f and f.split('/')[:-1]
+            ])),
+            "main_files": [f for f in all_files if f.endswith('main.py')],
+            "dependencies": plan.get("dependencies", [])
+        }
+
+        return structure
+
+    def _predict_symbols_from_purpose(self, purpose: str, filename: str) -> Dict[str, List[str]]:
+        """Predict likely symbols based on file purpose."""
+        symbols = {"classes": [], "functions": [], "imports": []}
+
+        # Extract potential class names from purpose
+        import re
+
+        # Look for class-like words in purpose
+        class_words = re.findall(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)*)\b', purpose)
+        symbols["classes"] = class_words
+
+        # Predict common functions based on filename
+        base_name = filename.replace('.py', '').split('/')[-1]
+        if 'main' in base_name:
+            symbols["functions"] = ['main', 'run', 'start']
+        elif 'manager' in base_name:
+            symbols["functions"] = ['initialize', 'manage', 'update']
+        elif 'service' in base_name:
+            symbols["functions"] = ['process', 'handle', 'execute']
+
+        return symbols
+
+    async def _generate_file_with_enhanced_prompt(self, spec: FileGenerationSpec,
+                                                  enhanced_prompt: str) -> Optional[str]:
+        """Generate file using enhanced prompt."""
         llm_client = self.service_manager.get_llm_client()
         provider, model = llm_client.get_model_for_role("coder")
 
         if not provider or not model:
             return None
 
-        prompt = self._build_focused_prompt(spec)
-
         file_content = ""
         try:
-            async for chunk in llm_client.stream_chat(provider, model, prompt, "coder"):
+            async for chunk in llm_client.stream_chat(provider, model, enhanced_prompt, "coder"):
                 file_content += chunk
                 self.event_bus.emit("stream_code_chunk", spec.filename, chunk)
         except Exception as e:
@@ -123,318 +305,62 @@ class GenerationCoordinator:
 
         return self._clean_code_output(file_content)
 
-    def _build_focused_prompt(self, spec: 'FileGenerationSpec') -> str:
-        """Build a focused prompt with only relevant context."""
+    async def _validate_and_fix_integration(self, generated_files: Dict[str, str],
+                                            context: GenerationContext) -> Dict[str, str]:
+        """Validate and fix integration issues in generated files."""
         try:
-            # Extract relevant context intelligently
-            relevant_context = self._extract_relevant_context(spec)
-            dependencies = self._extract_file_dependencies(spec)
-            examples = self._get_relevant_examples(spec)
+            validated_files = generated_files.copy()
 
-            return f"""You are an expert Python developer writing production-ready code.
+            # Run integration validation
+            for filename, content in generated_files.items():
+                if filename.endswith('.py'):
+                    validation_result = await self.integration_validator.validate_integration(
+                        filename, content, generated_files, context
+                    )
 
-**FILE TO GENERATE:** `{spec.filename}`
-**PURPOSE:** {spec.purpose}
+                    if not validation_result.is_valid:
+                        self.event_bus.emit("log_message_received", "GenerationCoordinator", "warning",
+                                            f"Integration issues found in {filename}, attempting fixes...")
 
-**RELEVANT CONTEXT:**
-{relevant_context}
+                        fixed_content = await self.integration_validator.fix_integration_issues(
+                            filename, content, validation_result, context
+                        )
 
-**REQUIRED IMPORTS & DEPENDENCIES:**
-{self._format_dependencies(dependencies)}
+                        if fixed_content:
+                            validated_files[filename] = fixed_content
+                            self.event_bus.emit("log_message_received", "GenerationCoordinator", "success",
+                                                f"✅ Fixed integration issues in {filename}")
 
-**ARCHITECTURAL GUIDANCE:**
-{self._format_architectural_guidance(spec)}
-
-**EXAMPLES FROM CODEBASE:**
-{examples}
-
-**CRITICAL REQUIREMENTS:**
-1. Include ALL necessary import statements at the top
-2. Write complete, runnable code with proper error handling
-3. Follow exact class/method signatures from the context
-4. Use descriptive variable names and clear logic
-5. Include docstrings for classes and complex methods
-
-**OUTPUT INSTRUCTIONS:**
-- Return ONLY the complete Python code for {spec.filename}
-- Do NOT include explanations, markdown, or code fences
-- Ensure the code is immediately executable
-
-Generate the complete code for `{spec.filename}`:`"""
+            return validated_files
 
         except Exception as e:
-            self.event_bus.emit("log_message_received", "GenerationCoordinator", "warning",
-                                f"Failed to build focused prompt for {spec.filename}, using fallback: {e}")
-            return self._build_fallback_prompt(spec)
+            self.event_bus.emit("log_message_received", "GenerationCoordinator", "error",
+                                f"Integration validation failed: {e}")
+            return generated_files
 
-    def _extract_relevant_context(self, spec: 'FileGenerationSpec') -> str:
-        """Extract only context relevant to the current file being generated."""
-        try:
-            context_parts = []
+    def _build_fallback_prompt(self, spec: FileGenerationSpec) -> str:
+        """Build fallback prompt if enhanced context fails."""
+        from prompts.prompts import CODER_PROMPT
 
-            # Add RAG context if available and relevant
-            if spec.context.rag_context and len(spec.context.rag_context) > 50:
-                # Truncate RAG context to most relevant parts
-                rag_summary = self._summarize_rag_context(spec.context.rag_context, spec.filename, spec.purpose)
-                if rag_summary:
-                    context_parts.append(f"Knowledge Base Guidance:\n{rag_summary}")
+        return CODER_PROMPT.format(
+            filename=spec.filename,
+            purpose=spec.purpose,
+            file_plan_json=json.dumps(spec.context.plan, indent=2),
+            symbol_index_json="{}",
+            existing_files_json="{}",
+            dependency_map_json="{}",
+            project_structure_json="{}",
+            rag_context=spec.context.rag_context
+        )
 
-            # Add living design context if available
-            if spec.context.living_design_context:
-                design_summary = self._extract_design_context(spec.context.living_design_context, spec.filename)
-                if design_summary:
-                    context_parts.append(f"Design Documentation:\n{design_summary}")
-
-            # Add project structure context
-            structure_info = self._get_project_structure_context(spec)
-            if structure_info:
-                context_parts.append(f"Project Structure:\n{structure_info}")
-
-            return "\n\n".join(context_parts) if context_parts else "No additional context available."
-
-        except Exception as e:
-            return f"Error extracting context: {e}"
-
-    def _summarize_rag_context(self, rag_context: str, filename: str, purpose: str = "") -> str:
-        """Summarize RAG context to most relevant parts for the file."""
-        try:
-            # Split into chunks and find most relevant
-            chunks = rag_context.split("--- Relevant Document Snippet")
-            relevant_chunks = []
-
-            # Look for chunks mentioning the filename or related concepts
-            file_stem = Path(filename).stem
-            search_terms = [file_stem, filename, purpose.lower() if purpose else '']
-
-            for chunk in chunks[:3]:  # Limit to first 3 chunks
-                if any(term in chunk.lower() for term in search_terms if term):
-                    relevant_chunks.append(chunk.strip())
-
-            if relevant_chunks:
-                return "\n".join(relevant_chunks)
-            else:
-                # If no specific matches, return first chunk
-                return chunks[0][:500] + "..." if chunks and len(chunks[0]) > 500 else chunks[0] if chunks else ""
-
-        except Exception:
-            return rag_context[:500] + "..." if len(rag_context) > 500 else rag_context
-
-    def _extract_design_context(self, design_context: Dict[str, Any], filename: str) -> str:
-        """Extract relevant design context for the specific file."""
-        try:
-            relevant_info = []
-            file_stem = Path(filename).stem
-
-            # Look for classes and functions relevant to this file
-            if 'classes' in design_context:
-                for class_info in design_context['classes']:
-                    if file_stem in class_info.get('file', '') or filename in class_info.get('file', ''):
-                        relevant_info.append(f"Class: {class_info.get('name', 'Unknown')}")
-                        if 'methods' in class_info:
-                            methods = [m.get('name', '') for m in class_info['methods'][:3]]
-                            relevant_info.append(f"  Methods: {', '.join(methods)}")
-
-            if 'functions' in design_context:
-                for func_info in design_context['functions']:
-                    if file_stem in func_info.get('file', '') or filename in func_info.get('file', ''):
-                        relevant_info.append(f"Function: {func_info.get('name', 'Unknown')}")
-
-            return "\n".join(relevant_info) if relevant_info else ""
-
-        except Exception:
-            return ""
-
-    def _get_project_structure_context(self, spec: 'FileGenerationSpec') -> str:
-        """Get relevant project structure information."""
-        try:
-            structure_parts = []
-
-            # Add information about files this one depends on
-            file_dir = str(Path(spec.filename).parent)
-            if file_dir != ".":
-                structure_parts.append(f"Module location: {file_dir}/")
-
-            # Add information about related files in the plan
-            related_files = []
-            for file_info in spec.context.plan.get('files', []):
-                if file_info['filename'] != spec.filename:
-                    related_files.append(f"  {file_info['filename']}: {file_info['purpose']}")
-
-            if related_files and len(related_files) <= 5:  # Limit to avoid overwhelming
-                structure_parts.append("Related files in project:")
-                structure_parts.extend(related_files)
-
-            return "\n".join(structure_parts) if structure_parts else ""
-
-        except Exception:
-            return ""
-
-    def _extract_file_dependencies(self, spec: 'FileGenerationSpec') -> List[str]:
-        """Extract likely dependencies for the current file."""
-        try:
-            dependencies = []
-
-            # Standard library imports based on file purpose
-            purpose_lower = spec.purpose.lower()
-            if any(word in purpose_lower for word in ['async', 'asyncio', 'await']):
-                dependencies.append('import asyncio')
-            if any(word in purpose_lower for word in ['path', 'file', 'directory']):
-                dependencies.append('from pathlib import Path')
-            if any(word in purpose_lower for word in ['json', 'dict', 'config']):
-                dependencies.append('import json')
-            if any(word in purpose_lower for word in ['type', 'typing', 'optional']):
-                dependencies.append('from typing import Optional, Dict, List, Any')
-
-            # Project-specific imports based on filename and purpose
-            if 'service' in spec.filename.lower():
-                dependencies.append('from core.event_bus import EventBus')
-            if 'manager' in spec.filename.lower():
-                dependencies.append('from pathlib import Path')
-
-            # Look for imports from other files in the project
-            for file_info in spec.context.plan.get('files', []):
-                other_file = file_info['filename']
-                if other_file != spec.filename and other_file.endswith('.py'):
-                    module_name = other_file.replace('.py', '').replace('/', '.')
-                    # Add import if this file likely depends on the other
-                    if self._should_import_module(spec, file_info):
-                        dependencies.append(f'from {module_name} import *')
-
-            return list(set(dependencies))  # Remove duplicates
-
-        except Exception:
-            return ['from typing import Optional, Dict, List, Any']
-
-    def _should_import_module(self, current_spec: 'FileGenerationSpec', other_file_info: Dict[str, str]) -> bool:
-        """Determine if current file should import from another file."""
-        try:
-            current_purpose = current_spec.purpose.lower()
-            other_purpose = other_file_info['purpose'].lower()
-            other_filename = other_file_info['filename'].lower()
-
-            # Main file usually imports from other modules
-            if current_spec.filename == 'main.py':
-                return True
-
-            # Services often import from core modules
-            if 'service' in current_spec.filename.lower() and 'core' in other_filename:
-                return True
-
-            # Look for keyword matches
-            current_keywords = set(current_purpose.split())
-            other_keywords = set(other_purpose.split())
-            if len(current_keywords.intersection(other_keywords)) > 0:
-                return True
-
-            return False
-
-        except Exception:
-            return False
-
-    def _format_dependencies(self, dependencies: List[str]) -> str:
-        """Format dependencies for prompt inclusion."""
-        if not dependencies:
-            return "No specific dependencies identified."
-
-        return "\n".join(f"- {dep}" for dep in dependencies[:10])  # Limit to 10
-
-    def _format_architectural_guidance(self, spec: 'FileGenerationSpec') -> str:
-        """Format architectural guidance for the file."""
-        try:
-            guidance = []
-
-            # Add guidance based on filename patterns
-            if 'service' in spec.filename.lower():
-                guidance.append("- This is a service class - follow single responsibility principle")
-                guidance.append("- Include proper error handling and logging")
-                guidance.append("- Use dependency injection via constructor")
-
-            if 'manager' in spec.filename.lower():
-                guidance.append("- This is a manager class - coordinate between components")
-                guidance.append("- Provide clear public interface methods")
-                guidance.append("- Handle resource management and cleanup")
-
-            if spec.filename == 'main.py':
-                guidance.append("- This is the entry point - initialize all components")
-                guidance.append("- Handle command line arguments if needed")
-                guidance.append("- Include proper error handling for startup")
-
-            # Add guidance based on purpose
-            if 'ui' in spec.purpose.lower() or 'gui' in spec.purpose.lower():
-                guidance.append("- Follow UI best practices with clear separation")
-                guidance.append("- Handle user input validation")
-
-            return "\n".join(guidance) if guidance else "Follow Python best practices and clean code principles."
-
-        except Exception:
-            return "Follow Python best practices and clean code principles."
-
-    def _get_relevant_examples(self, spec: 'FileGenerationSpec') -> str:
-        """Get relevant code examples from the project context."""
-        try:
-            examples = []
-
-            # Look for similar files in the project index
-            for module_name, module_info in spec.context.project_index.items():
-                if isinstance(module_info, str) and len(module_info) > 50:
-                    # Extract class/function signatures as examples
-                    if 'class ' in module_info or 'def ' in module_info:
-                        lines = module_info.split('\n')
-                        signatures = [line.strip() for line in lines if
-                                      line.strip().startswith(('class ', 'def ', 'async def '))]
-                        if signatures:
-                            examples.append(f"From {module_name}:")
-                            examples.extend(f"  {sig}" for sig in signatures[:3])
-
-            return "\n".join(examples[:10]) if examples else "No relevant examples found in existing code."
-
-        except Exception:
-            return "No relevant examples found in existing code."
-
-    def _build_fallback_prompt(self, spec: 'FileGenerationSpec') -> str:
-        """Build a simple fallback prompt if the focused prompt fails."""
-        return f"""You are an expert Python developer. Write complete, production-ready code for the file `{spec.filename}`.
-
-PURPOSE: {spec.purpose}
-
-REQUIREMENTS:
-1. Include all necessary imports
-2. Write complete, runnable code
-3. Add proper error handling
-4. Follow Python best practices
-
-Return ONLY the complete Python code for {spec.filename}. Do not include explanations or markdown.
-
-Generate the code:"""
-
-    def _clean_code_output(self, code: str) -> str:
-        """Clean code output by removing markdown formatting."""
-        if not code:
-            return ""
-
-        code = code.strip()
-
-        # Remove common markdown patterns
-        if code.startswith("```python"):
-            code = code[len("```python"):].lstrip()
-        elif code.startswith("```"):
-            code = code[3:].lstrip()
-
-        if code.endswith("```"):
-            code = code[:-3].rstrip()
+    def _clean_code_output(self, content: str) -> str:
+        """Clean the generated code output."""
+        # Remove any markdown code blocks
+        import re
+        content = re.sub(r'^```python\s*\n?', '', content, flags=re.MULTILINE)
+        content = re.sub(r'^```\s*$', '', content, flags=re.MULTILINE)
 
         # Remove any leading/trailing whitespace
-        code = code.strip()
+        content = content.strip()
 
-        # Ensure the code doesn't start with explanatory text
-        lines = code.split('\n')
-        start_idx = 0
-        for i, line in enumerate(lines):
-            if line.strip().startswith(('import ', 'from ', 'class ', 'def ', 'async def ', '#')):
-                start_idx = i
-                break
-
-        if start_idx > 0:
-            code = '\n'.join(lines[start_idx:])
-
-        return code.strip()
+        return content

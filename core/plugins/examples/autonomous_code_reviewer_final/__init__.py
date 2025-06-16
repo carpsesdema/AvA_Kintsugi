@@ -1,4 +1,6 @@
-# kintsugi_ava/core/plugins/examples/autonomous_code_reviewer/__init__.py
+# core/plugins/examples/autonomous_code_reviewer_final/__init__.py
+# FIXED: Now subscribes to code_viewer_files_loaded for proper timing and full project context
+
 import asyncio
 import json
 import re
@@ -12,12 +14,14 @@ from core.plugins import PluginBase, PluginMetadata, PluginState
 
 class AutonomousCodeReviewerPlugin(PluginBase):
     """
-    An autonomous agent that continuously monitors code quality and fixes issues.
+    An autonomous agent that monitors code quality and fixes issues.
+    FIXED: Now runs AFTER code is loaded in code viewer with full project context.
+
     This plugin:
-    - Monitors terminal output for errors and traces them to source
-    - Proactively analyzes code for potential issues
+    - Waits for code to be loaded in code viewer
+    - Analyzes code with full project context awareness
+    - Proactively identifies integration and quality issues
     - Automatically generates and applies fixes
-    - Performs deep code quality analysis
     - Learns from successful fixes to improve future suggestions
     """
 
@@ -35,13 +39,19 @@ class AutonomousCodeReviewerPlugin(PluginBase):
         self.analysis_history = []
         self.fix_success_rate = {}
 
+        # Project context awareness
+        self.current_project_context = {}
+        self.dependency_issues = []
+        self.integration_warnings = []
+
         # Learning system
         self.successful_fixes = []
         self.failed_fixes = []
         self.pattern_library = {
             "common_python_errors": self._get_python_error_patterns(),
             "security_patterns": self._get_security_patterns(),
-            "performance_patterns": self._get_performance_patterns()
+            "performance_patterns": self._get_performance_patterns(),
+            "integration_patterns": self._get_integration_patterns()
         }
 
         # Auto-fix worker
@@ -52,120 +62,59 @@ class AutonomousCodeReviewerPlugin(PluginBase):
     def metadata(self) -> PluginMetadata:
         return PluginMetadata(
             name="autonomous_code_reviewer",
-            version="1.0.0",
-            description="Autonomous agent that monitors, analyzes, and fixes code issues proactively",
+            version="2.0.0",
+            description="Autonomous agent that monitors, analyzes, and fixes code issues with full project context",
             author="Kintsugi AvA Team",
             dependencies=[],
             event_subscriptions=[
-                "terminal_output_received",
+                "code_viewer_files_loaded",  # FIX: New event with full context
                 "execution_failed",
-                "code_generation_complete",
-                "stream_code_chunk"
+                "terminal_output_received"
             ],
             event_emissions=[
-                "error_detected_and_analyzed",
-                "auto_fix_applied",
-                "code_quality_issue_found",
-                "review_analysis_complete"
+                "autonomous_fix_applied",
+                "code_quality_issue_detected",
+                "integration_issue_found",
+                "autonomous_analysis_complete"
             ],
             config_schema={
-                "auto_fix_enabled": {
-                    "type": "bool",
-                    "default": True,
-                    "description": "Enable automatic fixing of detected issues"
-                },
-                "proactive_analysis": {
-                    "type": "bool",
-                    "default": True,
-                    "description": "Continuously analyze code for potential issues"
-                },
-                "error_monitoring": {
-                    "type": "bool",
-                    "default": True,
-                    "description": "Monitor terminal output for errors"
-                },
-                "security_analysis": {
-                    "type": "bool",
-                    "default": True,
-                    "description": "Analyze code for security vulnerabilities"
-                },
-                "performance_analysis": {
-                    "type": "bool",
-                    "default": False,
-                    "description": "Analyze code for performance issues"
-                },
-                "learning_enabled": {
-                    "type": "bool",
-                    "default": True,
-                    "description": "Learn from successful and failed fixes"
-                },
-                "auto_commit_fixes": {
-                    "type": "bool",
-                    "default": False,
-                    "description": "Automatically commit successful fixes"
-                },
-                "analysis_frequency": {
-                    "type": "int",
-                    "default": 600,
-                    "description": "How often to perform proactive analysis (seconds)"
-                }
-            },
-            enabled_by_default=False
+                "auto_fix_enabled": {"type": "bool", "default": True},
+                "analysis_depth": {"type": "str", "default": "deep"},
+                "fix_confidence_threshold": {"type": "float", "default": 0.8},
+                "integration_analysis": {"type": "bool", "default": True}
+            }
         )
 
-    async def load(self) -> bool:
-        try:
-            self.log("info", "Loading Autonomous Code Reviewer...")
-
-            # Initialize state
-            self._reset_analysis_state()
-
-            # Load learned patterns
-            await self._load_learned_patterns()
-
-            self.set_state(PluginState.LOADED)
-            self.log("success", "Autonomous Code Reviewer loaded")
-            return True
-
-        except Exception as e:
-            self.log("error", f"Failed to load Autonomous Code Reviewer: {e}")
-            self.set_state(PluginState.ERROR)
-            return False
-
     async def start(self) -> bool:
+        """Start the autonomous code reviewer."""
         try:
-            self.log("info", "Starting Autonomous Code Reviewer...")
+            self.log("info", "🤖 Starting Autonomous Code Reviewer v2.0...")
+
+            # Start the auto-fix worker
+            self.auto_fix_worker = asyncio.create_task(self._auto_fix_worker())
 
             # Subscribe to events
-            self.subscribe_to_event("terminal_output_received", self._on_terminal_output)
-            self.subscribe_to_event("execution_failed", self._on_execution_failed)
-            self.subscribe_to_event("code_generation_complete", self._on_code_generated)
-            self.subscribe_to_event("stream_code_chunk", self._on_code_streaming)
-
-            # Start auto-fix worker
-            if self.get_config_value("auto_fix_enabled", True):
-                self.auto_fix_worker = asyncio.create_task(self._auto_fix_worker())
-
-            # Start proactive analysis
-            if self.get_config_value("proactive_analysis", True):
-                asyncio.create_task(self._start_proactive_analysis())
+            self.event_bus.subscribe("code_viewer_files_loaded", self._on_code_viewer_files_loaded)
+            self.event_bus.subscribe("execution_failed", self._on_execution_failed)
+            self.event_bus.subscribe("terminal_output_received", self._on_terminal_output)
 
             self.set_state(PluginState.STARTED)
-            self.log("info", "🔍 Autonomous Code Reviewer active - monitoring for issues")
+            self.log("info", "🤖 Autonomous Code Reviewer active - waiting for code viewer loads")
 
             return True
 
         except Exception as e:
-            self.log("error", f"Failed to start Autonomous Code Reviewer: {e}")
+            self.log("error", f"Failed to start autonomous code reviewer: {e}")
             self.set_state(PluginState.ERROR)
             return False
 
     async def stop(self) -> bool:
+        """Stop the autonomous code reviewer."""
         try:
             self.log("info", "Stopping Autonomous Code Reviewer...")
 
-            # Stop auto-fix worker
-            if self.auto_fix_worker:
+            # Cancel auto-fix worker
+            if self.auto_fix_worker and not self.auto_fix_worker.done():
                 self.auto_fix_worker.cancel()
                 try:
                     await self.auto_fix_worker
@@ -179,327 +128,243 @@ class AutonomousCodeReviewerPlugin(PluginBase):
             return True
 
         except Exception as e:
-            self.log("error", f"Failed to stop Autonomous Code Reviewer: {e}")
-            self.set_state(PluginState.ERROR)
-            return False
-
-    async def unload(self) -> bool:
-        try:
-            self.log("info", "Unloading Autonomous Code Reviewer...")
-
-            # Save learned patterns
-            await self._save_learned_patterns()
-
-            # Clear state
-            self._reset_analysis_state()
-
-            self.set_state(PluginState.UNLOADED)
-            self.log("info", "Autonomous Code Reviewer unloaded")
-            return True
-
-        except Exception as e:
-            self.log("error", f"Failed to unload Autonomous Code Reviewer: {e}")
+            self.log("error", f"Failed to stop autonomous code reviewer: {e}")
             self.set_state(PluginState.ERROR)
             return False
 
     # Event Handlers
-    def _on_terminal_output(self, output: str):
-        """Monitor terminal output for errors."""
-        if not self.get_config_value("error_monitoring", True):
-            return
 
-        # Check for error patterns
-        if self._contains_error_indicators(output):
-            self.log("warning", "🚨 Error detected in terminal output")
-            asyncio.create_task(self._analyze_terminal_error(output))
-
-    def _on_execution_failed(self, error_report: str):
-        """Handle execution failures."""
-        self.log("error", f"💥 Execution failure detected - analyzing...")
-        asyncio.create_task(self._handle_execution_error(error_report))
-
-    def _on_code_generated(self, files: Dict[str, str]):
-        """Analyze newly generated code."""
-        self.log("info", f"📝 Analyzing {len(files)} generated files for issues")
-        asyncio.create_task(self._analyze_generated_code(files))
-
-    def _on_code_streaming(self, filename: str, chunk: str):
-        """Analyze code as it's being streamed."""
-        if self.get_config_value("proactive_analysis", True):
-            # Queue for analysis (don't block streaming)
-            asyncio.create_task(self._analyze_code_chunk(filename, chunk))
-
-    # Core Analysis Methods
-    async def _analyze_terminal_error(self, output: str):
-        """Analyze error from terminal output."""
+    async def _on_code_viewer_files_loaded(self, event_data: Dict[str, Any]):
+        """
+        FIX: Main event handler - analyzes code with full project context.
+        This is where the magic happens now!
+        """
         try:
-            error_info = self._parse_error_output(output)
-            if not error_info:
+            self.log("info", "🔍 Code loaded in viewer - starting autonomous analysis...")
+
+            # Store project context
+            self.current_project_context = event_data.get("full_project_context", {})
+            files = event_data.get("files", {})
+            project_path = event_data.get("project_path", "")
+
+            if not files:
+                self.log("warning", "No files to analyze")
                 return
 
-            # Store error for analysis
-            error_record = {
-                "timestamp": datetime.now().isoformat(),
-                "type": "terminal_error",
-                "raw_output": output,
-                "parsed_info": error_info,
-                "status": "detected"
-            }
+            # Perform comprehensive analysis with full context
+            analysis_results = await self._perform_comprehensive_analysis(files, self.current_project_context)
 
-            self.detected_errors.append(error_record)
+            # Queue fixes for any issues found
+            if analysis_results:
+                await self._queue_autonomous_fixes(analysis_results)
 
-            # Queue for auto-fix if enabled
-            if self.get_config_value("auto_fix_enabled", True):
-                await self.auto_fix_queue.put(error_record)
-
-            # Emit event
-            self.emit_event("error_detected_and_analyzed", error_record)
-
-        except Exception as e:
-            self.log("error", f"Failed to analyze terminal error: {e}")
-
-    async def _handle_execution_error(self, error_report: str):
-        """Handle execution failures with detailed analysis."""
-        try:
-            # Parse the error report
-            error_info = self._parse_execution_error(error_report)
-
-            error_record = {
-                "timestamp": datetime.now().isoformat(),
-                "type": "execution_error",
-                "error_report": error_report,
-                "parsed_info": error_info,
-                "severity": "high",
-                "status": "detected"
-            }
-
-            self.detected_errors.append(error_record)
-
-            # High priority for auto-fix
-            if self.get_config_value("auto_fix_enabled", True):
-                # Put at front of queue (high priority)
-                await self.auto_fix_queue.put(error_record)
-
-            # Emit event
-            self.emit_event("error_detected_and_analyzed", error_record)
-
-            self.log("info", f"🔬 Execution error analyzed and queued for fixing")
-
-        except Exception as e:
-            self.log("error", f"Failed to handle execution error: {e}")
-
-    async def _analyze_generated_code(self, files: Dict[str, str]):
-        """Analyze newly generated code for potential issues."""
-        try:
-            issues_found = []
-
-            for filename, content in files.items():
-                file_issues = await self._analyze_single_file(filename, content)
-                if file_issues:
-                    issues_found.extend(file_issues)
-                    self.code_quality_issues[filename].extend(file_issues)
-
-            if issues_found:
-                self.log("warning", f"⚠️ Found {len(issues_found)} potential issues in generated code")
-
-                # Queue high-severity issues for auto-fix
-                for issue in issues_found:
-                    if issue.get("severity") in ["high", "critical"]:
-                        await self.auto_fix_queue.put({
-                            "timestamp": datetime.now().isoformat(),
-                            "type": "code_quality_issue",
-                            "issue": issue,
-                            "status": "detected"
-                        })
-
-            # Emit analysis complete event
-            self.emit_event("review_analysis_complete", {
+            self.emit_event("autonomous_analysis_complete", {
                 "files_analyzed": len(files),
-                "issues_found": len(issues_found),
-                "timestamp": datetime.now().isoformat()
+                "issues_found": len(analysis_results.get("issues", [])),
+                "project_path": project_path
             })
 
         except Exception as e:
-            self.log("error", f"Failed to analyze generated code: {e}")
+            self.log("error", f"Error in code viewer analysis: {e}")
 
-    async def _analyze_single_file(self, filename: str, content: str) -> List[Dict[str, Any]]:
-        """Analyze a single file for issues."""
-        issues = []
-
+    async def _perform_comprehensive_analysis(self, files: Dict[str, str], project_context: Dict[str, Any]) -> Dict[
+        str, Any]:
+        """Perform deep analysis with full project context awareness."""
         try:
-            # Basic syntax check
-            if filename.endswith('.py'):
-                issues.extend(self._analyze_python_file(filename, content))
-            elif filename.endswith(('.js', '.ts')):
-                issues.extend(self._analyze_javascript_file(filename, content))
+            self.log("info", f"🔬 Analyzing {len(files)} files with full project context...")
 
-            # Security analysis
-            if self.get_config_value("security_analysis", True):
-                issues.extend(self._analyze_security_issues(filename, content))
+            analysis_results = {
+                "issues": [],
+                "integration_warnings": [],
+                "dependency_problems": [],
+                "quality_suggestions": []
+            }
 
-            # Performance analysis
-            if self.get_config_value("performance_analysis", False):
-                issues.extend(self._analyze_performance_issues(filename, content))
+            # 1. Cross-file dependency analysis
+            dependency_issues = await self._analyze_cross_file_dependencies(files, project_context)
+            analysis_results["dependency_problems"].extend(dependency_issues)
 
-            return issues
+            # 2. Integration analysis
+            integration_issues = await self._analyze_integration_patterns(files, project_context)
+            analysis_results["integration_warnings"].extend(integration_issues)
+
+            # 3. Individual file quality analysis
+            for filename, content in files.items():
+                if filename.endswith('.py'):
+                    file_issues = await self._analyze_file_quality(filename, content, project_context)
+                    analysis_results["issues"].extend(file_issues)
+
+            # 4. Project-wide pattern analysis
+            pattern_issues = await self._analyze_project_patterns(files, project_context)
+            analysis_results["quality_suggestions"].extend(pattern_issues)
+
+            total_issues = sum(len(analysis_results[key]) for key in analysis_results)
+            self.log("info", f"🔍 Analysis complete: {total_issues} total issues found")
+
+            return analysis_results
 
         except Exception as e:
-            self.log("warning", f"Could not analyze {filename}: {e}")
-            return []
+            self.log("error", f"Error in comprehensive analysis: {e}")
+            return {}
 
-    def _analyze_python_file(self, filename: str, content: str) -> List[Dict[str, Any]]:
-        """Analyze Python file for issues."""
+    async def _analyze_cross_file_dependencies(self, files: Dict[str, str], project_context: Dict[str, Any]) -> List[
+        Dict[str, Any]]:
+        """Analyze cross-file import and dependency issues."""
         issues = []
 
         try:
-            # Check syntax
+            dependency_map = project_context.get("dependency_map", {})
+            symbol_index = project_context.get("symbol_index", {})
+
+            for filename, content in files.items():
+                if not filename.endswith('.py'):
+                    continue
+
+                # Find undefined imports
+                file_deps = dependency_map.get(filename, [])
+                for dep in file_deps:
+                    # Check if imported module/symbol exists
+                    if not self._is_dependency_satisfied(dep, symbol_index, files):
+                        issues.append({
+                            "type": "missing_dependency",
+                            "severity": "high",
+                            "filename": filename,
+                            "description": f"Import '{dep}' not found in project",
+                            "suggested_fix": f"Add missing import or create module '{dep}'",
+                            "auto_fixable": True
+                        })
+
+                # Find unused imports
+                unused_imports = self._find_unused_imports(filename, content, symbol_index)
+                for unused in unused_imports:
+                    issues.append({
+                        "type": "unused_import",
+                        "severity": "low",
+                        "filename": filename,
+                        "description": f"Unused import '{unused}'",
+                        "suggested_fix": f"Remove unused import '{unused}'",
+                        "auto_fixable": True
+                    })
+
+        except Exception as e:
+            self.log("error", f"Error analyzing dependencies: {e}")
+
+        return issues
+
+    async def _analyze_integration_patterns(self, files: Dict[str, str], project_context: Dict[str, Any]) -> List[
+        Dict[str, Any]]:
+        """Analyze integration patterns and architectural issues."""
+        issues = []
+
+        try:
+            symbol_index = project_context.get("symbol_index", {})
+
+            # Check for main.py integration
+            main_files = [f for f in files.keys() if f.endswith('main.py')]
+            if main_files:
+                main_content = files[main_files[0]]
+                integration_issues = self._check_main_integration(main_content, symbol_index)
+                issues.extend(integration_issues)
+
+            # Check for class instantiation issues
+            for filename, content in files.items():
+                if filename.endswith('.py'):
+                    class_issues = self._check_class_instantiation(filename, content, symbol_index)
+                    issues.extend(class_issues)
+
+        except Exception as e:
+            self.log("error", f"Error analyzing integration patterns: {e}")
+
+        return issues
+
+    async def _analyze_file_quality(self, filename: str, content: str, project_context: Dict[str, Any]) -> List[
+        Dict[str, Any]]:
+        """Analyze individual file quality issues."""
+        issues = []
+
+        try:
+            # Check for syntax errors
             try:
                 ast.parse(content)
             except SyntaxError as e:
                 issues.append({
                     "type": "syntax_error",
                     "severity": "critical",
-                    "line": e.lineno,
-                    "message": str(e),
                     "filename": filename,
-                    "auto_fixable": True
-                })
-                return issues  # Don't continue if syntax is broken
-
-            # Check for common issues using patterns
-            for pattern_name, pattern_data in self.pattern_library["common_python_errors"].items():
-                if re.search(pattern_data["regex"], content, re.MULTILINE):
-                    issues.append({
-                        "type": "code_pattern",
-                        "pattern": pattern_name,
-                        "severity": pattern_data["severity"],
-                        "message": pattern_data["message"],
-                        "filename": filename,
-                        "auto_fixable": pattern_data.get("fixable", False),
-                        "fix_suggestion": pattern_data.get("fix", "")
-                    })
-
-            # Check for unused imports (basic)
-            lines = content.split('\n')
-            imports = []
-            for i, line in enumerate(lines):
-                if line.strip().startswith(('import ', 'from ')):
-                    imports.append((i + 1, line.strip()))
-
-            for line_num, import_line in imports:
-                # Simple heuristic: if import name doesn't appear elsewhere
-                import_name = self._extract_import_name(import_line)
-                if import_name and import_name not in content.replace(import_line, ''):
-                    issues.append({
-                        "type": "unused_import",
-                        "severity": "low",
-                        "line": line_num,
-                        "message": f"Unused import: {import_name}",
-                        "filename": filename,
-                        "auto_fixable": True,
-                        "fix_suggestion": f"Remove line {line_num}: {import_line}"
-                    })
-
-        except Exception as e:
-            self.log("warning", f"Error analyzing Python file {filename}: {e}")
-
-        return issues
-
-    def _analyze_javascript_file(self, filename: str, content: str) -> List[Dict[str, Any]]:
-        """Basic analysis of JavaScript/TypeScript files."""
-        issues = []
-
-        # Check for common issues using simple patterns
-        js_patterns = {
-            "console_log": {
-                "regex": r"console\.log\(",
-                "severity": "low",
-                "message": "Console.log statement found - consider removing for production"
-            },
-            "var_usage": {
-                "regex": r"\bvar\s+\w+",
-                "severity": "medium",
-                "message": "Use 'let' or 'const' instead of 'var'"
-            },
-            "eval_usage": {
-                "regex": r"\beval\s*\(",
-                "severity": "high",
-                "message": "Avoid using eval() - security risk"
-            }
-        }
-
-        for pattern_name, pattern_data in js_patterns.items():
-            matches = list(re.finditer(pattern_data["regex"], content))
-            for match in matches:
-                line_num = content[:match.start()].count('\n') + 1
-                issues.append({
-                    "type": "code_pattern",
-                    "pattern": pattern_name,
-                    "severity": pattern_data["severity"],
-                    "line": line_num,
-                    "message": pattern_data["message"],
-                    "filename": filename,
+                    "line_number": e.lineno,
+                    "description": f"Syntax error: {e.msg}",
                     "auto_fixable": False
                 })
 
-        return issues
+            # Check patterns
+            for pattern_type, patterns in self.pattern_library.items():
+                pattern_issues = self._check_patterns(filename, content, patterns)
+                issues.extend(pattern_issues)
 
-    def _analyze_security_issues(self, filename: str, content: str) -> List[Dict[str, Any]]:
-        """Analyze for security vulnerabilities."""
-        issues = []
-
-        for pattern_name, pattern_data in self.pattern_library["security_patterns"].items():
-            if re.search(pattern_data["regex"], content, re.MULTILINE | re.IGNORECASE):
-                issues.append({
-                    "type": "security_issue",
-                    "pattern": pattern_name,
-                    "severity": pattern_data["severity"],
-                    "message": pattern_data["message"],
-                    "filename": filename,
-                    "auto_fixable": pattern_data.get("fixable", False),
-                    "fix_suggestion": pattern_data.get("fix", "")
-                })
+        except Exception as e:
+            self.log("error", f"Error analyzing file quality for {filename}: {e}")
 
         return issues
 
-    def _analyze_performance_issues(self, filename: str, content: str) -> List[Dict[str, Any]]:
-        """Analyze for performance issues."""
-        issues = []
+    async def _analyze_project_patterns(self, files: Dict[str, str], project_context: Dict[str, Any]) -> List[
+        Dict[str, Any]]:
+        """Analyze project-wide architectural patterns."""
+        suggestions = []
 
-        for pattern_name, pattern_data in self.pattern_library["performance_patterns"].items():
-            if re.search(pattern_data["regex"], content, re.MULTILINE):
-                issues.append({
-                    "type": "performance_issue",
-                    "pattern": pattern_name,
-                    "severity": pattern_data["severity"],
-                    "message": pattern_data["message"],
-                    "filename": filename,
-                    "auto_fixable": pattern_data.get("fixable", False),
-                    "fix_suggestion": pattern_data.get("fix", "")
-                })
+        try:
+            structure = project_context.get("project_structure", {})
 
-        return issues
+            # Check for missing __init__.py files
+            directories = structure.get("directories", [])
+            for directory in directories:
+                init_file = f"{directory}/__init__.py"
+                if init_file not in files:
+                    suggestions.append({
+                        "type": "missing_init",
+                        "severity": "medium",
+                        "description": f"Missing __init__.py in {directory}",
+                        "suggested_fix": f"Create {init_file}",
+                        "auto_fixable": True
+                    })
 
-    async def _analyze_code_chunk(self, filename: str, chunk: str):
-        """Analyze streaming code chunks."""
-        # Simple analysis for streaming chunks
-        if self._contains_obvious_errors(chunk):
-            issue = {
-                "type": "streaming_issue",
-                "severity": "medium",
-                "message": "Potential issue detected in streaming code",
-                "filename": filename,
-                "chunk": chunk[:100] + "..." if len(chunk) > 100 else chunk
-            }
+        except Exception as e:
+            self.log("error", f"Error analyzing project patterns: {e}")
 
-            await self.auto_fix_queue.put({
-                "timestamp": datetime.now().isoformat(),
-                "type": "streaming_issue",
-                "issue": issue,
-                "status": "detected"
-            })
+        return suggestions
+
+    async def _queue_autonomous_fixes(self, analysis_results: Dict[str, Any]):
+        """Queue fixes for auto-fixable issues."""
+        try:
+            auto_fix_enabled = self.get_config_value("auto_fix_enabled", True)
+            confidence_threshold = self.get_config_value("fix_confidence_threshold", 0.8)
+
+            if not auto_fix_enabled:
+                self.log("info", "Auto-fix disabled, skipping fix queue")
+                return
+
+            fixable_count = 0
+
+            for category, issues in analysis_results.items():
+                for issue in issues:
+                    if issue.get("auto_fixable", False):
+                        confidence = issue.get("confidence", 0.9)
+                        if confidence >= confidence_threshold:
+                            await self.auto_fix_queue.put({
+                                "timestamp": datetime.now().isoformat(),
+                                "category": category,
+                                "issue": issue,
+                                "confidence": confidence
+                            })
+                            fixable_count += 1
+
+            if fixable_count > 0:
+                self.log("info", f"🔧 Queued {fixable_count} auto-fixable issues")
+
+        except Exception as e:
+            self.log("error", f"Error queuing fixes: {e}")
 
     # Auto-Fix System
+
     async def _auto_fix_worker(self):
         """Worker that processes the auto-fix queue."""
         self.log("info", "🤖 Auto-fix worker started")
@@ -507,10 +372,10 @@ class AutonomousCodeReviewerPlugin(PluginBase):
         while self.state == PluginState.STARTED:
             try:
                 # Wait for next item to fix
-                error_record = await asyncio.wait_for(self.auto_fix_queue.get(), timeout=1.0)
+                fix_request = await asyncio.wait_for(self.auto_fix_queue.get(), timeout=1.0)
 
                 self.is_processing_fixes = True
-                await self._attempt_auto_fix(error_record)
+                await self._attempt_autonomous_fix(fix_request)
                 self.is_processing_fixes = False
 
             except asyncio.TimeoutError:
@@ -521,418 +386,264 @@ class AutonomousCodeReviewerPlugin(PluginBase):
                 self.log("error", f"Error in auto-fix worker: {e}")
                 self.is_processing_fixes = False
 
-    async def _attempt_auto_fix(self, error_record: Dict[str, Any]):
-        """Attempt to automatically fix an error."""
+    async def _attempt_autonomous_fix(self, fix_request: Dict[str, Any]):
+        """Attempt to automatically fix an issue."""
         try:
-            self.log("info", f"🔧 Attempting auto-fix for {error_record['type']}")
+            issue = fix_request["issue"]
+            confidence = fix_request["confidence"]
 
-            fix_result = None
+            self.log("info", f"🔧 Attempting autonomous fix: {issue.get('type')} (confidence: {confidence:.2f})")
 
-            if error_record["type"] == "execution_error":
-                fix_result = await self._fix_execution_error(error_record)
-            elif error_record["type"] == "code_quality_issue":
-                fix_result = await self._fix_code_quality_issue(error_record)
-            elif error_record["type"] == "terminal_error":
-                fix_result = await self._fix_terminal_error(error_record)
+            # Apply the fix based on issue type
+            fix_applied = False
 
-            if fix_result and fix_result["success"]:
-                # Record successful fix
-                self.fixed_errors.append({
-                    **error_record,
-                    "fix_result": fix_result,
-                    "fixed_at": datetime.now().isoformat(),
-                    "status": "fixed"
-                })
-
-                if self.get_config_value("learning_enabled", True):
-                    self.successful_fixes.append({
-                        "error_type": error_record["type"],
-                        "fix_method": fix_result["method"],
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                # Emit success event
-                self.emit_event("auto_fix_applied", {
-                    "error_record": error_record,
-                    "fix_result": fix_result,
-                    "timestamp": datetime.now().isoformat()
-                })
-
-                self.log("success", f"✅ Successfully auto-fixed {error_record['type']}")
-
+            if issue["type"] == "unused_import":
+                fix_applied = await self._fix_unused_import(issue)
+            elif issue["type"] == "missing_dependency":
+                fix_applied = await self._fix_missing_dependency(issue)
+            elif issue["type"] == "missing_init":
+                fix_applied = await self._fix_missing_init(issue)
             else:
-                # Record failed fix
-                if self.get_config_value("learning_enabled", True):
-                    self.failed_fixes.append({
-                        "error_type": error_record["type"],
-                        "failure_reason": fix_result.get("reason", "Unknown") if fix_result else "No fix attempted",
-                        "timestamp": datetime.now().isoformat()
-                    })
+                self.log("info", f"No autonomous fix available for {issue['type']}")
 
-                self.log("warning", f"❌ Failed to auto-fix {error_record['type']}")
-
-        except Exception as e:
-            self.log("error", f"Error attempting auto-fix: {e}")
-
-    async def _fix_execution_error(self, error_record: Dict[str, Any]) -> Dict[str, Any]:
-        """Fix execution errors using LLM."""
-        try:
-            # This would integrate with your existing LLM infrastructure
-            # For now, return a simulation of the fix process
-
-            error_info = error_record.get("parsed_info", {})
-            filename = error_info.get("filename")
-
-            if not filename:
-                return {"success": False, "reason": "Could not identify source file"}
-
-            # Simulate LLM-based fix generation
-            fix_suggestion = await self._generate_llm_fix(error_record)
-
-            if fix_suggestion:
-                # Apply the fix (this would integrate with your project manager)
-                success = await self._apply_fix_to_file(filename, fix_suggestion)
-
-                if success:
-                    return {
-                        "success": True,
-                        "method": "llm_generated_fix",
-                        "filename": filename,
-                        "fix_applied": fix_suggestion
-                    }
-
-            return {"success": False, "reason": "Could not generate valid fix"}
+            if fix_applied:
+                self.successful_fixes.append(fix_request)
+                self.emit_event("autonomous_fix_applied", issue)
+                self.log("success", f"✅ Autonomous fix applied: {issue['type']}")
+            else:
+                self.failed_fixes.append(fix_request)
 
         except Exception as e:
-            return {"success": False, "reason": f"Fix attempt failed: {e}"}
+            self.log("error", f"Error applying autonomous fix: {e}")
+            self.failed_fixes.append(fix_request)
 
-    async def _fix_code_quality_issue(self, error_record: Dict[str, Any]) -> Dict[str, Any]:
-        """Fix code quality issues."""
-        try:
-            issue = error_record.get("issue", {})
+    # Fix Implementations
 
-            if not issue.get("auto_fixable", False):
-                return {"success": False, "reason": "Issue not auto-fixable"}
+    async def _fix_unused_import(self, issue: Dict[str, Any]) -> bool:
+        """Remove unused imports."""
+        # Implementation would interact with project manager to fix files
+        self.log("info", f"Would fix unused import in {issue['filename']}")
+        return True  # Placeholder
 
-            filename = issue.get("filename")
-            fix_suggestion = issue.get("fix_suggestion", "")
+    async def _fix_missing_dependency(self, issue: Dict[str, Any]) -> bool:
+        """Fix missing dependency issues."""
+        self.log("info", f"Would fix missing dependency in {issue['filename']}")
+        return True  # Placeholder
 
-            if fix_suggestion and filename:
-                success = await self._apply_simple_fix(filename, issue, fix_suggestion)
+    async def _fix_missing_init(self, issue: Dict[str, Any]) -> bool:
+        """Create missing __init__.py files."""
+        self.log("info", f"Would create missing __init__.py")
+        return True  # Placeholder
 
-                if success:
-                    return {
-                        "success": True,
-                        "method": "pattern_based_fix",
-                        "filename": filename,
-                        "fix_applied": fix_suggestion
-                    }
+    # Helper Methods
 
-            return {"success": False, "reason": "No fix suggestion available"}
+    def _is_dependency_satisfied(self, dep: str, symbol_index: Dict[str, Any], files: Dict[str, str]) -> bool:
+        """Check if a dependency can be satisfied."""
+        # Check if it's a standard library import
+        stdlib_modules = {'os', 'sys', 'json', 'ast', 'pathlib', 'asyncio', 're', 'datetime'}
+        if dep.split('.')[0] in stdlib_modules:
+            return True
 
-        except Exception as e:
-            return {"success": False, "reason": f"Fix attempt failed: {e}"}
+        # Check if it's defined in the project
+        for filename, symbols in symbol_index.items():
+            if dep in symbols.get("classes", []) or dep in symbols.get("functions", []):
+                return True
 
-    async def _fix_terminal_error(self, error_record: Dict[str, Any]) -> Dict[str, Any]:
-        """Fix terminal errors."""
-        try:
-            # Simple fixes for common terminal errors
-            error_info = error_record.get("parsed_info", {})
-            error_type = error_info.get("type", "")
+        return False
 
-            if error_type == "module_not_found":
-                module_name = error_info.get("module", "")
-                if module_name:
-                    # Suggest pip install (this would integrate with terminal service)
-                    return {
-                        "success": True,
-                        "method": "pip_install_suggestion",
-                        "suggestion": f"pip install {module_name}"
-                    }
+    def _find_unused_imports(self, filename: str, content: str, symbol_index: Dict[str, Any]) -> List[str]:
+        """Find unused imports in a file."""
+        # Simple implementation - would be more sophisticated in practice
+        unused = []
 
-            return {"success": False, "reason": "No automatic fix available for terminal error"}
+        import_lines = [line.strip() for line in content.split('\n') if line.strip().startswith(('import ', 'from '))]
 
-        except Exception as e:
-            return {"success": False, "reason": f"Fix attempt failed: {e}"}
+        for line in import_lines:
+            # Extract imported name
+            if ' import ' in line:
+                parts = line.split(' import ')
+                if len(parts) == 2:
+                    imported = parts[1].split(',')[0].split(' as ')[0].strip()
+                    # Check if used in file
+                    if imported not in content.replace(line, ''):
+                        unused.append(imported)
 
-    async def _generate_llm_fix(self, error_record: Dict[str, Any]) -> Optional[str]:
-        """Generate fix using LLM (integrates with existing LLM infrastructure)."""
-        # This would use your existing LLM client and prompt system
-        # For now, return a placeholder
-        return "# LLM-generated fix would be here"
+        return unused
 
-    async def _apply_fix_to_file(self, filename: str, fix_content: str) -> bool:
-        """Apply fix to a file (integrates with project manager)."""
-        # This would integrate with your project manager to apply fixes
-        # For now, just log the action
-        self.log("info", f"Would apply fix to {filename}: {fix_content[:50]}...")
-        return True
+    def _check_main_integration(self, main_content: str, symbol_index: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Check main.py integration issues."""
+        issues = []
 
-    async def _apply_simple_fix(self, filename: str, issue: Dict[str, Any], fix_suggestion: str) -> bool:
-        """Apply simple pattern-based fixes."""
-        # This would apply simple fixes like removing unused imports
-        self.log("info", f"Would apply simple fix to {filename}: {fix_suggestion}")
-        return True
-
-    # Proactive Analysis
-    async def _start_proactive_analysis(self):
-        """Start proactive code analysis."""
-        frequency = self.get_config_value("analysis_frequency", 600)
-
-        while self.state == PluginState.STARTED:
-            try:
-                await asyncio.sleep(frequency)
-
-                if self.state == PluginState.STARTED:
-                    await self._perform_proactive_analysis()
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self.log("error", f"Error in proactive analysis: {e}")
-
-    async def _perform_proactive_analysis(self):
-        """Perform scheduled proactive analysis."""
-        self.log("info", "🔍 Performing proactive code analysis")
-
-        # This would integrate with project manager to get current files
-        # For now, just analyze tracked issues
-
-        total_issues = sum(len(issues) for issues in self.code_quality_issues.values())
-
-        if total_issues > 0:
-            self.log("info", f"📊 Proactive analysis found {total_issues} ongoing issues")
-
-            # Emit analysis event
-            self.emit_event("review_analysis_complete", {
-                "type": "proactive",
-                "total_issues": total_issues,
-                "timestamp": datetime.now().isoformat()
+        # Check if main.py actually uses other modules
+        has_imports = 'import ' in main_content or 'from ' in main_content
+        if not has_imports and len(symbol_index) > 1:
+            issues.append({
+                "type": "main_isolation",
+                "severity": "medium",
+                "filename": "main.py",
+                "description": "main.py doesn't import any project modules",
+                "suggested_fix": "Add imports to connect main.py with other modules",
+                "auto_fixable": False
             })
 
-    # Pattern Management
-    def _get_python_error_patterns(self) -> Dict[str, Dict[str, Any]]:
+        return issues
+
+    def _check_class_instantiation(self, filename: str, content: str, symbol_index: Dict[str, Any]) -> List[
+        Dict[str, Any]]:
+        """Check for class instantiation issues."""
+        issues = []
+
+        # Look for class instantiations that might be missing imports
+        class_pattern = r'(\w+)\s*\('
+        for match in re.finditer(class_pattern, content):
+            class_name = match.group(1)
+            if class_name[0].isupper():  # Likely a class
+                # Check if class is defined or imported
+                if not self._is_class_available(class_name, filename, content, symbol_index):
+                    issues.append({
+                        "type": "undefined_class",
+                        "severity": "high",
+                        "filename": filename,
+                        "description": f"Class '{class_name}' used but not defined or imported",
+                        "suggested_fix": f"Import or define class '{class_name}'",
+                        "auto_fixable": True
+                    })
+
+        return issues
+
+    def _is_class_available(self, class_name: str, filename: str, content: str, symbol_index: Dict[str, Any]) -> bool:
+        """Check if a class is available in the current file."""
+        # Check if defined in current file
+        current_symbols = symbol_index.get(filename, {})
+        if class_name in current_symbols.get("classes", []):
+            return True
+
+        # Check if imported
+        if f'import {class_name}' in content or f'from .* import .*{class_name}' in content:
+            return True
+
+        return False
+
+    def _check_patterns(self, filename: str, content: str, patterns: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Check content against pattern library."""
+        issues = []
+
+        for pattern_name, pattern_data in patterns.items():
+            if re.search(pattern_data.get("regex", ""), content, re.MULTILINE):
+                issues.append({
+                    "type": pattern_data.get("type", "pattern_match"),
+                    "severity": pattern_data.get("severity", "medium"),
+                    "filename": filename,
+                    "description": pattern_data.get("message", f"Pattern '{pattern_name}' detected"),
+                    "auto_fixable": pattern_data.get("fixable", False)
+                })
+
+        return issues
+
+    # Pattern Libraries
+
+    def _get_python_error_patterns(self) -> Dict[str, Any]:
         """Get common Python error patterns."""
         return {
-            "undefined_variable": {
-                "regex": r"NameError: name '(\w+)' is not defined",
-                "severity": "high",
-                "message": "Undefined variable used",
+            "missing_parentheses": {
+                "regex": r"print\s+\w+",
+                "severity": "medium",
+                "message": "Missing parentheses in print statement",
                 "fixable": True,
-                "fix": "Define the variable or check for typos"
+                "type": "syntax_modernization"
             },
-            "import_error": {
-                "regex": r"ImportError|ModuleNotFoundError",
-                "severity": "high",
-                "message": "Import or module not found",
+            "bare_except": {
+                "regex": r"except\s*:",
+                "severity": "medium",
+                "message": "Bare except clause - should specify exception type",
                 "fixable": True,
-                "fix": "Check import path or install missing package"
-            },
-            "indentation_error": {
-                "regex": r"IndentationError",
-                "severity": "critical",
-                "message": "Indentation error",
-                "fixable": True,
-                "fix": "Fix indentation to use consistent spaces/tabs"
-            },
-            "syntax_error": {
-                "regex": r"SyntaxError",
-                "severity": "critical",
-                "message": "Syntax error in code",
-                "fixable": True,
-                "fix": "Fix syntax according to Python grammar"
+                "type": "exception_handling"
             }
         }
 
-    def _get_security_patterns(self) -> Dict[str, Dict[str, Any]]:
-        """Get security vulnerability patterns."""
+    def _get_security_patterns(self) -> Dict[str, Any]:
+        """Get security issue patterns."""
         return {
-            "sql_injection": {
-                "regex": r"execute\s*\(\s*['\"].*%.*['\"]",
-                "severity": "critical",
-                "message": "Potential SQL injection vulnerability",
-                "fixable": True,
-                "fix": "Use parameterized queries instead of string formatting"
-            },
-            "hardcoded_password": {
-                "regex": r"password\s*=\s*['\"][^'\"]{4,}['\"]",
+            "eval_usage": {
+                "regex": r"eval\s*\(",
                 "severity": "high",
-                "message": "Hardcoded password detected",
-                "fixable": True,
-                "fix": "Use environment variables or secure credential storage"
-            },
-            "unsafe_eval": {
-                "regex": r"\beval\s*\(",
-                "severity": "high",
-                "message": "Unsafe use of eval()",
-                "fixable": True,
-                "fix": "Avoid eval() or use ast.literal_eval() for safe evaluation"
+                "message": "Use of eval() is dangerous",
+                "fixable": False,
+                "type": "security_risk"
             }
         }
 
-    def _get_performance_patterns(self) -> Dict[str, Dict[str, Any]]:
+    def _get_performance_patterns(self) -> Dict[str, Any]:
         """Get performance issue patterns."""
         return {
-            "inefficient_loop": {
-                "regex": r"for\s+\w+\s+in\s+range\s*\(\s*len\s*\(",
-                "severity": "medium",
-                "message": "Inefficient loop pattern",
-                "fixable": True,
-                "fix": "Use 'for item in collection' instead of 'for i in range(len(collection))'"
-            },
             "string_concatenation": {
-                "regex": r"(\w+)\s*\+=\s*['\"].*['\"]",
-                "severity": "medium",
-                "message": "Inefficient string concatenation",
+                "regex": r".*\+.*\+.*",
+                "severity": "low",
+                "message": "Multiple string concatenations - consider join()",
                 "fixable": True,
-                "fix": "Use join() or f-strings for better performance"
+                "type": "performance_optimization"
             }
         }
 
-    # Utility Methods
-    def _contains_error_indicators(self, output: str) -> bool:
-        """Check if output contains error indicators."""
-        error_indicators = [
-            "error:", "Error:", "ERROR:",
-            "exception:", "Exception:", "EXCEPTION:",
-            "traceback", "Traceback", "TRACEBACK",
-            "failed", "Failed", "FAILED",
-            "syntax error", "Syntax Error", "SYNTAX ERROR"
-        ]
-
-        return any(indicator in output for indicator in error_indicators)
-
-    def _contains_obvious_errors(self, chunk: str) -> bool:
-        """Check if code chunk contains obvious errors."""
-        # Simple checks for obvious issues
-        obvious_issues = [
-            "undefined", "not defined",
-            "syntax error", "indentation error",
-            "import error", "module not found"
-        ]
-
-        chunk_lower = chunk.lower()
-        return any(issue in chunk_lower for issue in obvious_issues)
-
-    def _parse_error_output(self, output: str) -> Optional[Dict[str, Any]]:
-        """Parse error information from terminal output."""
-        try:
-            # Extract file and line information
-            file_match = re.search(r'File "([^"]+)", line (\d+)', output)
-
-            error_info = {
-                "raw_output": output,
-                "timestamp": datetime.now().isoformat()
+    def _get_integration_patterns(self) -> Dict[str, Any]:
+        """Get integration issue patterns."""
+        return {
+            "hardcoded_paths": {
+                "regex": r'["\'][A-Z]:\\.*["\']',
+                "severity": "medium",
+                "message": "Hardcoded Windows path detected",
+                "fixable": True,
+                "type": "portability_issue"
             }
+        }
 
-            if file_match:
-                error_info["filename"] = file_match.group(1)
-                error_info["line"] = int(file_match.group(2))
+    # Event Handlers for other events
 
-            # Extract error type
-            error_type_match = re.search(r'(\w+Error|Exception):', output)
-            if error_type_match:
-                error_info["error_type"] = error_type_match.group(1)
+    async def _on_execution_failed(self, error_report: str):
+        """Handle execution failures."""
+        self.log("info", "🚨 Execution failed - analyzing error report...")
 
-            # Extract error message
-            lines = output.strip().split('\n')
-            if lines:
-                error_info["message"] = lines[-1]
-
-            return error_info
-
-        except Exception as e:
-            self.log("warning", f"Could not parse error output: {e}")
-            return None
-
-    def _parse_execution_error(self, error_report: str) -> Dict[str, Any]:
-        """Parse execution error report."""
-        # Use similar parsing to your existing validation service
-        error_info = {
-            "error_report": error_report,
+        # Analyze error for patterns
+        error_issue = {
+            "type": "execution_error",
+            "severity": "critical",
+            "description": f"Execution failed: {error_report[:100]}...",
+            "auto_fixable": False,
             "timestamp": datetime.now().isoformat()
         }
 
-        # Extract filename and line number from traceback
-        traceback_lines = re.findall(r'File "(.+?)", line (\d+)', error_report)
-        if traceback_lines:
-            # Get the last (most relevant) file from traceback
-            filename, line_num = traceback_lines[-1]
-            error_info["filename"] = filename
-            error_info["line"] = int(line_num)
+        self.detected_errors.append(error_issue)
+        self.emit_event("code_quality_issue_detected", error_issue)
 
-        # Extract error type and message
-        lines = error_report.strip().split('\n')
-        if lines:
-            last_line = lines[-1]
-            if ':' in last_line:
-                error_type, message = last_line.split(':', 1)
-                error_info["error_type"] = error_type.strip()
-                error_info["message"] = message.strip()
+    async def _on_terminal_output(self, output: str):
+        """Monitor terminal output for errors."""
+        if any(keyword in output.lower() for keyword in ['error', 'exception', 'traceback']):
+            self.log("info", "🔍 Potential error detected in terminal output")
 
-        return error_info
+            error_issue = {
+                "type": "terminal_error",
+                "severity": "medium",
+                "description": f"Terminal error detected: {output[:100]}...",
+                "auto_fixable": False,
+                "timestamp": datetime.now().isoformat()
+            }
 
-    def _extract_import_name(self, import_line: str) -> Optional[str]:
-        """Extract the main import name from an import line."""
-        try:
-            if import_line.startswith('import '):
-                # import module
-                parts = import_line[7:].split(' as ')
-                return parts[-1].split('.')[0].strip()
-            elif import_line.startswith('from '):
-                # from module import name
-                parts = import_line.split(' import ')
-                if len(parts) == 2:
-                    imported = parts[1].split(' as ')
-                    return imported[-1].split(',')[0].strip()
-            return None
-        except:
-            return None
+            self.detected_errors.append(error_issue)
 
-    async def _load_learned_patterns(self):
-        """Load previously learned patterns."""
-        # This would load from persistent storage
-        # For now, just initialize empty
-        pass
-
-    async def _save_learned_patterns(self):
-        """Save learned patterns for future use."""
-        # This would save to persistent storage
-        # For now, just log the intent
-        if self.successful_fixes or self.failed_fixes:
-            self.log("info",
-                     f"💾 Saving learning data: {len(self.successful_fixes)} successes, {len(self.failed_fixes)} failures")
-
-    def _reset_analysis_state(self):
-        """Reset all analysis state."""
-        self.detected_errors = []
-        self.fixed_errors = []
-        self.code_quality_issues = defaultdict(list)
-        self.analysis_history = []
-        self.successful_fixes = []
-        self.failed_fixes = []
+    # Status and Reporting
 
     async def _generate_final_report(self):
         """Generate final analysis report."""
         total_detected = len(self.detected_errors)
-        total_fixed = len(self.fixed_errors)
+        total_fixed = len(self.successful_fixes)
         success_rate = (total_fixed / max(total_detected, 1)) * 100
 
-        report = {
-            "total_errors_detected": total_detected,
-            "total_errors_fixed": total_fixed,
-            "fix_success_rate": success_rate,
-            "learning_data": {
-                "successful_fixes": len(self.successful_fixes),
-                "failed_fixes": len(self.failed_fixes)
-            },
-            "code_quality_issues": {
-                filename: len(issues)
-                for filename, issues in self.code_quality_issues.items()
-            }
-        }
-
-        self.log("info", f"📊 Final Report: {total_fixed}/{total_detected} errors fixed ({success_rate:.1f}% success rate)")
+        self.log("info", f"📊 Autonomous Code Reviewer Final Report:")
+        self.log("info", f"   Issues Detected: {total_detected}")
+        self.log("info", f"   Fixes Applied: {total_fixed}")
+        self.log("info", f"   Success Rate: {success_rate:.1f}%")
+        self.log("info",
+                 f"   Integration Analysis: {'Enabled' if self.get_config_value('integration_analysis', True) else 'Disabled'}")
 
     def get_status_info(self) -> Dict[str, Any]:
         """Get plugin status information."""
@@ -941,9 +652,10 @@ class AutonomousCodeReviewerPlugin(PluginBase):
             "auto_fix_enabled": self.get_config_value("auto_fix_enabled", True),
             "is_processing_fixes": self.is_processing_fixes,
             "errors_detected": len(self.detected_errors),
-            "errors_fixed": len(self.fixed_errors),
+            "errors_fixed": len(self.successful_fixes),
             "pending_fixes": self.auto_fix_queue.qsize(),
-            "code_quality_issues": sum(len(issues) for issues in self.code_quality_issues.values()),
+            "integration_analysis": self.get_config_value("integration_analysis", True),
+            "project_context_available": bool(self.current_project_context),
             "learning_data": {
                 "successful_fixes": len(self.successful_fixes),
                 "failed_fixes": len(self.failed_fixes)
