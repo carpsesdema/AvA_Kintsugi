@@ -1,4 +1,4 @@
-# kintsugi_ava/gui/enhanced_sidebar.py
+# gui/enhanced_sidebar.py
 # V7: Added plugin management section
 
 from PySide6.QtGui import QFont
@@ -145,9 +145,11 @@ class EnhancedSidebar(QWidget):
         plugin_buttons_layout.addStretch()
         layout.addLayout(plugin_buttons_layout)
 
-        # Subscribe to plugin status updates
-        self.event_bus.subscribe("plugin_status_changed", self._update_plugin_status)
-        self.event_bus.subscribe("plugin_status_refresh_requested", self._refresh_plugin_status)
+        # --- FIX: REMOVED SELF-SUBSCRIPTION ---
+        # The EventCoordinator is now responsible for this wiring.
+        # self.event_bus.subscribe("plugin_status_changed", self._update_plugin_status)
+        # self.event_bus.subscribe("plugin_status_refresh_requested", self._refresh_plugin_status)
+        # --- END FIX ---
 
         return panel
 
