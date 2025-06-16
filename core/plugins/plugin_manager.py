@@ -41,11 +41,10 @@ class PluginManager:
         """Connect to event bus for plugin-related events."""
         self.event_bus.subscribe("plugin_state_changed", self._on_plugin_state_changed)
 
-        # --- THIS IS THE FIX ---
         # Wrap the async handler in asyncio.create_task to prevent the "never awaited" warning.
+        # This correctly fires the async shutdown sequence from a sync event call.
         self.event_bus.subscribe("application_shutdown",
-                                 lambda: asyncio.create_task(self._on_application_shutdown()))
-        # ----------------------
+                                 lambda: asyncio.create_task(self.shutdown()))
 
     def add_discovery_path(self, path: Path):
         """
@@ -441,7 +440,3 @@ class PluginManager:
         """Handle plugin state change events."""
         self._plugin_states[plugin_name] = new_state
         print(f"[PluginManager] Plugin '{plugin_name}' state: {old_state.value} -> {new_state.value}")
-
-    async def _on_application_shutdown(self):
-        """Handle application shutdown event."""
-        await self.shutdown()

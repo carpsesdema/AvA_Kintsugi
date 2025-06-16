@@ -121,7 +121,7 @@ class EventCoordinator:
 
         # Node status updates for workflow monitor
         if workflow_monitor:
-            self.event_bus.subscribe("node_status_changed", workflow_monitor.update_node_status)
+            self.event_bus.subscribe("node_status_changed", workflow_monitor.scene.update_node_status)
 
         print("[EventCoordinator] ✓ Execution events wired")
 

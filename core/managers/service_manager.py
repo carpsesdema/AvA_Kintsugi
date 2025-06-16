@@ -76,11 +76,9 @@ class ServiceManager:
         """Initialize core components in dependency order."""
         print("[ServiceManager] Initializing core components...")
 
-        # Core components (no dependencies)
+        # Core components (with correct dependency injection)
         self.llm_client = LLMClient()
         self.project_manager = ProjectManager()
-
-        # Execution engine depends on project manager
         self.execution_engine = ExecutionEngine(self.project_manager)
 
         print("[ServiceManager] Core components initialized")
@@ -92,97 +90,106 @@ class ServiceManager:
         # Create plugin manager
         self.plugin_manager = PluginManager(self.event_bus)
 
-        # Add standard discovery paths
-        self._setup_plugin_discovery_paths()
+        # Add plugin discovery paths
+        plugin_examples_path = Path("core/plugins/examples")
+        self.plugin_manager.add_discovery_path(plugin_examples_path)
+        print(f"[ServiceManager] Added plugin discovery path: {plugin_examples_path}")
 
-        # Setup service injection event handling
-        self._setup_service_injection()
+        # Enable service injection for plugins
+        self._enable_service_injection()
 
         print("[ServiceManager] Plugin system initialized")
 
-    def _setup_plugin_discovery_paths(self):
-        """Set up standard plugin discovery paths."""
-        core_plugins_path = Path(__file__).parent.parent / "plugins" / "examples"
-        if core_plugins_path.exists():
-            self.plugin_manager.add_discovery_path(core_plugins_path)
-            print(f"[ServiceManager] Added plugin discovery path: {core_plugins_path}")
+    async def initialize_plugins(self) -> bool:
+        """
+        Initialize plugins asynchronously.
 
-    def _setup_service_injection(self):
-        """Set up service injection for plugins that need service references."""
-        # Subscribe to plugin service manager requests
+        Returns:
+            True if plugin initialization succeeded, False otherwise
+        """
+        if not self.plugin_manager:
+            print("[ServiceManager] No plugin manager available")
+            return False
+
+        success = await self.plugin_manager.initialize()
+
+        # Inject services into compatible plugins
+        if self._service_injection_enabled:
+            self.inject_services_into_all_compatible_plugins()
+
+        print("[ServiceManager] Plugin initialization completed successfully")
+        return success
+
+    def _enable_service_injection(self):
+        """Enable service injection for plugins."""
         self.event_bus.subscribe("plugin_service_manager_request", self._handle_service_injection_request)
         self._service_injection_enabled = True
         print("[ServiceManager] Service injection system enabled")
 
-    async def initialize_plugins(self) -> bool:
-        """
-        Initialize the plugin system - discover plugins and load enabled ones.
-
-        Returns:
-            True if initialization succeeded, False otherwise
-        """
-        if not self.plugin_manager:
-            print("[ServiceManager] Plugin manager not initialized, cannot initialize plugins")
-            return False
-
-        try:
-            success = await self.plugin_manager.initialize()
-            if success:
-                print("[ServiceManager] Plugin initialization completed successfully")
-                # Inject services into any plugins that need them after loading
-                if self._service_injection_enabled:
-                    self.inject_services_into_all_compatible_plugins()
-            else:
-                print("[ServiceManager] Plugin initialization completed with warnings")
-            return success
-        except Exception as e:
-            print(f"[ServiceManager] Error during plugin initialization: {e}")
-            return False
-
-    def _handle_service_injection_request(self, plugin_name: str):
-        """
-        Handle a plugin's request for service manager injection.
-
-        Args:
-            plugin_name: Name of the plugin requesting injection
-        """
-        if self.inject_services_into_plugin(plugin_name):
-            print(f"[ServiceManager] Services injected into plugin: {plugin_name}")
+    def _handle_service_injection_request(self, plugin_name: str, requested_services: list):
+        """Handle service injection requests from plugins."""
+        if self.inject_services_into_plugin(plugin_name, requested_services):
+            print(f"[ServiceManager] Injected services into plugin: {plugin_name}")
         else:
             print(f"[ServiceManager] Failed to inject services into plugin: {plugin_name}")
 
-    def inject_services_into_plugin(self, plugin_name: str) -> bool:
+    def inject_services_into_plugin(self, plugin_name: str, requested_services: list = None) -> bool:
         """
-        Inject service references into a specific plugin.
+        Inject available services into a specific plugin.
 
         Args:
             plugin_name: Name of the plugin to inject services into
+            requested_services: List of requested service names (optional)
 
         Returns:
             True if injection succeeded, False otherwise
         """
-        if not self.plugin_manager:
-            return False
-
-        plugin_instance = self.plugin_manager.get_active_plugin_instance(plugin_name)
+        plugin_instance = self.get_active_plugin_instance(plugin_name)
         if not plugin_instance:
             return False
 
+        # Create services dictionary with available services
+        available_services = {
+            'event_bus': self.event_bus,
+            'llm_client': self.llm_client,
+            'project_manager': self.project_manager,
+            'execution_engine': self.execution_engine,
+            'rag_manager': self.rag_manager,
+            'architect_service': self.architect_service,
+            'reviewer_service': self.reviewer_service,
+            'validation_service': self.validation_service,
+            'terminal_service': self.terminal_service,
+            'project_indexer_service': self.project_indexer_service,
+            'import_fixer_service': self.import_fixer_service,
+            'context_manager': self.context_manager,
+            'dependency_planner': self.dependency_planner,
+            'integration_validator': self.integration_validator,
+            'generation_coordinator': self.generation_coordinator
+        }
+
+        # Filter out None services
+        available_services = {k: v for k, v in available_services.items() if v is not None}
+
+        # If specific services requested, filter to those
+        if requested_services:
+            available_services = {k: v for k, v in available_services.items() if k in requested_services}
+
+        # Inject services into plugin
         try:
-            # Inject service manager reference
-            plugin_instance.service_manager = self
-
-            # Inject core services that plugins commonly need
-            plugin_instance.project_manager = self.project_manager
-            plugin_instance.llm_client = self.llm_client
-
-            return True
+            if hasattr(plugin_instance, 'inject_services'):
+                plugin_instance.inject_services(available_services)
+                return True
+            else:
+                # Fallback: set services as attributes
+                for service_name, service_instance in available_services.items():
+                    setattr(plugin_instance, service_name, service_instance)
+                return True
         except Exception as e:
             print(f"[ServiceManager] Error injecting services into {plugin_name}: {e}")
             return False
 
     def inject_services_into_all_compatible_plugins(self):
-        """Inject services into all compatible active plugins."""
+        """Inject services into all compatible loaded plugins."""
         if not self.plugin_manager:
             return
 
@@ -382,8 +389,8 @@ class ServiceManager:
             self.generation_coordinator is not None
         ])
 
-    def shutdown(self):
-        """Shutdown all services gracefully."""
+    async def shutdown(self):
+        """Shutdown all services gracefully - FIXED ASYNC VERSION."""
         print("[ServiceManager] Shutting down services...")
 
         # Shutdown services in reverse dependency order
@@ -412,8 +419,41 @@ class ServiceManager:
             # Generation coordinator doesn't have explicit shutdown
             pass
 
-        # Shutdown plugin system
+        # FIXED: Shutdown plugin system properly with await
         if self.plugin_manager:
-            asyncio.create_task(self.plugin_manager.shutdown())
+            try:
+                await self.plugin_manager.shutdown()
+            except Exception as e:
+                print(f"[ServiceManager] Error shutting down plugin manager: {e}")
 
         print("[ServiceManager] Services shutdown complete")
+
+    def get_initialization_status(self) -> dict:
+        """Get initialization status for debugging."""
+        return {
+            "core_components": {
+                "llm_client": self.llm_client is not None,
+                "project_manager": self.project_manager is not None,
+                "execution_engine": self.execution_engine is not None
+            },
+            "plugin_system": {
+                "plugin_manager": self.plugin_manager is not None,
+                "service_injection_enabled": self._service_injection_enabled
+            },
+            "services": {
+                "rag_manager": self.rag_manager is not None,
+                "architect_service": self.architect_service is not None,
+                "reviewer_service": self.reviewer_service is not None,
+                "validation_service": self.validation_service is not None,
+                "terminal_service": self.terminal_service is not None,
+                "project_indexer_service": self.project_indexer_service is not None,
+                "import_fixer_service": self.import_fixer_service is not None
+            },
+            "coordination_components": {
+                "context_manager": self.context_manager is not None,
+                "dependency_planner": self.dependency_planner is not None,
+                "integration_validator": self.integration_validator is not None,
+                "generation_coordinator": self.generation_coordinator is not None
+            },
+            "fully_initialized": self.is_fully_initialized()
+        }
