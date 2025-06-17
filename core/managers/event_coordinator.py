@@ -1,5 +1,5 @@
 # kintsugi_ava/core/managers/event_coordinator.py
-# UPDATED: Removed event wiring for the workflow monitor.
+# UPDATED: Re-wired the main user chat event to the new central router.
 
 import asyncio
 from core.event_bus import EventBus
@@ -73,18 +73,19 @@ class EventCoordinator:
         print("[EventCoordinator] ✓ UI events wired")
 
     def _wire_ai_workflow_events(self):
+        """
+        UPDATED: This now routes all chat input to the new central handler
+        in WorkflowManager, which will decide what to do based on the app state.
+        """
         if self.workflow_manager:
             self.event_bus.subscribe("user_request_submitted", self.workflow_manager.handle_user_request)
             self.event_bus.subscribe("review_and_fix_requested", self.workflow_manager.handle_review_and_fix)
 
-        # --- THIS IS THE FIX ---
-        # Wire generation events to the Code Viewer window
         code_viewer = self.window_manager.get_code_viewer()
         if code_viewer:
             self.event_bus.subscribe("prepare_for_generation", code_viewer.prepare_for_generation)
             self.event_bus.subscribe("stream_code_chunk", code_viewer.stream_code_chunk)
             self.event_bus.subscribe("code_generation_complete", code_viewer.display_code)
-        # --- END FIX ---
 
         print("[EventCoordinator] ✓ AI workflow events wired")
 
@@ -97,7 +98,6 @@ class EventCoordinator:
 
         if self.workflow_manager:
             self.event_bus.subscribe("execution_failed", self.workflow_manager.handle_execution_failed)
-
         print("[EventCoordinator] ✓ Execution events wired")
 
     def _wire_terminal_events(self):
