@@ -1,5 +1,5 @@
 # kintsugi_ava/core/project_manager.py
-# UPDATED: Added a clear_active_project method for session resets.
+# UPDATED: File gathering now reads directly from the filesystem for maximum accuracy.
 
 import os
 import sys
@@ -108,7 +108,8 @@ class ProjectManager:
             result = subprocess.run([python_path, "--version"], capture_output=True, text=True, timeout=10, check=False)
             if result.returncode != 0:
                 return False
-            result = subprocess.run([python_path, "-m", "venv", "--help"], capture_output=True, text=True, timeout=10, check=False)
+            result = subprocess.run([python_path, "-m", "venv", "--help"], capture_output=True, text=True, timeout=10,
+                                    check=False)
             return result.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError, OSError):
             return False
@@ -246,30 +247,33 @@ class ProjectManager:
             return f"Error committing changes: {e}"
 
     def get_project_files(self) -> dict[str, str]:
-        if not self.active_project_path or not self.repo:
+        """
+        Gets all project files by walking the directory, ignoring common
+        temporary/binary directories. This ensures the most up-to-date
+        file state is used for context.
+        """
+        if not self.active_project_path:
             return {}
+
         project_files = {}
+        ignore_dirs = {'.git', '.venv', 'venv', '__pycache__', 'node_modules', 'dist', 'build', 'rag_db'}
+
         try:
-            for py_file in self.active_project_path.rglob("*.py"):
-                if any(part in ['.venv', 'venv'] for part in py_file.parts):
+            for item in self.active_project_path.rglob('*'):
+                # Check if any part of the path is an ignored directory
+                if any(part in ignore_dirs for part in item.parts):
                     continue
-                relative_path = py_file.relative_to(self.active_project_path)
-                try:
-                    project_files[relative_path.as_posix()] = py_file.read_text(encoding='utf-8')
-                except Exception as e:
-                    print(f"[ProjectManager] Error reading Python file {relative_path}: {e}")
-            tracked_files = self.repo.git.ls_files().split('\n')
-            for file_str in tracked_files:
-                if not file_str or file_str in project_files:
-                    continue
-                try:
-                    file_path = self.active_project_path / file_str
-                    if not file_str.endswith('.py') and file_path.exists() and file_path.is_file():
-                        project_files[file_str] = file_path.read_text(encoding='utf-8')
-                except Exception as e:
-                    print(f"[ProjectManager] Error reading tracked file {file_str}: {e}")
-            print(f"[ProjectManager] Retrieved {len(project_files)} project files for context.")
+
+                if item.is_file():
+                    try:
+                        relative_path = item.relative_to(self.active_project_path)
+                        project_files[relative_path.as_posix()] = item.read_text(encoding='utf-8', errors='ignore')
+                    except (IOError, UnicodeDecodeError) as e:
+                        print(f"[ProjectManager] Skipping file {item}: {e}")
+
+            print(f"[ProjectManager] Retrieved {len(project_files)} files by walking the project directory.")
             return project_files
+
         except Exception as e:
             print(f"[ProjectManager] An unexpected error occurred in get_project_files: {e}")
             return {}
@@ -288,11 +292,13 @@ class ProjectManager:
         try:
             base_python = self._get_base_python_executable()
             print(f"[ProjectManager] Creating virtual environment using: {base_python}")
-            result = subprocess.run([base_python, "-m", "venv", str(venv_path)], check=True, capture_output=True, text=True, timeout=120)
+            result = subprocess.run([base_python, "-m", "venv", str(venv_path)], check=True, capture_output=True,
+                                    text=True, timeout=120)
             print(f"[ProjectManager] Virtual environment created successfully in {venv_path}.")
             expected_python = self.venv_python_path
             if not expected_python or not expected_python.exists():
-                raise RuntimeError(f"Virtual environment creation appeared to succeed, but Python executable not found at expected location: {expected_python}")
+                raise RuntimeError(
+                    f"Virtual environment creation appeared to succeed, but Python executable not found at expected location: {expected_python}")
         except subprocess.TimeoutExpired:
             raise RuntimeError("Virtual environment creation timed out.")
         except subprocess.CalledProcessError as e:

@@ -1,5 +1,5 @@
 # kintsugi_ava/services/architect_service.py
-# UPDATED: Now intelligently detects the source root to prevent path ambiguity.
+# UPDATED: Implemented a brute-force sanitizer to programmatically fix duplicated paths from the AI plan.
 
 from __future__ import annotations
 import asyncio
@@ -73,79 +73,91 @@ class ArchitectService:
             self.handle_error("coder", "Code generation failed.")
         return success
 
-    # --- NEW: Helper to find the common source directory ---
     def _determine_source_root(self, file_paths: List[str]) -> Optional[str]:
-        """
-        Determines the common source directory for a list of file paths.
-        This is crucial for projects where source code is in a sub-folder (e.g., 'src/', 'my_app/').
-        """
         if not file_paths:
             return None
-
-        paths = [Path(p) for p in file_paths if p.endswith('.py')]
-        if not paths:
+        # Exclude common top-level files from the calculation
+        top_level_files = {'main.py', 'config.py', 'setup.py', 'requirements.txt', '.gitignore', 'README.md', 'pyproject.toml'}
+        # Consider paths that are likely part of a source directory
+        potential_src_paths = [p for p in file_paths if p not in top_level_files and ('/' in p or '\\' in p)]
+        if not potential_src_paths:
+            return None # No nested files found, so no distinct source root
+        # Now find the common path among these nested files
+        common_path_str = os.path.commonpath(potential_src_paths)
+        if not common_path_str or common_path_str == '.':
             return None
-
-        # Find the common ancestor directory of all Python files.
-        common_path = Path(os.path.commonpath([str(p) for p in paths]))
-
-        # If the common path is just the root, there's no dedicated source folder.
-        if str(common_path) == '.':
-            return None
-
-        # If the common path is a directory, it's likely our source root.
+        common_path = Path(common_path_str)
         if common_path.name:
             return common_path.as_posix()
-
         return None
 
-    # --- UPDATED to use the new source root logic ---
     def _format_files_for_prompt(self, files: Dict[str, str]) -> tuple[str, Optional[str]]:
-        """
-        Formats the file dictionary and determines the source root.
-        Returns a tuple: (formatted_string, source_root_or_none).
-        """
         if not files:
             return "No existing files in the project.", None
-
         source_root = self._determine_source_root(list(files.keys()))
-
         output = []
         for filename, content in sorted(files.items()):
             lang = ""
-            if filename.endswith(".py"):
-                lang = "python"
-            elif filename.endswith(".html"):
-                lang = "html"
-            elif filename.endswith(".css"):
-                lang = "css"
-            else:
-                lang = "plaintext"
-
+            if filename.endswith(".py"): lang = "python"
+            elif filename.endswith(".html"): lang = "html"
+            elif filename.endswith(".css"): lang = "css"
+            else: lang = "plaintext"
             output.append(f"### File: `{filename}`\n```{lang}\n{content}\n```")
-
         return "\n\n".join(output), source_root
+
+    def _sanitize_plan_paths(self, plan: dict) -> dict:
+        """
+        Programmatically and directly sanitizes file paths in an AI-generated
+        plan to fix the directory duplication bug. This is a brute-force
+        safeguard, not a suggestion to the AI.
+        """
+        if not plan or 'files' not in plan:
+            return plan
+
+        sanitized_files = []
+        for file_entry in plan.get('files', []):
+            original_filename_str = file_entry.get('filename')
+            if not original_filename_str:
+                continue
+
+            p = Path(original_filename_str.replace('\\', '/')) # Normalize to posix style for parsing
+            parts = p.parts
+
+            # THE FIX: Directly check for the duplication pattern (e.g., app/app/... or src/src/...)
+            if len(parts) > 1 and parts[0] == parts[1]:
+                # Reconstruct the path from the second element onwards.
+                corrected_path = Path(*parts[1:])
+                corrected_path_str = corrected_path.as_posix()
+                self.log("warning", f"FIXED DUPLICATE PATH: Corrected '{original_filename_str}' to '{corrected_path_str}'")
+                file_entry['filename'] = corrected_path_str
+
+            sanitized_files.append(file_entry)
+
+        plan['files'] = sanitized_files
+        return plan
+
 
     async def _generate_modification_plan(self, prompt: str, existing_files: dict) -> dict | None:
         self.log("info", "Analyzing existing files to create a modification plan...")
         try:
             file_context_string, source_root = self._format_files_for_prompt(existing_files)
-
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
                 prompt=prompt,
                 file_context_string=file_context_string,
-                # Provide the source root if detected, otherwise a clear message.
                 source_root_info=f"The primary Python package for this project seems to be in the '{source_root}' directory. All new Python files should respect this structure." if source_root else "This project appears to have its source files in the root directory."
             )
-
             plan = await self._get_plan_from_llm(plan_prompt)
+
+            # --- THIS IS THE DEFINITIVE FIX ---
+            # Sanitize the plan from the AI before using it further.
+            if plan:
+                plan = self._sanitize_plan_paths(plan)
+            # --- END OF FIX ---
 
             if not plan or not isinstance(plan.get("files"), list):
                 self.log("error", "The AI's modification plan was invalid or missing the 'files' list.")
                 return None
             try:
-                # This is the line that caused the original error.
-                # Now it's wrapped in a try/except to handle malformed entries.
                 planned_filenames = {f['filename'] for f in plan.get('files', [])}
             except KeyError:
                 self.log("error", "The AI's modification plan contained an entry without a 'filename' key. Aborting.")
@@ -166,8 +178,6 @@ class ArchitectService:
             traceback.print_exc()
             return None
 
-    # --- Other methods remain largely the same ---
-
     async def _generate_hierarchical_plan(self, prompt: str, rag_context: str) -> dict | None:
         self.log("info", "Designing project structure...")
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
@@ -178,7 +188,6 @@ class ArchitectService:
         if not provider or not model:
             self.handle_error("architect", "No model configured for architect role.")
             return None
-
         raw_plan_response = ""
         try:
             async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt, "architect"):
@@ -223,7 +232,7 @@ class ArchitectService:
     async def _create_package_structure(self, files: list):
         project_root = self.project_manager.active_project_path
         if not project_root: return
-        dirs_that_need_init = {Path(f['filename']).parent for f in files if '/' in f['filename']}
+        dirs_that_need_init = {Path(f['filename']).parent for f in files if '/' in f['filename'] or '\\' in f['filename']}
         init_files_to_create = {}
         for d in dirs_that_need_init:
             init_path = d / "__init__.py"

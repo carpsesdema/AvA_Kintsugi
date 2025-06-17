@@ -1,10 +1,10 @@
 # gui/code_viewer.py
-# FINAL FIX: Restored methods to handle generation events and display the file tree.
+# FINAL FIX: Implemented a forced refresh of the file tree after code generation.
 
 from pathlib import Path
 from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget, QSplitter
 from PySide6.QtCore import Qt
-import qasync # <-- FIX: Import qasync
+import qasync
 
 from gui.project_context_manager import ProjectContextManager
 from gui.file_tree_manager import FileTreeManager
@@ -104,14 +104,17 @@ class CodeViewerWindow(QMainWindow):
 
     def prepare_for_generation(self, filenames: list, project_path: str = None):
         """Prepares the UI for code generation by setting up the file tree."""
-        if project_path and self.project_context.set_new_project_context(project_path):
+        is_new_project = project_path and self.project_context.set_new_project_context(project_path)
+
+        if is_new_project:
             self.file_tree_manager.setup_new_project_tree(
                 self.project_context.project_root, filenames
             )
             print(f"[CodeViewer] Prepared for new project generation: {len(filenames)} files")
             self.show_window()
         elif self.project_context.validate_existing_context():
-            # This part handles modifications to existing projects
+            # For modifications, just add placeholders for any NEW files to the tree.
+            self.file_tree_manager.add_placeholders_for_new_files(filenames)
             self._prepare_tabs_for_modification(filenames)
             print(f"[CodeViewer] Prepared for modification: {len(filenames)} files")
             self.show_window()
@@ -131,11 +134,10 @@ class CodeViewerWindow(QMainWindow):
             if abs_path:
                 self.editor_manager.stream_content_to_editor(str(abs_path.resolve()), chunk)
 
-    # --- FIX: Ensure this is treated as a Qt slot for thread safety ---
     @qasync.Slot(dict)
     def display_code(self, files: dict):
-        """Displays the final, complete code in the editor tabs."""
-        print(f"[CodeViewer] Received request to display {len(files)} file(s).")
+        """Displays the final code and FORCES a refresh of the file tree."""
+        print(f"[CodeViewer] Displaying {len(files)} file(s) and refreshing UI.")
         for filename, content in files.items():
             if self.project_context.is_valid:
                 abs_path = self.project_context.get_absolute_path(filename)
@@ -146,7 +148,12 @@ class CodeViewerWindow(QMainWindow):
                     print(f"[CodeViewer] Warning: Could not resolve absolute path for '{filename}'.")
             else:
                 print("[CodeViewer] Warning: Project context is invalid, cannot display code.")
-    # --- END FIX ---
+
+        # THE DEFINITIVE UI FIX:
+        # After any generation, reload the file tree from the disk to ensure it's accurate.
+        if self.project_context.is_valid and self.project_context.project_root:
+            print("[CodeViewer] Forcing file tree refresh from disk.")
+            self.file_tree_manager.load_existing_project_tree(self.project_context.project_root)
 
     def _on_file_selected(self, file_path: Path):
         self.editor_manager.open_file_in_tab(file_path)
@@ -167,7 +174,6 @@ class CodeViewerWindow(QMainWindow):
     def clear_all_error_highlights(self):
         if self.editor_manager:
             self.editor_manager.clear_all_error_highlights()
-        # Also hide the fix button when errors are cleared
         self.hide_fix_button()
 
     def show_fix_button(self):
