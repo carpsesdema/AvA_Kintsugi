@@ -191,68 +191,45 @@ CODER_PROMPT = textwrap.dedent("""
     """)
 
 REFINEMENT_PROMPT = textwrap.dedent("""
-    You are an expert Python developer specializing in fixing integration and import issues. Your task is to analyze a multi-file project and fix the specific error that occurred.
+    You are an expert Python developer who functions as an automated code-fixing system.
+    Your response MUST be a valid JSON object and nothing else. Do not add explanations, comments, or apologies.
 
-    **THE GOAL:**
-    Analyze the complete project source code and the provided error traceback. Identify the root cause of the bug and provide the corrected, complete source code for **only the file(s) that need to be changed.**
+    **TASK:** Analyze the provided project source code and error report. Your goal is to identify the root cause of the error and provide corrected, complete source code for only the file or files that need to be changed to fix the bug.
 
-    **🔍 COMPLETE PROJECT ANALYSIS:**
+    **--- FULL PROJECT SOURCE ---**
     ```json
     {project_source_json}
     ```
 
-    **🚨 THE ERROR THAT OCCURRED:**
-    The error occurred in `{error_filename}`:
+    **--- ERROR REPORT ---**
+    The error occurred in or was caused by `{error_filename}`:
     ```
     {error_report}
     ```
 
-    **⚡ CRITICAL DEBUGGING APPROACH:**
+    **--- DEBUGGING ANALYSIS INSTRUCTIONS ---**
+    1.  **Analyze the Traceback:** The traceback is your primary guide. Find the exact line in the project's own files where the error occurs.
+    2.  **Root Cause:** The bug is likely an import error, a typo in a class or method name, an incorrect method signature, or a logical error in the code flow between files.
+    3.  **Cross-Reference Files:** Compare how `{error_filename}` is used by other files and how it uses them. Ensure names and logic align.
+    4.  **Formulate a Fix:** Determine the minimal set of changes needed. Modify only the file(s) necessary to resolve the error.
 
-    1. **Root Cause Analysis**: The bug might be:
-       - Import path errors (wrong module names)
-       - Missing imports (forgot to import required classes/functions)
-       - Class/method name mismatches between files
-       - Circular import dependencies
-       - Missing `__init__.py` files
-       - Incorrect instantiation (wrong constructor parameters)
+    **--- MANDATORY OUTPUT FORMAT ---**
+    Your entire response MUST be a single JSON object. The keys of the JSON object must be the string file paths (e.g., "path/to/file.py"), and the values must be the complete, corrected source code for that file.
 
-    2. **Cross-File Integration Issues**: Look for:
-       - File A tries to import class X from file B, but file B defines class Y
-       - main.py imports from module C, but module C doesn't exist or has wrong name
-       - Method calls that don't match the actual method signatures
-
-    3. **Common Fixes**:
-       - Correct import paths: `from engine.player import Player` not `from player import Player`
-       - Add missing imports: import all required classes/functions
-       - Fix class/method names to match across files
-       - Create missing `__init__.py` files
-       - Fix constructor calls to match class definitions
-
-    **📋 ANALYSIS CHECKLIST:**
-    ✅ Check all import statements in error file
-    ✅ Verify imported classes/functions exist in target files
-    ✅ Confirm method names match between caller and callee
-    ✅ Ensure constructor parameters match class definitions
-    ✅ Check for missing `__init__.py` files
-    ✅ Look for circular import issues
-
-    **🎯 OUTPUT FORMAT:**
-    Your response MUST be a single, valid JSON object with filename keys and complete corrected code values:
-
+    **EXAMPLE OF A CORRECT RESPONSE:**
     ```json
     {{
-      "path/to/file.py": "complete corrected Python code here..."
+      "path/to/buggy_file.py": "complete corrected python code for this file...",
+      "path/to/another/affected_file.py": "complete corrected python code for this file..."
     }}
     ```
 
-    **CRITICAL**:
-    - Only include files that need changes
-    - Provide complete file contents, not just diffs
-    - Ensure all imports are correct and all integration issues are fixed
-    - Do not include explanations outside the JSON
+    **CRITICAL RULES:**
+    -   **JSON ONLY:** Your output must start with `{{` and end with `}}`. No other text is permitted.
+    -   **COMPLETE FILES:** Provide the full contents of each file you modify, not just diffs or snippets.
+    -   **NO EXPLANATIONS:** Do not write any text outside of the JSON object.
 
-    **🚀 BEGIN ANALYSIS AND FIX:**
+    Begin analysis and provide the JSON-formatted fix.
     """)
 
 SURGICAL_MODIFICATION_PROMPT = textwrap.dedent("""

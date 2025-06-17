@@ -29,27 +29,26 @@ class ValidationService:
             self.handle_error("executor", "Could not identify the source file of the error.")
             return False
 
-        if self.project_manager.active_project_path:
+        if self.project_manager.active_project_path and line_number > 0:
             full_path = self.project_manager.active_project_path / crashing_file
             self.event_bus.emit("error_highlight_requested", full_path, line_number)
 
         self.update_status("reviewer", "working", f"Analyzing error in {crashing_file}...")
 
-        changes_json = await self.reviewer_service.review_and_correct_code(
+        changes_json_str = await self.reviewer_service.review_and_correct_code(
             project_source=all_project_files,
             error_filename=crashing_file,
             error_report=error_report
         )
 
-        if not changes_json:
-            self.handle_error("reviewer", "Could not generate a valid fix for the error.")
+        if not changes_json_str:
+            self.handle_error("reviewer", "Did not generate a response for the error fix.")
             return False
 
         try:
-            cleaned_response = self._clean_json_output(changes_json)
-            files_to_commit = json.loads(cleaned_response)
+            files_to_commit = self._robustly_parse_json_from_llm_response(changes_json_str)
             if not isinstance(files_to_commit, dict) or not files_to_commit:
-                raise ValueError("AI response was not a valid dictionary of file changes.")
+                raise ValueError("AI response was not a valid, non-empty dictionary of file changes.")
         except (json.JSONDecodeError, ValueError) as e:
             self.handle_error("reviewer", f"Failed to parse AI's fix response: {e}")
             return False
@@ -63,6 +62,33 @@ class ValidationService:
         self.log("success", "Successfully applied fix. Please try running the code again.")
         return True
 
+    def _robustly_parse_json_from_llm_response(self, response_text: str) -> dict:
+        """
+        A highly robust function to find and parse a JSON object from an LLM's text response.
+        """
+        # 1. Look for a JSON object within markdown code fences (```json ... ```)
+        match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError as e:
+                self.log("warning", f"Found a markdown JSON block, but it failed to parse: {e}. Trying other methods.")
+
+        # 2. If no markdown, find content between the first '{' and the last '}'
+        first_brace = response_text.find('{')
+        last_brace = response_text.rfind('}')
+        if first_brace != -1 and last_brace > first_brace:
+            potential_json_str = response_text[first_brace:last_brace + 1]
+            try:
+                return json.loads(potential_json_str)
+            except json.JSONDecodeError:
+                self.log("warning", "Found content between braces, but it was not valid JSON.")
+
+        # 3. If neither method works, fail with a clear error.
+        self.log("error", f"Could not extract valid JSON from LLM response. Raw head: '{response_text[:300]}...'")
+        raise ValueError("Could not find a valid JSON object in the LLM response.")
+
     def _parse_error_traceback(self, error_str: str) -> tuple[str | None, int]:
         """
         Parses a traceback string to find the last file mentioned that is part
@@ -70,57 +96,43 @@ class ValidationService:
         """
         project_root = self.project_manager.active_project_path
         if not project_root:
+            self.log("error", "Cannot parse traceback without an active project root.")
             return None, -1
 
-        # --- THIS IS THE DEFINITIVE FIX ---
-        # A robust regex to capture both standard tracebacks (`File "..."`) and
-        # common warning formats (`path/to/file.py:line_number:`).
-        traceback_pattern = re.compile(
-            r'File "(.+?)", line (\d+)|(.*?\.py):(\d+):'
-        )
+        traceback_pattern = re.compile(r'File "((?:[a-zA-Z]:)?[^"]+)", line (\d+)')
         matches = traceback_pattern.findall(error_str)
 
-        # Iterate through all found matches in reverse (from last call to first)
-        for tb_path, tb_line, warn_path, warn_line in reversed(matches):
-            file_path_str = tb_path or warn_path
-            line_num_str = tb_line or warn_line
+        if not matches:
+            fallback_pattern = re.compile(r'((?:[a-zA-Z]:)?[^:]+\.py):(\d+):')
+            matches = [(m[0], m[1]) for m in fallback_pattern.findall(error_str)]
 
-            if not file_path_str or not line_num_str:
+        if not matches:
+            self.log("warning", "Could not find any file paths in the error report using known patterns.")
+            return None, -1
+
+        for file_path_from_trace, line_num_str in reversed(matches):
+            if not file_path_from_trace or not line_num_str:
                 continue
-
             try:
-                # Resolve the path to an absolute path
-                file_path = Path(file_path_str).resolve()
+                path_obj = Path(file_path_from_trace)
+                if path_obj.is_absolute():
+                    path_to_check = path_obj if project_root in path_obj.parents else None
+                else:
+                    path_to_check = (project_root / path_obj).resolve()
 
-                # CRITICAL LOGIC: Check if the file is part of the project
-                # This is the key check that prevents us from stopping on a library file.
-                if project_root in file_path.parents or project_root == file_path.parent:
-                    # Now, explicitly IGNORE files inside the virtual environment.
-                    if ".venv" in file_path.parts or "site-packages" in file_path.parts:
-                        continue  # Skip this match and check the next one up the stack
-
-                    # This is a valid project file! We've found our target.
-                    relative_path = file_path.relative_to(project_root)
+                if path_to_check and path_to_check.is_file():
+                    if ".venv" in path_to_check.parts or "site-packages" in path_to_check.parts:
+                        continue
+                    relative_path = path_to_check.relative_to(project_root)
                     posix_path_str = relative_path.as_posix()
-                    self.log("info", f"Pinpointed error origin in project source: {posix_path_str} at line {line_num_str}")
+                    self.log("info", f"Pinpointed error origin: {posix_path_str} at line {line_num_str}")
                     return posix_path_str, int(line_num_str)
-
-            except (ValueError, FileNotFoundError):
-                # If path resolution fails for any reason, just move to the next match
+            except (ValueError, OSError) as e:
+                self.log("warning", f"Could not process path '{file_path_from_trace}': {e}")
                 continue
-        # --- END OF FIX ---
 
-        # If the loop completes without finding a valid project file, then we fail.
         self.log("warning", "Could not pinpoint error to a specific project source file.")
         return None, -1
-
-
-    def _clean_json_output(self, response: str) -> str:
-        response = response.strip()
-        match = re.search(r'\{.*\}', response, re.DOTALL)
-        if match: return match.group(0)
-        if response.startswith('{') and response.endswith('}'): return response
-        raise ValueError("No valid JSON object found in AI's response.")
 
     def update_status(self, agent_id: str, status: str, text: str):
         self.event_bus.emit("node_status_changed", agent_id, status, text)
