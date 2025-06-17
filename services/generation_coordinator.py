@@ -5,32 +5,33 @@ import asyncio
 import json
 import re
 from typing import Dict, Any, List, Optional
+import textwrap
 
 from core.event_bus import EventBus
-from prompts.prompts import CODER_PROMPT
+from prompts.prompts import CODER_PROMPT, SURGICAL_MODIFICATION_PROMPT
 
 # FINAL FIX: Update the simple prompt to also accept the existing files context.
-SIMPLE_FILE_PROMPT = """
-You are an expert file generator. Your task is to generate the content for a single file as part of a larger project.
-Your response MUST be ONLY the raw content for the file. Do not add any explanation, commentary, or markdown formatting.
+SIMPLE_FILE_PROMPT = textwrap.dedent("""
+    You are an expert file generator. Your task is to generate the content for a single file as part of a larger project.
+    Your response MUST be ONLY the raw content for the file. Do not add any explanation, commentary, or markdown formatting.
 
-**PROJECT CONTEXT (Full Plan):**
-```json
-{file_plan_json}
-```
+    **PROJECT CONTEXT (Full Plan):**
+    ```json
+    {file_plan_json}
+    ```
 
-**EXISTING FILES (Already Generated in this Session):**
-```json
-{existing_files_json}
-```
+    **EXISTING FILES (Already Generated in this Session):**
+    ```json
+    {existing_files_json}
+    ```
 
----
-**YOUR ASSIGNED FILE:** `{filename}`
-**PURPOSE OF THIS FILE:** `{purpose}`
----
+    ---
+    **YOUR ASSIGNED FILE:** `{filename}`
+    **PURPOSE OF THIS FILE:** `{purpose}`
+    ---
 
-Generate the complete and raw content for `{filename}` now:
-"""
+    Generate the complete and raw content for `{filename}` now:
+    """)
 
 
 class GenerationCoordinator:
@@ -48,13 +49,13 @@ class GenerationCoordinator:
         self.integration_validator = integration_validator
         self.llm_client = service_manager.get_llm_client()
 
-    async def coordinate_generation(self, plan: Dict[str, Any], rag_context: str) -> Dict[str, str]:
+    async def coordinate_generation(self, plan: Dict[str, Any], rag_context: str, existing_files: Optional[Dict[str, str]]) -> Dict[str, str]:
         """
         Coordinates the generation of all planned files using a unified, context-aware method.
         """
         try:
             self.log("info", "🚀 Starting unified generation with rolling context...")
-            context = await self.context_manager.build_generation_context(plan, rag_context)
+            context = await self.context_manager.build_generation_context(plan, rag_context, existing_files)
 
             files_to_generate = plan.get("files", [])
             generation_order = [f["filename"] for f in files_to_generate]
@@ -98,8 +99,12 @@ class GenerationCoordinator:
     async def _generate_single_file(self, file_info: Dict[str, str], context: Any,
                                     generated_files: Dict[str, str]) -> Optional[str]:
         filename = file_info["filename"]
+        is_modification = filename in context.existing_files
 
-        if filename.endswith('.py'):
+        if is_modification:
+            original_code = context.existing_files[filename]
+            prompt = self._build_modification_prompt(file_info, original_code, context)
+        elif filename.endswith('.py'):
             prompt = self._build_python_coder_prompt(file_info, context, generated_files)
         else:
             prompt = self._build_simple_file_prompt(file_info, context, generated_files)
@@ -143,6 +148,20 @@ class GenerationCoordinator:
             purpose=file_info["purpose"],
             file_plan_json=json.dumps(context.plan, indent=2),
             existing_files_json=json.dumps(generated_files, indent=2)  # Pass the rolling context
+        )
+
+    def _build_modification_prompt(self, file_info: Dict[str, str], original_code: str, context: Any) -> str:
+        """Builds the prompt for surgical modification."""
+        # Provide a summary of other files for context, not their full content
+        other_files_summary = {
+            "project_plan": context.plan,
+            "symbol_index": context.project_index
+        }
+        return SURGICAL_MODIFICATION_PROMPT.format(
+            filename=file_info["filename"],
+            original_code=original_code,
+            purpose=file_info["purpose"],
+            file_context_string=json.dumps(other_files_summary, indent=2)
         )
 
     def robust_clean_llm_output(self, content: str) -> str:

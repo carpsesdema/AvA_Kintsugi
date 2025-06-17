@@ -62,7 +62,7 @@ class ArchitectService:
             plan = await self._generate_modification_plan(prompt, existing_files)
 
         if plan:
-            success = await self._execute_coordinated_generation(plan, rag_context)
+            success = await self._execute_coordinated_generation(plan, rag_context, existing_files)
         else:
             self.log("error", "Failed to generate a valid plan. Aborting generation.")
             success = False
@@ -204,7 +204,7 @@ class ArchitectService:
             self.handle_error("architect", f"An unexpected error during planning: {e}", raw_plan_response)
             return None
 
-    async def _execute_coordinated_generation(self, plan: dict, rag_context: str) -> bool:
+    async def _execute_coordinated_generation(self, plan: dict, rag_context: str, existing_files: Optional[Dict[str, str]]) -> bool:
         try:
             files_to_generate = plan.get("files", [])
             project_root = self.project_manager.active_project_path
@@ -213,7 +213,7 @@ class ArchitectService:
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
-            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context)
+            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
             if not generated_files or len(generated_files) < len(all_filenames):
                 self.log("error",
                          f"Generation failed. Expected {len(all_filenames)} files, but got {len(generated_files)}.")

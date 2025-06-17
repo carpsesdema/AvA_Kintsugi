@@ -255,10 +255,46 @@ REFINEMENT_PROMPT = textwrap.dedent("""
     **🚀 BEGIN ANALYSIS AND FIX:**
     """)
 
+SURGICAL_MODIFICATION_PROMPT = textwrap.dedent("""
+    You are an expert developer specializing in precise, surgical code modifications. You are given the original source code for a file and a clear instruction on what to change.
+
+    **YOUR TASK:**
+    Apply ONLY the requested change to the provided source code and return the entire, updated file content.
+    - You MUST return the COMPLETE file content.
+    - You MUST NOT refactor, reformat, or change any other part of the code unless it's strictly necessary for the requested change.
+    - You MUST respect all existing logic, libraries, and design patterns shown in the original code.
+    - Do NOT add new public methods, classes, or functions that were not requested.
+    - Do NOT add any comments unless specifically asked to.
+
+    ---
+    **CONTEXT ON OTHER FILES IN THE PROJECT (FOR REFERENCE - DO NOT MODIFY THESE):**
+    ```json
+    {file_context_string}
+    ```
+    ---
+    **ORIGINAL SOURCE CODE FOR `{filename}`:**
+    ```python
+    {original_code}
+    ```
+    ---
+    **PRECISE MODIFICATION INSTRUCTION FOR `{filename}`:**
+    {purpose}
+    ---
+
+    **OUTPUT REQUIREMENTS:**
+    - Return ONLY the complete, raw, updated code for `{filename}`.
+    - Do NOT wrap the code in markdown ``` code blocks.
+    - Do NOT add any explanations or conversation.
+
+    **BEGIN MODIFICATION:**
+    """)
+
+
 __all__ = [
     'PLANNER_PROMPT',
     'HIERARCHICAL_PLANNER_PROMPT',
     'MODIFICATION_PLANNER_PROMPT',
     'CODER_PROMPT',
-    'REFINEMENT_PROMPT'
+    'REFINEMENT_PROMPT',
+    'SURGICAL_MODIFICATION_PROMPT'
 ]

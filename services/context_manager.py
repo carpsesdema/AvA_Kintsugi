@@ -19,6 +19,7 @@ class GenerationContext:
     generation_session: Dict[str, Any]
     rag_context: str
     relevance_scores: Dict[str, float]  # Track relevance of context items
+    existing_files: Optional[Dict[str, str]]
 
 
 class ContextManager:
@@ -32,7 +33,7 @@ class ContextManager:
     def __init__(self, service_manager):
         self.service_manager = service_manager
 
-    async def build_generation_context(self, plan: Dict[str, Any], rag_context: str) -> GenerationContext:
+    async def build_generation_context(self, plan: Dict[str, Any], rag_context: str, existing_files: Optional[Dict[str, str]]) -> GenerationContext:
         """Build comprehensive context for the entire generation session with intelligent filtering."""
         try:
             # Get project indexer and build current index
@@ -74,7 +75,8 @@ class ContextManager:
                 dependency_order=[],  # Will be filled by DependencyPlanner
                 generation_session=generation_session,
                 rag_context=rag_context,
-                relevance_scores=relevance_scores
+                relevance_scores=relevance_scores,
+                existing_files=existing_files or {}
             )
 
         except Exception as e:
@@ -87,7 +89,8 @@ class ContextManager:
                 dependency_order=[],
                 generation_session={},
                 rag_context=rag_context,
-                relevance_scores={}
+                relevance_scores={},
+                existing_files=existing_files or {}
             )
 
     def update_session_context(self, context: GenerationContext,
@@ -115,7 +118,8 @@ class ContextManager:
                 dependency_order=context.dependency_order,
                 generation_session=context.generation_session,
                 rag_context=context.rag_context,
-                relevance_scores=context.relevance_scores
+                relevance_scores=context.relevance_scores,
+                existing_files=context.existing_files
             )
 
             return updated_context
