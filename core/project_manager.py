@@ -154,14 +154,32 @@ class ProjectManager:
             self.repo = git.Repo(self.active_project_path)
         except InvalidGitRepositoryError:
             self.repo = git.Repo.init(self.active_project_path)
-            self._create_gitignore_if_needed()
-            self.repo.index.add(all=True)
-            if self.repo.index.diff(None):
-                self.repo.index.commit("Baseline commit by Kintsugi AvA")
         except GitCommandError as e:
             print(f"[ProjectManager] Git error on project load: {e}")
             self.repo = None
             return None
+
+        # --- THIS IS THE FIX ---
+        # After loading or initializing, ensure there's at least one commit.
+        # This prevents errors when `HEAD` doesn't exist in an empty repo.
+        try:
+            _ = self.repo.head.commit
+        except (ValueError, GitCommandError):
+            print("[ProjectManager] Loaded repo has no commits. Creating initial baseline commit.")
+            self._create_gitignore_if_needed()
+            # Stage all existing files, including untracked ones.
+            self.repo.git.add(A=True)
+            # The NEW FIX:
+            # Check if there are any staged entries. This is safe for a new repo as it does not rely on HEAD.
+            # Using index.diff(None) checks for staged changes against the working directory.
+            # An empty index.entries check is the safest for this initial commit scenario.
+            if self.repo.index.entries:
+                self.repo.index.commit("Baseline commit by Kintsugi AvA")
+                print("[ProjectManager] Created baseline commit for existing files.")
+            else:
+                print("[ProjectManager] Repo is empty, no baseline commit needed.")
+        # --- END OF FIX ---
+
         return str(self.active_project_path)
 
     def begin_modification_session(self) -> str | None:

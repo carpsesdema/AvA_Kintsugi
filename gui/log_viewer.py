@@ -69,8 +69,10 @@ class LogViewerWindow(QMainWindow):
         content_format.setForeground(color)
         cursor.insertText(f"{content}\n", content_format)
 
-        # Scroll to bottom
+        # --- THIS IS THE FIX ---
+        # Scroll to the bottom to make the latest log message visible
         self.log_view.ensureCursorVisible()
+        # --- END OF FIX ---
 
     def show(self):
         super().show()

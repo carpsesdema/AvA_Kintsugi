@@ -9,6 +9,7 @@ from sentence_transformers import SentenceTransformer
 import uvicorn
 import sys
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 # --- Configuration ---
 project_root = Path(__file__).parent
@@ -26,30 +27,34 @@ class QueryRequest(BaseModel):
     query_text: str
     n_results: int = 5
 
+
 class QueryResponse(BaseModel):
     context: str
 
-# --- FIX: Add data models for ingesting new documents ---
+
 class Document(BaseModel):
     id: str
     content: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+
 class AddRequest(BaseModel):
     documents: List[Document]
-# --- END FIX ---
+
 
 # --- Global State (loaded once on startup) ---
 app_state = {}
 
-# --- FastAPI App Initialization ---
-app = FastAPI(title="Kintsugi AvA RAG Service")
 
-
-# --- Startup and Shutdown Events ---
-@app.on_event("startup")
-def startup_event():
-    print("--- RAG Server Startup ---")
+# --- THIS IS THE FIX: Lifespan Event Handler ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Handles application startup and shutdown events using the modern
+    FastAPI lifespan protocol.
+    """
+    # --- Startup Logic ---
+    print("--- RAG Server Startup (Lifespan) ---")
     print(f"Loading embedding model: '{MODEL_NAME}' into memory...")
     try:
         app_state["embedding_model"] = SentenceTransformer(MODEL_NAME)
@@ -69,12 +74,19 @@ def startup_event():
 
     print(f"--- RAG Server is now ready and listening on http://{HOST}:{PORT} ---")
 
+    yield  # The application runs here
 
-@app.on_event("shutdown")
-def shutdown_event():
-    print("--- RAG Server Shutdown ---")
+    # --- Shutdown Logic ---
+    print("--- RAG Server Shutdown (Lifespan) ---")
     app_state.clear()
     print("Cleaned up resources.")
+
+
+# --- END OF FIX ---
+
+
+# --- FastAPI App Initialization (with the new lifespan handler) ---
+app = FastAPI(title="Kintsugi AvA RAG Service", lifespan=lifespan)
 
 
 # --- API Endpoints ---
@@ -83,7 +95,6 @@ def read_root():
     return {"status": "Kintsugi RAG Server is running"}
 
 
-# --- FIX: New endpoint to add documents to the knowledge base ---
 @app.post("/add")
 def add_documents(request: AddRequest):
     if not app_state.get("embedding_model") or not app_state.get("collection"):
@@ -122,7 +133,6 @@ def add_documents(request: AddRequest):
     except Exception as e:
         print(f"ERROR during document addition: {e}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during document addition: {e}")
-# --- END FIX ---
 
 
 @app.post("/query", response_model=QueryResponse)
