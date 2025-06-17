@@ -10,6 +10,7 @@ from gui.project_context_manager import ProjectContextManager
 from gui.file_tree_manager import FileTreeManager
 from gui.editor_tab_manager import EditorTabManager
 from gui.integrated_terminal import IntegratedTerminal
+from gui.status_bar import StatusBar
 from core.project_manager import ProjectManager
 
 
@@ -31,6 +32,11 @@ class CodeViewerWindow(QMainWindow):
         self.setGeometry(100, 100, 1400, 900)
         self._init_ui()
         self._connect_events()
+
+        # --- NEW: Add the status bar ---
+        self.status_bar = StatusBar(self.event_bus)
+        self.setStatusBar(self.status_bar)
+        # --- END NEW ---
 
     def _init_ui(self):
         """Initialize the main UI components."""
