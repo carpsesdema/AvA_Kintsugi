@@ -79,7 +79,11 @@ class EventCoordinator:
         """
         if self.workflow_manager:
             self.event_bus.subscribe("user_request_submitted", self.workflow_manager.handle_user_request)
-            self.event_bus.subscribe("review_and_fix_requested", self.workflow_manager.handle_review_and_fix)
+            # --- THIS IS THE FIX ---
+            # Corrected the method name to the one that actually exists.
+            self.event_bus.subscribe("review_and_fix_requested", self.workflow_manager.handle_review_and_fix_button)
+            # --- END OF FIX ---
+
 
         code_viewer = self.window_manager.get_code_viewer()
         if code_viewer:

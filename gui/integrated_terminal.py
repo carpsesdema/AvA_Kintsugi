@@ -162,7 +162,7 @@ class IntegratedTerminal(QWidget):
     def create_new_terminal_tab(self, closable=True):
         session_id = self.next_session_id
         self.next_session_id += 1
-        terminal = TerminalWidget(session_id, self.project_manager)
+        terminal = TerminalWidget(session_id, self.project_manager, self.event_bus)
         terminal.command_entered.connect(self.command_entered.emit)
         self.sessions[session_id] = terminal
         index = self.tab_widget.addTab(terminal, f"Terminal {session_id + 1}")

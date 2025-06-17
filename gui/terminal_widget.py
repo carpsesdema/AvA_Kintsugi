@@ -1,23 +1,25 @@
 # gui/terminal_widget.py
 # Represents a single, venv-aware terminal session tab.
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QLabel
-from PySide6.QtGui import QFont, QTextCursor, QTextCharFormat, QColor, QKeyEvent
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QLabel, QMenu
+from PySide6.QtGui import QFont, QTextCursor, QTextCharFormat, QColor, QKeyEvent, QAction
 from PySide6.QtCore import Signal, Qt
 from pathlib import Path
 
 from .components import Colors, Typography
 from core.project_manager import ProjectManager
+from core.event_bus import EventBus
 
 
 class TerminalWidget(QWidget):
     """A widget for a single terminal session, designed to be used in a QTabWidget."""
     command_entered = Signal(str, int)  # command, session_id
 
-    def __init__(self, session_id: int, project_manager: ProjectManager):
+    def __init__(self, session_id: int, project_manager: ProjectManager, event_bus: EventBus):
         super().__init__()
         self.session_id = session_id
         self.project_manager = project_manager
+        self.event_bus = event_bus
         self.is_busy = False
         self.command_history = []
         self.history_index = -1
@@ -38,6 +40,10 @@ class TerminalWidget(QWidget):
         if self.project_manager and self.project_manager.active_project_path:
             welcome_msg += f"Project: {self.project_manager.active_project_name}\n"
         self.output_view.setPlainText(welcome_msg)
+        # Enable context menu
+        self.output_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.output_view.customContextMenuRequested.connect(self.show_context_menu)
+
 
         input_layout = QHBoxLayout()
         self.prompt_label = QLabel(">")
@@ -56,6 +62,32 @@ class TerminalWidget(QWidget):
 
         layout.addWidget(self.output_view, 1)
         layout.addLayout(input_layout)
+
+    def show_context_menu(self, pos):
+        """Shows a custom context menu."""
+        menu = QMenu(self)
+
+        # Action to fix selection, only shown if text is selected
+        if self.output_view.textCursor().hasSelection():
+            fix_action = QAction("Ask AI to Fix This Error", self)
+            fix_action.triggered.connect(self._request_fix_for_selection)
+            menu.addAction(fix_action)
+            menu.addSeparator()
+
+        # Standard actions
+        copy_action = menu.addAction("Copy")
+        copy_action.triggered.connect(self.output_view.copy)
+        menu.addSeparator()
+        clear_action = menu.addAction("Clear Terminal")
+        clear_action.triggered.connect(self.clear_output)
+
+        menu.exec(self.output_view.viewport().mapToGlobal(pos))
+
+    def _request_fix_for_selection(self):
+        """Emits an event with the selected text to be fixed."""
+        selected_text = self.output_view.textCursor().selectedText().strip()
+        if selected_text:
+            self.event_bus.emit("fix_highlighted_error_requested", selected_text)
 
     def _on_command_entered(self):
         if self.is_busy:
@@ -87,13 +119,10 @@ class TerminalWidget(QWidget):
 
         self.history_index += direction
         if self.history_index < 0:
-            self.history_index = -1
-            self.command_input.clear()
-            return
-
+            self.history_index = 0
         if self.history_index >= len(self.command_history):
-            # Go back to the last item if we go too far down
-            self.history_index = len(self.command_history) - 1
+            self.history_index = len(self.command_history) -1
+            self.command_input.setText(self.command_history[self.history_index])
             return
 
         self.command_input.setText(self.command_history[self.history_index])

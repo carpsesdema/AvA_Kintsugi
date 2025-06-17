@@ -37,6 +37,13 @@ class WorkflowManager:
         self.event_bus.subscribe("new_session_requested", self.handle_new_session)
         self.event_bus.subscribe("interaction_mode_changed", self.handle_mode_change)
 
+        # --- NEW EVENT SUBSCRIPTIONS FOR FIX WORKFLOWS ---
+        # Listens for the old "Fix" button
+        self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
+        # Listens for the new context menu action, routed through our new plugin
+        self.event_bus.subscribe("review_and_fix_from_plugin_requested", self.handle_review_and_fix_request)
+        # --- END NEW SUBSCRIPTIONS ---
+
     def handle_mode_change(self, new_mode: InteractionMode):
         """Handles the user switching between Chat and Build modes."""
         self.interaction_mode = new_mode
@@ -250,17 +257,38 @@ class WorkflowManager:
         if code_viewer:
             code_viewer.show_fix_button()
 
-    def handle_review_and_fix(self):
-        if not self._last_error_report: return
-        if not self.service_manager or not self.task_manager: return
+    def handle_review_and_fix_button(self):
+        """Handles the 'Review & Fix Code' button click, using the last stored error."""
+        if self._last_error_report:
+            self._initiate_fix_workflow(self._last_error_report)
+            self._last_error_report = None  # Consume the error report
+        else:
+            self.log("warning", "Fix button clicked but no error report was available.")
+
+    def handle_review_and_fix_request(self, error_report: str):
+        """Handles a direct request to fix a specific error report (e.g., from a plugin)."""
+        if error_report:
+            self._initiate_fix_workflow(error_report)
+        else:
+            self.log("warning", "Received an empty error report to fix.")
+
+    def _initiate_fix_workflow(self, error_report: str):
+        """The core logic to start the AI fix workflow."""
+        if not self.service_manager or not self.task_manager:
+            return
+
         code_viewer = self.window_manager.get_code_viewer()
         if code_viewer and hasattr(code_viewer, 'terminal'):
             code_viewer.terminal.show_fixing_in_progress()
+
         validation_service = self.service_manager.get_validation_service()
         if validation_service:
-            fix_coroutine = validation_service.review_and_fix_file(self._last_error_report)
-            if self.task_manager.start_ai_workflow_task(fix_coroutine):
-                self._last_error_report = None
+            fix_coroutine = validation_service.review_and_fix_file(error_report)
+            self.task_manager.start_ai_workflow_task(fix_coroutine)
+
+    def log(self, level, message):
+        """Helper to emit log messages."""
+        self.event_bus.emit("log_message_received", "WorkflowManager", level, message)
 
     def get_workflow_status(self) -> dict:
         """Get current workflow status for debugging."""
