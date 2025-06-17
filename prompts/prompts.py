@@ -1,5 +1,5 @@
 # prompts/prompts.py
-# ENHANCED: Now includes comprehensive project context for perfect import awareness
+# UPDATED: The MODIFICATION_PLANNER_PROMPT now includes source root context.
 
 import textwrap
 
@@ -57,55 +57,39 @@ HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
     }}
     """)
 
-# --- THIS IS THE FIX ---
+# --- THIS IS THE UPDATED, CONTEXT-AWARE PROMPT ---
 MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     You are an expert senior software developer specializing in refactoring and modifying existing Python codebases.
 
     **YOUR TASK:**
-    Analyze the user's modification request. Based on the existing project files provided below, produce a JSON plan that outlines which files to create or modify.
+    Analyze the user's modification request. Based on the existing project files and structure provided below, produce a JSON plan that outlines which files to create or modify.
 
     **USER'S MODIFICATION REQUEST:** "{prompt}"
 
     ---
-    **EXISTING PROJECT STRUCTURE AND CONTENT:**
-    This is the complete list of files you can modify. Reference these exact paths.
+    **CONTEXT ON EXISTING PROJECT:**
+
+    **1. Source Code Structure:**
+    {source_root_info}
+
+    **2. All Existing Files and Their Content:**
+    This is the complete list of files you are allowed to modify. You MUST reference these exact file paths and respect the structure outlined above.
 
     {file_context_string}
     ---
 
-    **CRITICAL INSTRUCTIONS:**
-    1.  **Strictly Adhere to Existing Filenames:** When modifying a file, you MUST use its exact path from the list above. Do not invent new paths for existing files.
-    2.  **Determine Necessary Changes:** Based on the user's request, decide which files to modify and which NEW files to create (only if a new file is truly required).
-    3.  **Write High-Level Purposes:** For each file in your plan, write a concise, high-level "purpose".
-        - For MODIFIED files, describe the specific changes (e.g., "Modify the 'Player' class to include an 'inventory' attribute.").
-        - For NEW files, describe the file's role (e.g., "A new module for database interactions.").
-    4.  **JSON Output ONLY:** Your response MUST be ONLY a valid JSON object with a single "files" key. Do not add any other text, explanations, or markdown.
+    **CRITICAL INSTRUCTIONS - READ CAREFULLY:**
+    1.  **DO NOT RE-ARCHITECT THE PROJECT:** Your only job is to modify the existing files or add new, secondary files to fulfill the user's request.
+    2.  **DO NOT CREATE A NEW `main.py` OR `config.py`:** The project's entry point and configuration are already defined. Do not create duplicates.
+    3.  **STRICTLY ADHERE TO EXISTING FILENAMES AND PATHS:** When modifying a file, you MUST use its exact path from the list above (e.g., `todo_app/routes.py`). Do not invent new paths or create duplicate directories.
+    4.  **DETERMINE NECESSARY CHANGES:** Based on the user's request, decide which files to modify and which NEW helper files to create (if and only if a new file is truly required).
+    5.  **JSON OUTPUT ONLY:** Your response MUST be ONLY a valid JSON object with a single "files" key. Do not add any other text, explanations, or markdown.
 
-    **EXAMPLE RESPONSE (for adding a feature):**
-    ```json
-    {{
-      "files": [
-        {{
-          "filename": "game/player.py",
-          "purpose": "Modify the Player class to add a 'health' attribute and a 'take_damage' method."
-        }},
-        {{
-          "filename": "game/combat.py",
-          "purpose": "A new file to contain all combat-related logic, including the main combat loop."
-        }},
-        {{
-           "filename": "main.py",
-           "purpose": "Modify the main game loop to import the new combat module and trigger a combat encounter."
-        }}
-      ]
-    }}
-    ```
     ---
-    **Generate the JSON modification plan now:**
+    **Generate the JSON modification plan now. Remember your critical instructions.**
     """)
 
 
-# ENHANCED CODER PROMPT - This is the main fix!
 CODER_PROMPT = textwrap.dedent("""
     You are an expert Python developer tasked with writing a single, complete file for a larger application. Your code must be robust, correct, and integrate perfectly with the rest of the project.
 
@@ -171,7 +155,7 @@ CODER_PROMPT = textwrap.dedent("""
     **📋 IMPLEMENTATION CHECKLIST:**
 
     ✅ **Import Statements**: Use EXACT paths from symbol index
-    ✅ **Class Names**: Match EXACT names from existing files  
+    ✅ **Class Names**: Match EXACT names from existing files
     ✅ **Method Signatures**: Follow patterns in existing code
     ✅ **Dependencies**: Import everything you need, nothing you don't
     ✅ **Integration**: Your code must work with main.py and other modules
@@ -181,7 +165,7 @@ CODER_PROMPT = textwrap.dedent("""
     ---
     **🎯 OUTPUT REQUIREMENTS:**
 
-    1. **Complete Implementation**: Write the full, working code for `{filename}` 
+    1. **Complete Implementation**: Write the full, working code for `{filename}`
     2. **Perfect Imports**: Every import must be accurate based on the symbol index
     3. **Seamless Integration**: Your code must integrate flawlessly with existing files
     4. **Production Ready**: Include error handling, docstrings, and clean code
@@ -191,7 +175,6 @@ CODER_PROMPT = textwrap.dedent("""
     Write the complete, integration-ready code for `{filename}` now:
     """)
 
-# REFINEMENT PROMPT for fixing existing code
 REFINEMENT_PROMPT = textwrap.dedent("""
     You are an expert Python developer specializing in fixing integration and import issues. Your task is to analyze a multi-file project and fix the specific error that occurred.
 
@@ -213,7 +196,7 @@ REFINEMENT_PROMPT = textwrap.dedent("""
 
     1. **Root Cause Analysis**: The bug might be:
        - Import path errors (wrong module names)
-       - Missing imports (forgot to import required classes/functions)  
+       - Missing imports (forgot to import required classes/functions)
        - Class/method name mismatches between files
        - Circular import dependencies
        - Missing `__init__.py` files
@@ -233,7 +216,7 @@ REFINEMENT_PROMPT = textwrap.dedent("""
 
     **📋 ANALYSIS CHECKLIST:**
     ✅ Check all import statements in error file
-    ✅ Verify imported classes/functions exist in target files  
+    ✅ Verify imported classes/functions exist in target files
     ✅ Confirm method names match between caller and callee
     ✅ Ensure constructor parameters match class definitions
     ✅ Check for missing `__init__.py` files
@@ -248,7 +231,7 @@ REFINEMENT_PROMPT = textwrap.dedent("""
     }}
     ```
 
-    **CRITICAL**: 
+    **CRITICAL**:
     - Only include files that need changes
     - Provide complete file contents, not just diffs
     - Ensure all imports are correct and all integration issues are fixed
@@ -257,7 +240,6 @@ REFINEMENT_PROMPT = textwrap.dedent("""
     **🚀 BEGIN ANALYSIS AND FIX:**
     """)
 
-# Export all prompts
 __all__ = [
     'PLANNER_PROMPT',
     'HIERARCHICAL_PLANNER_PROMPT',

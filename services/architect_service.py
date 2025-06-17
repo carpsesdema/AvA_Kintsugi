@@ -1,12 +1,13 @@
-# services/architect_service.py
-# V18: Final polish on commit message logic.
+# kintsugi_ava/services/architect_service.py
+# UPDATED: Now intelligently detects the source root to prevent path ambiguity.
 
 from __future__ import annotations
 import asyncio
 import json
 import re
+import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
@@ -29,11 +30,6 @@ if TYPE_CHECKING:
 
 
 class ArchitectService:
-    """
-    Handles AI-driven planning and coordinated code generation for both
-    new projects and modifications to existing ones.
-    """
-
     def __init__(self, service_manager: 'ServiceManager', event_bus: EventBus,
                  llm_client: LLMClient, project_manager: ProjectManager,
                  rag_service: RAGService, project_indexer: ProjectIndexerService,
@@ -45,7 +41,6 @@ class ArchitectService:
         self.rag_service = rag_service
         self.project_indexer = project_indexer
         self.import_fixer = import_fixer
-
         self.context_manager = ContextManager(service_manager)
         self.dependency_planner = DependencyPlanner(service_manager)
         self.integration_validator = IntegrationValidator(service_manager)
@@ -76,56 +71,100 @@ class ArchitectService:
             self.log("success", "Code generation complete.")
         else:
             self.handle_error("coder", "Code generation failed.")
-
         return success
+
+    # --- NEW: Helper to find the common source directory ---
+    def _determine_source_root(self, file_paths: List[str]) -> Optional[str]:
+        """
+        Determines the common source directory for a list of file paths.
+        This is crucial for projects where source code is in a sub-folder (e.g., 'src/', 'my_app/').
+        """
+        if not file_paths:
+            return None
+
+        paths = [Path(p) for p in file_paths if p.endswith('.py')]
+        if not paths:
+            return None
+
+        # Find the common ancestor directory of all Python files.
+        common_path = Path(os.path.commonpath([str(p) for p in paths]))
+
+        # If the common path is just the root, there's no dedicated source folder.
+        if str(common_path) == '.':
+            return None
+
+        # If the common path is a directory, it's likely our source root.
+        if common_path.name:
+            return common_path.as_posix()
+
+        return None
+
+    # --- UPDATED to use the new source root logic ---
+    def _format_files_for_prompt(self, files: Dict[str, str]) -> tuple[str, Optional[str]]:
+        """
+        Formats the file dictionary and determines the source root.
+        Returns a tuple: (formatted_string, source_root_or_none).
+        """
+        if not files:
+            return "No existing files in the project.", None
+
+        source_root = self._determine_source_root(list(files.keys()))
+
+        output = []
+        for filename, content in sorted(files.items()):
+            lang = ""
+            if filename.endswith(".py"):
+                lang = "python"
+            elif filename.endswith(".html"):
+                lang = "html"
+            elif filename.endswith(".css"):
+                lang = "css"
+            else:
+                lang = "plaintext"
+
+            output.append(f"### File: `{filename}`\n```{lang}\n{content}\n```")
+
+        return "\n\n".join(output), source_root
+
+    async def _generate_modification_plan(self, prompt: str, existing_files: dict) -> dict | None:
+        self.log("info", "Analyzing existing files to create a modification plan...")
+        try:
+            file_context_string, source_root = self._format_files_for_prompt(existing_files)
+
+            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
+                prompt=prompt,
+                file_context_string=file_context_string,
+                # Provide the source root if detected, otherwise a clear message.
+                source_root_info=f"The primary Python package for this project seems to be in the '{source_root}' directory. All new Python files should respect this structure." if source_root else "This project appears to have its source files in the root directory."
+            )
+
+            plan = await self._get_plan_from_llm(plan_prompt)
+
+            if plan:
+                planned_filenames = {f['filename'] for f in plan.get('files', [])}
+                is_creating_new_main = "main.py" in planned_filenames and "main.py" not in existing_files
+                is_creating_new_config = "config.py" in planned_filenames and "config.py" not in existing_files
+
+                if is_creating_new_main or is_creating_new_config:
+                    error_msg = "AI attempted to re-architect the project by creating a new entry point or config. Aborting."
+                    self.log("error", error_msg)
+                    self.event_bus.emit("ai_response_ready",
+                                        "The AI proposed an invalid change that would break the project structure. I've stopped it. Please try rephrasing your request.")
+                    return None
+
+            return plan
+        except Exception as e:
+            self.handle_error("architect", f"An unexpected error during modification planning: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    # --- Other methods remain largely the same ---
 
     async def _generate_hierarchical_plan(self, prompt: str, rag_context: str) -> dict | None:
         self.log("info", "Designing project structure...")
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
         return await self._get_plan_from_llm(plan_prompt)
-
-    def _format_files_for_prompt(self, files: Dict[str, str]) -> str:
-        """Formats the file dictionary into a string that's easy for an LLM to parse."""
-        if not files:
-            return "No existing files in the project."
-
-        output = []
-        for filename, content in sorted(files.items()):
-            # Determine language for markdown block
-            lang = ""
-            if filename.endswith(".py"):
-                lang = "python"
-            elif filename.endswith(".js"):
-                lang = "javascript"
-            elif filename.endswith(".html"):
-                lang = "html"
-            elif filename.endswith(".css"):
-                lang = "css"
-            elif filename.endswith(".json"):
-                lang = "json"
-
-            formatted_content = f"- **`{filename}`**\n"
-            formatted_content += f"  ```{lang}\n"
-            formatted_content += content + "\n"
-            formatted_content += "  ```"
-            output.append(formatted_content)
-
-        return "\n\n".join(output)
-
-    async def _generate_modification_plan(self, prompt: str, existing_files: dict) -> dict | None:
-        self.log("info", "Analyzing existing files to create a modification plan...")
-        try:
-            # NEW: Format the file context for better readability by the LLM
-            file_context_string = self._format_files_for_prompt(existing_files)
-
-            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
-                prompt=prompt,
-                file_context_string=file_context_string
-            )
-            return await self._get_plan_from_llm(plan_prompt)
-        except Exception as e:
-            self.handle_error("architect", f"An unexpected error during modification planning: {e}")
-            return None
 
     async def _get_plan_from_llm(self, plan_prompt: str) -> dict | None:
         provider, model = self.llm_client.get_model_for_role("architect")
@@ -154,27 +193,20 @@ class ArchitectService:
             files_to_generate = plan.get("files", [])
             project_root = self.project_manager.active_project_path
             all_filenames = [f['filename'] for f in files_to_generate]
-
             self.event_bus.emit("prepare_for_generation", all_filenames, str(project_root))
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
-
             self.log("info", "Handing off to unified Generation Coordinator...")
             generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context)
-
             if not generated_files or len(generated_files) < len(all_filenames):
                 self.log("error",
                          f"Generation failed. Expected {len(all_filenames)} files, but got {len(generated_files)}.")
                 return False
-
             commit_message = f"feat: AI-driven changes for '{plan['files'][0]['purpose'][:50]}...'"
-
             self.project_manager.save_and_commit_files(generated_files, commit_message)
             self.log("success", "Project changes committed successfully.")
-
             self.event_bus.emit("code_generation_complete", generated_files)
             return True
-
         except Exception as e:
             self.handle_error("coder", f"Coordinated generation failed: {e}")
             import traceback
@@ -184,18 +216,14 @@ class ArchitectService:
     async def _create_package_structure(self, files: list):
         project_root = self.project_manager.active_project_path
         if not project_root: return
-
         dirs_that_need_init = {Path(f['filename']).parent for f in files if '/' in f['filename']}
         init_files_to_create = {}
-
         for d in dirs_that_need_init:
             init_path = d / "__init__.py"
             is_planned = any(f['filename'] == str(init_path).replace('\\', '/') for f in files)
             exists_on_disk = (project_root / init_path).exists()
-
             if not is_planned and not exists_on_disk:
                 init_files_to_create[str(init_path).replace('\\', '/')] = "# This file makes this a Python package\n"
-
         if init_files_to_create:
             self.log("info", f"Creating missing __init__.py files: {list(init_files_to_create.keys())}")
             self.project_manager.save_and_commit_files(init_files_to_create, "chore: add package markers")
