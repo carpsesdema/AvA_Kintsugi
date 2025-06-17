@@ -329,23 +329,48 @@ class ProjectManager:
             return f"Error committing changes: {e}"
 
     def get_project_files(self) -> dict[str, str]:
-        """Returns all tracked files in the project as a dictionary."""
-        if not self.repo:
+        """
+        Returns all relevant source files in the project as a dictionary.
+        This includes all Python files (except venv) and other files tracked by Git.
+        """
+        if not self.active_project_path or not self.repo:
             return {}
 
         project_files = {}
-        tracked_files = self.repo.git.ls_files().split('\n')
 
-        for file_str in tracked_files:
-            if not file_str:
-                continue
-            try:
-                file_path = self.active_project_path / file_str
-                project_files[file_str] = file_path.read_text(encoding='utf-8')
-            except Exception:
-                pass  # Skip files that can't be read
+        try:
+            # 1. Get all Python files by walking the directory, ignoring venv
+            for py_file in self.active_project_path.rglob("*.py"):
+                # Skip files inside any directory named '.venv' or 'venv'
+                if any(part in ['.venv', 'venv'] for part in py_file.parts):
+                    continue
 
-        return project_files
+                relative_path = py_file.relative_to(self.active_project_path)
+                try:
+                    project_files[relative_path.as_posix()] = py_file.read_text(encoding='utf-8')
+                except Exception as e:
+                    print(f"[ProjectManager] Error reading Python file {relative_path}: {e}")
+
+            # 2. Get all other files that are tracked by Git
+            tracked_files = self.repo.git.ls_files().split('\n')
+            for file_str in tracked_files:
+                if not file_str or file_str in project_files:
+                    continue  # Skip empty lines or files we've already added
+
+                try:
+                    file_path = self.active_project_path / file_str
+                    # Ensure it's not a python file (we handled those) and it exists
+                    if not file_str.endswith('.py') and file_path.exists() and file_path.is_file():
+                        project_files[file_str] = file_path.read_text(encoding='utf-8')
+                except Exception as e:
+                    print(f"[ProjectManager] Error reading tracked file {file_str}: {e}")
+
+            print(f"[ProjectManager] Retrieved {len(project_files)} project files for context.")
+            return project_files
+
+        except Exception as e:
+            print(f"[ProjectManager] An unexpected error occurred in get_project_files: {e}")
+            return {}
 
     def _create_gitignore_if_needed(self):
         """Creates a default .gitignore file if one doesn't exist."""

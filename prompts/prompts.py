@@ -57,27 +57,29 @@ HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
     }}
     """)
 
-# --- THIS IS THE NEW "RENOVATION" PROMPT ---
+# --- THIS IS THE FIX ---
 MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     You are an expert senior software developer specializing in refactoring and modifying existing Python codebases.
 
     **YOUR TASK:**
-    Analyze the user's modification request in the context of the COMPLETE existing project source code. Your goal is to produce a JSON plan that outlines which files to create or modify.
+    Analyze the user's modification request. Based on the existing project files provided below, produce a JSON plan that outlines which files to create or modify.
 
     **USER'S MODIFICATION REQUEST:** "{prompt}"
 
-    **EXISTING PROJECT FILES (filename: content):**
-    ```json
-    {existing_files_json}
-    ```
     ---
+    **EXISTING PROJECT STRUCTURE AND CONTENT:**
+    This is the complete list of files you can modify. Reference these exact paths.
+
+    {file_context_string}
+    ---
+
     **CRITICAL INSTRUCTIONS:**
-    1.  **Analyze the Entire Project:** Read through all the existing files to understand the current architecture.
-    2.  **Determine Necessary Changes:** Based on the user's request, decide which files need to be modified and which new files (if any) need to be created.
+    1.  **Strictly Adhere to Existing Filenames:** When modifying a file, you MUST use its exact path from the list above. Do not invent new paths for existing files.
+    2.  **Determine Necessary Changes:** Based on the user's request, decide which files to modify and which NEW files to create (only if a new file is truly required).
     3.  **Write High-Level Purposes:** For each file in your plan, write a concise, high-level "purpose".
-        - For files that need to be MODIFIED, the purpose should clearly state the required changes (e.g., "Modify the 'Player' class to include an 'inventory' attribute and a 'use_item' method.").
-        - For NEW files, the purpose should describe the file's role in the project (e.g., "A new module to handle all inventory-related database operations.").
-    4.  **JSON Output ONLY:** Your response MUST be ONLY a valid JSON object. Do not include any other text, explanations, or markdown. The JSON object should contain a single key "files".
+        - For MODIFIED files, describe the specific changes (e.g., "Modify the 'Player' class to include an 'inventory' attribute.").
+        - For NEW files, describe the file's role (e.g., "A new module for database interactions.").
+    4.  **JSON Output ONLY:** Your response MUST be ONLY a valid JSON object with a single "files" key. Do not add any other text, explanations, or markdown.
 
     **EXAMPLE RESPONSE (for adding a feature):**
     ```json
@@ -93,13 +95,13 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
         }},
         {{
            "filename": "main.py",
-           "purpose": "Modify the main game loop to import the new combat module and trigger a combat encounter on a key press."
+           "purpose": "Modify the main game loop to import the new combat module and trigger a combat encounter."
         }}
       ]
     }}
     ```
     ---
-    **Now, generate the JSON modification plan:**
+    **Generate the JSON modification plan now:**
     """)
 
 

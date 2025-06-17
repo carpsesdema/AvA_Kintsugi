@@ -71,7 +71,18 @@ class WorkflowManager:
             print("[WorkflowManager] Cannot run workflow: required services not available")
             return
 
-        existing_files = project_manager.get_project_files() if project_manager.is_existing_project else None
+        # FIX: Properly check for existing project and get files
+        existing_files = None
+        if project_manager.is_existing_project and project_manager.active_project_path:
+            print(f"[WorkflowManager] Loading existing project files from: {project_manager.active_project_path}")
+            existing_files = project_manager.get_project_files()
+            if existing_files:
+                print(f"[WorkflowManager] Found {len(existing_files)} existing files for modification")
+            else:
+                print("[WorkflowManager] No tracked files found in existing project")
+        else:
+            print("[WorkflowManager] Creating new project - no existing files")
+
         await architect_service.generate_or_modify(prompt, existing_files)
 
     def handle_new_project(self):
@@ -126,7 +137,9 @@ class WorkflowManager:
         if path:
             project_path = project_manager.load_project(path)
             if project_path:
+                # Create a new branch for modifications
                 branch_name = project_manager.begin_modification_session()
+                print(f"[WorkflowManager] Created modification branch: {branch_name}")
 
                 # Update UI
                 self.window_manager.update_project_display(project_manager.active_project_name)
@@ -136,10 +149,18 @@ class WorkflowManager:
                 self.event_bus.emit("new_session_requested")
 
                 # Update branch display
-                if branch_name:
+                if branch_name and not branch_name.startswith("Error"):
                     self.event_bus.emit("branch_updated", branch_name)
                 elif project_manager.repo and project_manager.repo.active_branch:
                     self.event_bus.emit("branch_updated", project_manager.repo.active_branch.name)
+
+                # Log the loaded files
+                existing_files = project_manager.get_project_files()
+                if existing_files:
+                    print(f"[WorkflowManager] Project loaded with {len(existing_files)} files")
+                    # Uncomment for verbose logging if needed
+                    # for filename in existing_files:
+                    #     print(f"  - {filename}")
 
     def handle_execution_failed(self, error_report: str):
         """

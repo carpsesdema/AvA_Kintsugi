@@ -84,11 +84,44 @@ class ArchitectService:
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
         return await self._get_plan_from_llm(plan_prompt)
 
+    def _format_files_for_prompt(self, files: Dict[str, str]) -> str:
+        """Formats the file dictionary into a string that's easy for an LLM to parse."""
+        if not files:
+            return "No existing files in the project."
+
+        output = []
+        for filename, content in sorted(files.items()):
+            # Determine language for markdown block
+            lang = ""
+            if filename.endswith(".py"):
+                lang = "python"
+            elif filename.endswith(".js"):
+                lang = "javascript"
+            elif filename.endswith(".html"):
+                lang = "html"
+            elif filename.endswith(".css"):
+                lang = "css"
+            elif filename.endswith(".json"):
+                lang = "json"
+
+            formatted_content = f"- **`{filename}`**\n"
+            formatted_content += f"  ```{lang}\n"
+            formatted_content += content + "\n"
+            formatted_content += "  ```"
+            output.append(formatted_content)
+
+        return "\n\n".join(output)
+
     async def _generate_modification_plan(self, prompt: str, existing_files: dict) -> dict | None:
         self.log("info", "Analyzing existing files to create a modification plan...")
         try:
-            existing_files_json = json.dumps(existing_files, indent=2)
-            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(prompt=prompt, existing_files_json=existing_files_json)
+            # NEW: Format the file context for better readability by the LLM
+            file_context_string = self._format_files_for_prompt(existing_files)
+
+            plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
+                prompt=prompt,
+                file_context_string=file_context_string
+            )
             return await self._get_plan_from_llm(plan_prompt)
         except Exception as e:
             self.handle_error("architect", f"An unexpected error during modification planning: {e}")
