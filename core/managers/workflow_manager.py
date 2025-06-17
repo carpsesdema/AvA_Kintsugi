@@ -1,5 +1,5 @@
 # kintsugi_ava/core/managers/workflow_manager.py
-# AI workflow orchestration and project management
+# UPDATED: Removed agent status events previously used by the workflow monitor.
 
 from pathlib import Path
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -158,9 +158,6 @@ class WorkflowManager:
                 existing_files = project_manager.get_project_files()
                 if existing_files:
                     print(f"[WorkflowManager] Project loaded with {len(existing_files)} files")
-                    # Uncomment for verbose logging if needed
-                    # for filename in existing_files:
-                    #     print(f"  - {filename}")
 
     def handle_execution_failed(self, error_report: str):
         """
@@ -205,10 +202,6 @@ class WorkflowManager:
         if self.task_manager:
             self.task_manager.cancel_ai_task()
             self.task_manager.cancel_terminal_task()
-
-        # Reset agent status
-        for agent_id in ["architect", "coder", "executor", "reviewer"]:
-            self.event_bus.emit("node_status_changed", agent_id, "idle", "Ready")
 
         # Clear error state
         code_viewer = self.window_manager.get_code_viewer() if self.window_manager else None

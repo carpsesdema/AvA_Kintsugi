@@ -1,12 +1,11 @@
 # kintsugi_ava/core/managers/window_manager.py
-# Restored Log Viewer and removed separate Terminals window.
+# UPDATED: Removed all references to WorkflowMonitorWindow.
 
 from gui.main_window import MainWindow
 from gui.code_viewer import CodeViewerWindow
-from gui.workflow_monitor_window import WorkflowMonitorWindow
 from gui.model_config_dialog import ModelConfigurationDialog
 from gui.plugin_management_dialog import PluginManagementDialog
-from gui.log_viewer import LogViewerWindow  # <-- Restored Log Viewer
+from gui.log_viewer import LogViewerWindow
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
@@ -24,8 +23,7 @@ class WindowManager:
         # Main windows
         self.main_window: MainWindow = None
         self.code_viewer: CodeViewerWindow = None
-        self.workflow_monitor: WorkflowMonitorWindow = None
-        self.log_viewer: LogViewerWindow = None # <-- Restored Log Viewer
+        self.log_viewer: LogViewerWindow = None
 
         # Dialogs
         self.model_config_dialog: ModelConfigurationDialog = None
@@ -40,9 +38,7 @@ class WindowManager:
 
         # Create main windows
         self.main_window = MainWindow(self.event_bus)
-        # The CodeViewer now takes the project manager to power its internal terminal
         self.code_viewer = CodeViewerWindow(self.event_bus, project_manager)
-        self.workflow_monitor = WorkflowMonitorWindow(self.event_bus)
         self.log_viewer = LogViewerWindow(self.event_bus)
 
         # Create dialogs
@@ -59,9 +55,6 @@ class WindowManager:
     def get_code_viewer(self) -> CodeViewerWindow:
         return self.code_viewer
 
-    def get_workflow_monitor(self) -> WorkflowMonitorWindow:
-        return self.workflow_monitor
-
     def get_log_viewer(self) -> LogViewerWindow:
         return self.log_viewer
 
@@ -77,9 +70,6 @@ class WindowManager:
 
     def show_code_viewer(self):
         if self.code_viewer: self.code_viewer.show_window()
-
-    def show_workflow_monitor(self):
-        if self.workflow_monitor: self.workflow_monitor.show()
 
     def show_log_viewer(self):
         if self.log_viewer: self.log_viewer.show()
@@ -107,7 +97,6 @@ class WindowManager:
         return all([
             self.main_window,
             self.code_viewer,
-            self.workflow_monitor,
             self.log_viewer,
             self.model_config_dialog,
             self.plugin_management_dialog

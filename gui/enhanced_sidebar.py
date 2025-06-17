@@ -1,5 +1,5 @@
-# gui/enhanced_sidebar.py
-# V8: Correctly wires the "View Logs" button.
+# kintsugi_ava/gui/enhanced_sidebar.py
+# UPDATED: Removed the "Workflow Monitor" button.
 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QPushButton
@@ -114,15 +114,10 @@ class EnhancedSidebar(QWidget):
         layout.addWidget(new_session_btn)
         layout.addWidget(self._create_action_header("TOOLS"))
 
-        log_btn = ModernButton("View Logs", "secondary")  # <-- Renamed Button
+        log_btn = ModernButton("View Logs", "secondary")
         log_btn.setIcon(qta.icon("fa5s.file-alt", color=Colors.TEXT_PRIMARY.name()))
-        log_btn.clicked.connect(lambda: self.event_bus.emit("show_log_viewer_requested"))  # <-- Corrected Event
+        log_btn.clicked.connect(lambda: self.event_bus.emit("show_log_viewer_requested"))
         layout.addWidget(log_btn)
-
-        monitor_btn = ModernButton("Workflow Monitor", "secondary")
-        monitor_btn.setIcon(qta.icon("fa5s.project-diagram", color=Colors.TEXT_PRIMARY.name()))
-        monitor_btn.clicked.connect(lambda: self.event_bus.emit("show_workflow_monitor_requested"))
-        layout.addWidget(monitor_btn)
 
         code_viewer_btn = ModernButton("Open Code Viewer", "secondary")
         code_viewer_btn.setIcon(qta.icon("fa5s.code", color=Colors.TEXT_PRIMARY.name()))

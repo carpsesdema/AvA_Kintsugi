@@ -1,5 +1,5 @@
 # kintsugi_ava/core/managers/event_coordinator.py
-# FINAL FIX: Correctly wires the Log Viewer and all Code Viewer events.
+# UPDATED: Removed event wiring for the workflow monitor.
 
 import asyncio
 from core.event_bus import EventBus
@@ -69,7 +69,6 @@ class EventCoordinator:
         # Session & Tools
         self.event_bus.subscribe("new_session_requested", self.workflow_manager.handle_new_session)
         self.event_bus.subscribe("show_log_viewer_requested", self.window_manager.show_log_viewer)
-        self.event_bus.subscribe("show_workflow_monitor_requested", self.window_manager.show_workflow_monitor)
         self.event_bus.subscribe("show_code_viewer_requested", self.window_manager.show_code_viewer)
         print("[EventCoordinator] ✓ UI events wired")
 
@@ -91,18 +90,14 @@ class EventCoordinator:
 
     def _wire_execution_events(self):
         code_viewer = self.window_manager.get_code_viewer()
-        workflow_monitor = self.window_manager.get_workflow_monitor()
 
         if code_viewer:
             self.event_bus.subscribe("error_highlight_requested", code_viewer.highlight_error_in_editor)
             self.event_bus.subscribe("clear_error_highlights", code_viewer.clear_all_error_highlights)
-            # The 'show_fix_button' is now handled inside the IntegratedTerminal.
-            # We no longer need to subscribe to it here for the CodeViewer.
 
         if self.workflow_manager:
             self.event_bus.subscribe("execution_failed", self.workflow_manager.handle_execution_failed)
-        if workflow_monitor:
-            self.event_bus.subscribe("node_status_changed", workflow_monitor.scene.update_node_status)
+
         print("[EventCoordinator] ✓ Execution events wired")
 
     def _wire_terminal_events(self):
