@@ -1,17 +1,17 @@
 # kintsugi_ava/core/managers/workflow_manager.py
-# UPDATED: Added robust error handling for the context-gathering phase.
+# UPDATED: Added InteractionMode and a new chat workflow.
 
 from pathlib import Path
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from core.event_bus import EventBus
 from core.app_state import AppState
+from core.interaction_mode import InteractionMode
 
 
 class WorkflowManager:
     """
-    Orchestrates AI workflows and project management operations using a state machine.
-    Single responsibility: High-level workflow coordination and state management.
+    Orchestrates AI workflows based on both application state and user interaction mode.
     """
 
     def __init__(self, event_bus: EventBus):
@@ -19,9 +19,13 @@ class WorkflowManager:
         self.service_manager = None
         self.window_manager = None
         self.task_manager = None
-        self.state: AppState = AppState.BOOTSTRAP
+
+        # State management
+        self.app_state: AppState = AppState.BOOTSTRAP
+        self.interaction_mode: InteractionMode = InteractionMode.BUILD  # Default to build mode
+
         self._last_error_report = None
-        print("[WorkflowManager] Initialized in BOOTSTRAP state")
+        print("[WorkflowManager] Initialized in BOOTSTRAP state, BUILD mode")
 
     def set_managers(self, service_manager, window_manager, task_manager):
         """Set references to other managers and subscribe to state-changing events."""
@@ -31,21 +35,29 @@ class WorkflowManager:
         self.event_bus.subscribe("project_loaded", self._on_project_activated)
         self.event_bus.subscribe("new_project_created", self._on_project_activated)
         self.event_bus.subscribe("new_session_requested", self.handle_new_session)
+        self.event_bus.subscribe("interaction_mode_changed", self.handle_mode_change)
+
+    def handle_mode_change(self, new_mode: InteractionMode):
+        """Handles the user switching between Chat and Build modes."""
+        self.interaction_mode = new_mode
+        mode_name = "CHAT" if new_mode == InteractionMode.CHAT else "BUILD"
+        print(f"[WorkflowManager] Interaction mode switched to {mode_name}")
+        self.event_bus.emit("log_message_received", "WorkflowManager", "info", f"Switched to {mode_name} mode.")
 
     def _on_project_activated(self, project_path: str, project_name: str):
         """Callback for when a project becomes active, transitioning the app to 'MODIFY' state."""
         print(f"[WorkflowManager] Project '{project_name}' is active. Switching to MODIFY state.")
-        self.state = AppState.MODIFY
-        self.event_bus.emit("app_state_changed", self.state, project_name)
+        self.app_state = AppState.MODIFY
+        self.event_bus.emit("app_state_changed", self.app_state, project_name)
 
     def _on_project_cleared(self):
         """Callback to reset the application to its initial 'BOOTSTRAP' state."""
         print("[WorkflowManager] Project context cleared. Switching to BOOTSTRAP state.")
-        self.state = AppState.BOOTSTRAP
-        self.event_bus.emit("app_state_changed", self.state, None)
+        self.app_state = AppState.BOOTSTRAP
+        self.event_bus.emit("app_state_changed", self.app_state, None)
 
     def handle_user_request(self, prompt: str, conversation_history: list):
-        """The central router for all user chat input."""
+        """The central router for all user chat input, now mode-aware."""
         stripped_prompt = prompt.strip()
         if not stripped_prompt:
             return
@@ -54,17 +66,54 @@ class WorkflowManager:
             self._handle_slash_command(stripped_prompt)
             return
 
-        if self.state == AppState.BOOTSTRAP:
-            print("[WorkflowManager] State is BOOTSTRAP. Starting new project workflow...")
-            workflow_coroutine = self._run_bootstrap_workflow(prompt)
-        elif self.state == AppState.MODIFY:
-            print("[WorkflowManager] State is MODIFY. Starting modification workflow...")
-            workflow_coroutine = self._run_modification_workflow(prompt)
+        # --- NEW: Routing based on InteractionMode ---
+        if self.interaction_mode == InteractionMode.CHAT:
+            print("[WorkflowManager] Mode is CHAT. Starting general chat workflow...")
+            workflow_coroutine = self._run_chat_workflow(prompt, conversation_history)
+        elif self.interaction_mode == InteractionMode.BUILD:
+            if self.app_state == AppState.BOOTSTRAP:
+                print("[WorkflowManager] Mode is BUILD, State is BOOTSTRAP. Starting new project workflow...")
+                workflow_coroutine = self._run_bootstrap_workflow(prompt)
+            elif self.app_state == AppState.MODIFY:
+                print("[WorkflowManager] Mode is BUILD, State is MODIFY. Starting modification workflow...")
+                workflow_coroutine = self._run_modification_workflow(prompt)
+            else:
+                self.event_bus.emit("log_message_received", "WorkflowManager", "error",
+                                    f"Unknown state: {self.app_state}")
+                return
         else:
-            self.event_bus.emit("log_message_received", "WorkflowManager", "error", f"Unknown state: {self.state}")
+            self.event_bus.emit("log_message_received", "WorkflowManager", "error",
+                                f"Unknown interaction mode: {self.interaction_mode}")
             return
+        # --- END of new routing logic ---
 
         self.task_manager.start_ai_workflow_task(workflow_coroutine)
+
+    async def _run_chat_workflow(self, prompt: str, conversation_history: list):
+        """Runs a simple, streaming chat interaction with the LLM."""
+        if not self.service_manager: return
+        llm_client = self.service_manager.get_llm_client()
+        provider, model = llm_client.get_model_for_role("chat")
+        if not provider or not model:
+            self.event_bus.emit("log_message_received", "WorkflowManager", "error",
+                                "No model configured for 'chat' role.")
+            self.event_bus.emit("streaming_message_chunk",
+                                "Sorry, no 'chat' model is configured. Please set one in the model configuration.")
+            return
+
+        # Format a simple prompt for conversation
+        # We can make this more sophisticated later if needed
+        history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history[-5:]])
+        chat_prompt = f"You are Kintsugi AvA, a helpful AI programming assistant. Keep your answers concise and helpful.\n\nCONVERSATION HISTORY:\n{history_str}\n\nUSER REQUEST:\n{prompt}"
+
+        self.event_bus.emit("streaming_message_start", "Kintsugi AvA")
+        try:
+            async for chunk in llm_client.stream_chat(provider, model, chat_prompt, "chat"):
+                self.event_bus.emit("streaming_message_chunk", chunk)
+        except Exception as e:
+            self.event_bus.emit("streaming_message_chunk", f"\n\nAn error occurred: {e}")
+        finally:
+            self.event_bus.emit("streaming_message_end")
 
     def _handle_slash_command(self, command: str):
         """Parses and executes a slash command from the user."""
@@ -79,8 +128,15 @@ class WorkflowManager:
                 self.event_bus.emit("log_message_received", "WorkflowManager", "warning",
                                     "Usage: /new <description of new project>")
                 return
+            self.handle_mode_change(InteractionMode.BUILD)
             workflow_coroutine = self._run_bootstrap_workflow(args)
             self.task_manager.start_ai_workflow_task(workflow_coroutine)
+        elif command_name == "/build":
+            self.handle_mode_change(InteractionMode.BUILD)
+            self.event_bus.emit("force_ui_update_request", {"component": "mode_toggle", "mode": "build"})
+        elif command_name == "/chat":
+            self.handle_mode_change(InteractionMode.CHAT)
+            self.event_bus.emit("force_ui_update_request", {"component": "mode_toggle", "mode": "chat"})
         else:
             self.event_bus.emit("log_message_received", "WorkflowManager", "error", f"Unknown command: {command_name}")
 
@@ -179,6 +235,12 @@ class WorkflowManager:
             self.window_manager.update_project_display("(none)")
             self.window_manager.prepare_code_viewer_for_new_project()
 
+            # Reset the mode to default
+            main_window = self.window_manager.get_main_window()
+            if main_window and hasattr(main_window, 'chat_interface'):
+                if hasattr(main_window.chat_interface, 'mode_toggle'):
+                    main_window.chat_interface.mode_toggle.setMode(InteractionMode.BUILD)
+
         print("[WorkflowManager] New session state reset complete")
         self.event_bus.emit("chat_cleared")
 
@@ -203,6 +265,7 @@ class WorkflowManager:
     def get_workflow_status(self) -> dict:
         """Get current workflow status for debugging."""
         return {
-            "current_state": self.state.name,
+            "current_state": self.app_state.name,
+            "interaction_mode": self.interaction_mode.name,
             "has_error_report": self._last_error_report is not None,
         }
