@@ -1,5 +1,5 @@
 # kintsugi_ava/core/managers/workflow_manager.py
-# UPDATED: Added InteractionMode and a new chat workflow.
+# UPDATED: Now stores the failing command along with the error for the fix workflow.
 
 from pathlib import Path
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -25,6 +25,7 @@ class WorkflowManager:
         self.interaction_mode: InteractionMode = InteractionMode.BUILD  # Default to build mode
 
         self._last_error_report = None
+        self._last_failing_command = None # NEW: Store the command that failed
         print("[WorkflowManager] Initialized in BOOTSTRAP state, BUILD mode")
 
     def set_managers(self, service_manager, window_manager, task_manager):
@@ -37,12 +38,9 @@ class WorkflowManager:
         self.event_bus.subscribe("new_session_requested", self.handle_new_session)
         self.event_bus.subscribe("interaction_mode_changed", self.handle_mode_change)
 
-        # --- NEW EVENT SUBSCRIPTIONS FOR FIX WORKFLOWS ---
-        # Listens for the old "Fix" button
-        self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
-        # Listens for the new context menu action, routed through our new plugin
         self.event_bus.subscribe("review_and_fix_from_plugin_requested", self.handle_review_and_fix_request)
-        # --- END NEW SUBSCRIPTIONS ---
+        self.event_bus.subscribe("execution_failed", self.handle_execution_failed)
+        self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
 
     def handle_mode_change(self, new_mode: InteractionMode):
         """Handles the user switching between Chat and Build modes."""
@@ -73,7 +71,6 @@ class WorkflowManager:
             self._handle_slash_command(stripped_prompt)
             return
 
-        # --- NEW: Routing based on InteractionMode ---
         if self.interaction_mode == InteractionMode.CHAT:
             print("[WorkflowManager] Mode is CHAT. Starting general chat workflow...")
             workflow_coroutine = self._run_chat_workflow(prompt, conversation_history)
@@ -92,7 +89,6 @@ class WorkflowManager:
             self.event_bus.emit("log_message_received", "WorkflowManager", "error",
                                 f"Unknown interaction mode: {self.interaction_mode}")
             return
-        # --- END of new routing logic ---
 
         self.task_manager.start_ai_workflow_task(workflow_coroutine)
 
@@ -108,8 +104,6 @@ class WorkflowManager:
                                 "Sorry, no 'chat' model is configured. Please set one in the model configuration.")
             return
 
-        # Format a simple prompt for conversation
-        # We can make this more sophisticated later if needed
         history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history[-5:]])
         chat_prompt = f"You are Kintsugi AvA, a helpful AI programming assistant. Keep your answers concise and helpful.\n\nCONVERSATION HISTORY:\n{history_str}\n\nUSER REQUEST:\n{prompt}"
 
@@ -152,11 +146,9 @@ class WorkflowManager:
         if not self.service_manager: return
 
         project_manager = self.service_manager.get_project_manager()
-        # A new bootstrap request implies clearing any previous state.
         project_manager.clear_active_project()
         self._on_project_cleared()
 
-        # A bootstrap requires a temporary project name to start.
         project_path = project_manager.new_project("New_AI_Project")
         if not project_path:
             QMessageBox.critical(None, "Project Creation Failed", "Could not create temporary project directory.")
@@ -181,17 +173,14 @@ class WorkflowManager:
                                 "Cannot modify: No project is loaded.")
             return
 
-        # --- NEW: Robust Context Gathering ---
         try:
             existing_files = project_manager.get_project_files()
-            # In the future, context from other services (e.g., LivingDesignAgent) would be gathered here.
         except Exception as e:
             error_msg = f"Failed to gather project context before modification. Error: {e}"
             self.event_bus.emit("log_message_received", "WorkflowManager", "error", error_msg)
             self.event_bus.emit("ai_response_ready",
                                 "Sorry, I couldn't properly analyze the project to make changes. Please check the logs.")
             return
-        # --- END Robust Context Gathering ---
 
         await architect_service.generate_or_modify(prompt, existing_files)
 
@@ -236,13 +225,12 @@ class WorkflowManager:
             self.service_manager.get_project_manager().clear_active_project()
 
         self._last_error_report = None
+        self._last_failing_command = None
         self._on_project_cleared()
 
         if self.window_manager:
             self.window_manager.update_project_display("(none)")
             self.window_manager.prepare_code_viewer_for_new_project()
-
-            # Reset the mode to default
             main_window = self.window_manager.get_main_window()
             if main_window and hasattr(main_window, 'chat_interface'):
                 if hasattr(main_window.chat_interface, 'mode_toggle'):
@@ -251,28 +239,29 @@ class WorkflowManager:
         print("[WorkflowManager] New session state reset complete")
         self.event_bus.emit("chat_cleared")
 
-    def handle_execution_failed(self, error_report: str):
+    def handle_execution_failed(self, error_report: str, command: str):
+        """Stores the error and the command that caused it."""
         self._last_error_report = error_report
+        self._last_failing_command = command
         code_viewer = self.window_manager.get_code_viewer() if self.window_manager else None
         if code_viewer:
             code_viewer.show_fix_button()
 
     def handle_review_and_fix_button(self):
-        """Handles the 'Review & Fix Code' button click, using the last stored error."""
-        if self._last_error_report:
-            self._initiate_fix_workflow(self._last_error_report)
-            self._last_error_report = None  # Consume the error report
+        """Handles the 'Review & Fix Code' button click, using the last stored error and command."""
+        if self._last_error_report and self._last_failing_command:
+            self._initiate_fix_workflow(self._last_error_report, self._last_failing_command)
         else:
-            self.log("warning", "Fix button clicked but no error report was available.")
+            self.log("warning", "Fix button clicked but no error report and command were available.")
 
-    def handle_review_and_fix_request(self, error_report: str):
+    def handle_review_and_fix_request(self, error_report: str, command: str):
         """Handles a direct request to fix a specific error report (e.g., from a plugin)."""
-        if error_report:
-            self._initiate_fix_workflow(error_report)
+        if error_report and command:
+            self._initiate_fix_workflow(error_report, command)
         else:
-            self.log("warning", "Received an empty error report to fix.")
+            self.log("warning", "Received an empty error report or command to fix.")
 
-    def _initiate_fix_workflow(self, error_report: str):
+    def _initiate_fix_workflow(self, error_report: str, command: str):
         """The core logic to start the AI fix workflow."""
         if not self.service_manager or not self.task_manager:
             return
@@ -283,7 +272,8 @@ class WorkflowManager:
 
         validation_service = self.service_manager.get_validation_service()
         if validation_service:
-            fix_coroutine = validation_service.review_and_fix_file(error_report)
+            # Pass the command to the validation service
+            fix_coroutine = validation_service.review_and_fix_file(error_report, command)
             self.task_manager.start_ai_workflow_task(fix_coroutine)
 
     def log(self, level, message):

@@ -296,6 +296,33 @@ class ProjectManager:
             print(f"[ProjectManager] An unexpected error occurred in get_project_files: {e}")
             return {}
 
+    def get_git_diff(self) -> str:
+        """
+        Gets the git diff of staged and unstaged changes against the last commit.
+
+        Returns:
+            A string containing the git diff, or an explanatory string on error.
+        """
+        if not self.repo:
+            return "No Git repository available."
+        try:
+            # Check if there is a HEAD commit to diff against.
+            if not self.repo.head.is_valid():
+                # If no HEAD, it's a new repo. Diff the index (staged files).
+                # This will show the initial set of files.
+                return self.repo.git.diff('--cached')
+
+            # Diff working tree (staged & unstaged) against the last commit.
+            return self.repo.git.diff('HEAD')
+
+        except (GitCommandError, ValueError) as e:
+            # A ValueError can be raised if `is_valid()` check itself has issues in edge cases.
+            print(f"[ProjectManager] Warning: Could not get git diff (might be a new repo): {e}")
+            return "Could not retrieve git diff. Repository might be in an empty state."
+        except Exception as e:
+            print(f"[ProjectManager] An unexpected error occurred while getting git diff: {e}")
+            return "An unexpected error occurred while getting the git diff."
+
     def _create_gitignore_if_needed(self):
         if not self.repo:
             return

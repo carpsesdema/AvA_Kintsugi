@@ -1,5 +1,5 @@
 # kintsugi_ava/services/validation_service.py
-# V13: Calls the unified review_and_correct_code method.
+# V15: Implemented stateful, recursive fixing loop.
 
 import re
 import json
@@ -17,56 +17,91 @@ class ValidationService:
         self.execution_engine = execution_engine
         self.project_manager = project_manager
         self.reviewer_service = reviewer_service
+        self.max_fix_attempts = 2  # Set a limit to prevent infinite loops
 
-    async def review_and_fix_file(self, error_report: str) -> bool:
-        all_project_files = self.project_manager.get_project_files()
-        if not all_project_files:
-            self.handle_error("executor", "Cannot initiate fix: No project files found.")
-            return False
+    async def review_and_fix_file(self, initial_error_report: str, command: str) -> bool:
+        """
+        Manages a stateful, recursive fixing session.
+        """
+        current_error_report = initial_error_report
 
-        crashing_file, line_number = self._parse_error_traceback(error_report)
-        if not crashing_file:
-            self.handle_error("executor", "Could not identify the source file of the error.")
-            return False
+        for attempt in range(self.max_fix_attempts):
+            self.log("info", f"Starting fix attempt {attempt + 1}/{self.max_fix_attempts}...")
 
-        if self.project_manager.active_project_path and line_number > 0:
-            full_path = self.project_manager.active_project_path / crashing_file
-            self.event_bus.emit("error_highlight_requested", full_path, line_number)
+            # 1. Get current project state and context
+            project_source = self.project_manager.get_project_files()
+            git_diff_before_fix = self.project_manager.get_git_diff()
 
-        self.update_status("reviewer", "working", f"Analyzing error in {crashing_file}...")
+            if not project_source:
+                self.handle_error("executor", "Cannot initiate fix: No project files found.")
+                return False
 
-        changes_json_str = await self.reviewer_service.review_and_correct_code(
-            project_source=all_project_files,
-            error_filename=crashing_file,
-            error_report=error_report
-        )
+            crashing_file, line_number = self._parse_error_traceback(current_error_report)
+            if not crashing_file:
+                self.handle_error("executor",
+                                  f"Could not identify the source file of the error on attempt {attempt + 1}.")
+                return False
 
-        if not changes_json_str:
-            self.handle_error("reviewer", "Did not generate a response for the error fix.")
-            return False
+            if attempt == 0 and self.project_manager.active_project_path and line_number > 0:
+                full_path = self.project_manager.active_project_path / crashing_file
+                self.event_bus.emit("error_highlight_requested", full_path, line_number)
 
-        try:
-            files_to_commit = self._robustly_parse_json_from_llm_response(changes_json_str)
-            if not isinstance(files_to_commit, dict) or not files_to_commit:
-                raise ValueError("AI response was not a valid, non-empty dictionary of file changes.")
-        except (json.JSONDecodeError, ValueError) as e:
-            self.handle_error("reviewer", f"Failed to parse AI's fix response: {e}")
-            return False
+            self.update_status("reviewer", "working", f"Attempt {attempt + 1}: Analyzing error in {crashing_file}...")
 
-        filenames_changed = ", ".join(files_to_commit.keys())
-        fix_commit_message = f"fix: AI rewrite for error in {crashing_file}\n\nChanged files: {filenames_changed}"
-        self.project_manager.save_and_commit_files(files_to_commit, fix_commit_message)
+            # 2. Ask the reviewer for a fix (either initial or recursive)
+            if attempt == 0:
+                changes_json_str = await self.reviewer_service.review_and_correct_code(
+                    project_source=project_source,
+                    error_report=current_error_report,
+                    git_diff=git_diff_before_fix
+                )
+            else:  # Recursive attempt
+                changes_json_str = await self.reviewer_service.attempt_recursive_fix(
+                    project_source=project_source,
+                    original_error_report=initial_error_report,
+                    attempted_fix_diff=git_diff_before_fix,
+                    new_error_report=current_error_report,
+                )
 
-        self.event_bus.emit("code_generation_complete", files_to_commit)
-        self.update_status("reviewer", "success", f"Fix applied to {len(files_to_commit)} file(s).")
-        self.log("success", "Successfully applied fix. Please try running the code again.")
-        return True
+            # 3. Process the AI's response
+            if not changes_json_str:
+                self.handle_error("reviewer", f"Did not generate a response for fix attempt {attempt + 1}.")
+                continue  # Go to the next attempt if the AI returns nothing
+
+            try:
+                files_to_commit = self._robustly_parse_json_from_llm_response(changes_json_str)
+            except (json.JSONDecodeError, ValueError) as e:
+                self.handle_error("reviewer", f"Failed to parse AI's fix response on attempt {attempt + 1}: {e}")
+                continue  # Go to the next attempt
+
+            # 4. Apply the fix
+            self.project_manager.write_and_stage_files(files_to_commit)
+            self.event_bus.emit("code_generation_complete", files_to_commit)
+
+            # 5. Validate the fix by re-running the command
+            self.log("info", f"Validating fix attempt {attempt + 1} by re-running command: '{command}'")
+            validation_result = await self.execution_engine.run_command(command)
+
+            if validation_result.success:
+                self.log("success", f"Validation successful! Fix confirmed on attempt {attempt + 1}.")
+                fix_commit_message = f"fix: AI rewrite for error in {crashing_file} on attempt {attempt + 1}"
+                self.project_manager.commit_staged_files(fix_commit_message)
+                self.update_status("reviewer", "success", "Fix applied successfully.")
+                return True  # Success! Exit the loop.
+            else:
+                self.log("warning", f"Fix attempt {attempt + 1} failed validation. A new error occurred.")
+                current_error_report = validation_result.error  # This becomes the input for the next loop iteration
+
+        # 6. If all attempts fail, log the final state.
+        self.log("error", f"Failed to fix the error after {self.max_fix_attempts} attempts.")
+        self.handle_error("reviewer", f"Could not fix the error. Last error:\n{current_error_report}")
+        # Optionally, revert the changes here if desired.
+        return False
 
     def _robustly_parse_json_from_llm_response(self, response_text: str) -> dict:
         """
         A highly robust function to find and parse a JSON object from an LLM's text response.
         """
-        # 1. Look for a JSON object within markdown code fences (```json ... ```)
         match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
         if match:
             json_str = match.group(1)
@@ -75,7 +110,6 @@ class ValidationService:
             except json.JSONDecodeError as e:
                 self.log("warning", f"Found a markdown JSON block, but it failed to parse: {e}. Trying other methods.")
 
-        # 2. If no markdown, find content between the first '{' and the last '}'
         first_brace = response_text.find('{')
         last_brace = response_text.rfind('}')
         if first_brace != -1 and last_brace > first_brace:
@@ -85,7 +119,6 @@ class ValidationService:
             except json.JSONDecodeError:
                 self.log("warning", "Found content between braces, but it was not valid JSON.")
 
-        # 3. If neither method works, fail with a clear error.
         self.log("error", f"Could not extract valid JSON from LLM response. Raw head: '{response_text[:300]}...'")
         raise ValueError("Could not find a valid JSON object in the LLM response.")
 

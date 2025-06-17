@@ -1,5 +1,5 @@
 # prompts/prompts.py
-# UPDATED: The MODIFICATION_PLANNER_PROMPT now includes source root context.
+# UPDATED: Added new intelligent fixer prompts and applied custom indentation.
 
 import textwrap
 
@@ -57,7 +57,6 @@ HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
     }}
     """)
 
-# --- THIS IS THE UPDATED, CONTEXT-AWARE PROMPT ---
 MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     You are an expert senior software developer specializing in refactoring and modifying existing Python codebases.
 
@@ -190,47 +189,84 @@ CODER_PROMPT = textwrap.dedent("""
     Write the complete, integration-ready code for `{filename}` now:
     """)
 
-REFINEMENT_PROMPT = textwrap.dedent("""
-    You are an expert Python developer who functions as an automated code-fixing system.
-    Your response MUST be a valid JSON object and nothing else. Do not add explanations, comments, or apologies.
+# This is the new "One-Shot Surgical Fix" prompt. It replaces the old refinement prompt.
+INTELLIGENT_FIXER_PROMPT = textwrap.dedent("""
+    You are an expert debugging system. Your task is to analyze the provided diagnostic bundle and return a JSON object containing the full, corrected code for only the file(s) that need to be fixed.
 
-    **TASK:** Analyze the provided project source code and error report. Your goal is to identify the root cause of the error and provide corrected, complete source code for only the file or files that need to be changed to fix the bug.
+    --- DIAGNOSTIC BUNDLE ---
 
-    **--- FULL PROJECT SOURCE ---**
+    1. GIT DIFF (Recent changes that likely caused the error):
+    ```diff
+    {git_diff}
+    ```
+
+    2. FULL PROJECT SOURCE:
     ```json
     {project_source_json}
     ```
 
-    **--- ERROR REPORT ---**
-    The error occurred in or was caused by `{error_filename}`:
+    3. ERROR REPORT:
     ```
     {error_report}
     ```
 
-    **--- DEBUGGING ANALYSIS INSTRUCTIONS ---**
-    1.  **Analyze the Traceback:** The traceback is your primary guide. Find the exact line in the project's own files where the error occurs.
-    2.  **Root Cause:** The bug is likely an import error, a typo in a class or method name, an incorrect method signature, or a logical error in the code flow between files.
-    3.  **Cross-Reference Files:** Compare how `{error_filename}` is used by other files and how it uses them. Ensure names and logic align.
-    4.  **Formulate a Fix:** Determine the minimal set of changes needed. Modify only the file(s) necessary to resolve the error.
+    --- YOUR TASK ---
+    1.  **Analyze:** Internally, determine the root cause by examining the git diff and the error report. This is your most important step.
+    2.  **Identify:** Pinpoint the specific file(s) that need to be changed to fix the bug.
+    3.  **Correct:** Generate the complete, corrected source code for those files.
 
-    **--- MANDATORY OUTPUT FORMAT ---**
-    Your entire response MUST be a single JSON object. The keys of the JSON object must be the string file paths (e.g., "path/to/file.py"), and the values must be the complete, corrected source code for that file.
+    --- OUTPUT REQUIREMENTS ---
+    - Your response MUST be ONLY a valid JSON object.
+    - The keys must be the file paths, and the values must be the complete corrected source code.
+    - Do NOT add any explanations, apologies, or conversational text.
+    - Do NOT output your internal analysis. Just the final JSON.
 
-    **EXAMPLE OF A CORRECT RESPONSE:**
-    ```json
-    {{
-      "path/to/buggy_file.py": "complete corrected python code for this file...",
-      "path/to/another/affected_file.py": "complete corrected python code for this file..."
-    }}
+    Begin.
+    """)
+
+# This is the prompt for the recursive loop, to be used when the first fix fails.
+RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
+    You are an expert debugging system in a recursive analysis loop. Your previous attempt to fix an error failed and produced a new error. Your task is to analyze the entire context and provide a more accurate fix.
+
+    --- DEBUGGING CONTEXT ---
+
+    1. ORIGINAL ERROR:
+    ```
+    {original_error_report}
     ```
 
-    **CRITICAL RULES:**
-    -   **JSON ONLY:** Your output must start with `{{` and end with `}}`. No other text is permitted.
-    -   **COMPLETE FILES:** Provide the full contents of each file you modify, not just diffs or snippets.
-    -   **NO EXPLANATIONS:** Do not write any text outside of the JSON object.
+    2. PREVIOUS FIX ATTEMPT (The changes you made that failed):
+    ```diff
+    {attempted_fix_diff}
+    ```
 
-    Begin analysis and provide the JSON-formatted fix.
+    3. RESULTING ERROR (The new error after your fix was applied):
+    ```
+    {new_error_report}
+    ```
+
+    4. FULL PROJECT SOURCE (in its current, error-producing state):
+    ```json
+    {project_source_json}
+    ```
+
+    --- YOUR TASK ---
+    1.  **Analyze the Failure:** The key is to understand *why* the `PREVIOUS FIX ATTEMPT` failed. Did it misunderstand the original error? Did it introduce a new bug by mistake?
+    2.  **Deeper Root Cause:** Compare the original error, the attempted fix, and the new error to find the true, underlying root cause of the problem.
+    3.  **Formulate a New Fix:** Generate a new, more accurate correction. Only modify the file(s) necessary to resolve the issue.
+
+    --- OUTPUT REQUIREMENTS ---
+    - Your response MUST be ONLY a valid JSON object.
+    - The keys must be the file paths, and the values must be the complete corrected source code for that file.
+    - Do NOT add any explanations, apologies, or conversational text.
+
+    Begin analysis.
     """)
+
+
+# REFINEMENT_PROMPT is now an alias for the new intelligent fixer for backward compatibility
+REFINEMENT_PROMPT = INTELLIGENT_FIXER_PROMPT
+
 
 SURGICAL_MODIFICATION_PROMPT = textwrap.dedent("""
     You are an expert developer specializing in precise, surgical code modifications. You are given the original source code for a file and a clear instruction on what to change.
@@ -273,5 +309,7 @@ __all__ = [
     'MODIFICATION_PLANNER_PROMPT',
     'CODER_PROMPT',
     'REFINEMENT_PROMPT',
+    'INTELLIGENT_FIXER_PROMPT',
+    'RECURSIVE_FIXER_PROMPT',
     'SURGICAL_MODIFICATION_PROMPT'
 ]

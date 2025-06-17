@@ -1,25 +1,28 @@
 # kintsugi_ava/core/execution_engine.py
-# V4: Now venv-aware, using the project's own interpreter if available.
+# V5: Centralized command execution with venv awareness.
 
+import asyncio
+import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 from .project_manager import ProjectManager
 
 
 class ExecutionResult:
     """A simple class to hold the results of a code execution attempt."""
-    def __init__(self, success: bool, output: str, error: str):
+
+    def __init__(self, success: bool, output: str, error: str, command: str):
         self.success = success
         self.output = output
         self.error = error
+        self.command = command
 
 
 class ExecutionEngine:
     """
-    Safely executes generated Python code from a managed project directory,
-    using the project's own virtual environment if it exists.
+    Safely executes Python code and arbitrary commands from a managed project
+    directory, using the project's own virtual environment if it exists.
     """
 
     def __init__(self, project_manager: ProjectManager):
@@ -29,71 +32,89 @@ class ExecutionEngine:
     def run_main_in_project(self) -> ExecutionResult:
         """
         Attempts to run the main file within the currently active project.
+        This is a convenience method that wraps run_command.
+        """
+        return asyncio.run(self.run_command("python main.py"))
+
+    async def run_command(self, command: str) -> ExecutionResult:
+        """
+        Executes an arbitrary shell command within the project's context,
+        capturing and returning all output.
         """
         project_dir = self.project_manager.active_project_path
         if not project_dir:
-            return ExecutionResult(False, "", "Execution failed: No project is active.")
+            return ExecutionResult(False, "", "Execution failed: No project is active.", command)
 
-        main_file_path = project_dir / "main.py"
-        if not main_file_path.exists():
-            return ExecutionResult(False, "", "Execution failed: No 'main.py' file found.")
-
-        # --- VENV-AWARE LOGIC (THE FIX) ---
-        # Be strict. We MUST use the project's venv. If it doesn't exist, fail loudly.
         python_executable = self.project_manager.venv_python_path
         if not python_executable:
             error_msg = (
                 "Execution failed: Could not find the project's virtual environment (.venv).\n"
-                "Please try creating a new project to ensure the venv is set up correctly."
+                "Please create the project or run the install command to set up the venv."
             )
-            return ExecutionResult(False, "", error_msg)
+            return ExecutionResult(False, "", error_msg, command)
 
-        print(f"[ExecutionEngine] Using interpreter: {python_executable}")
-        # --- END VENV-AWARE LOGIC ---
+        env = self._get_subprocess_env(python_executable)
+        cmd_to_run = self._prepare_command(command, python_executable)
+
+        print(f"[ExecutionEngine] Running command: '{cmd_to_run}' in '{project_dir}'")
 
         try:
-            with open(main_file_path, "r", encoding="utf-8") as f:
-                main_content = f.read()
-        except Exception as e:
-            return ExecutionResult(False, "", f"Execution failed: Could not read main.py. Error: {e}")
-
-        print(f"[ExecutionEngine] Running project in: {project_dir}")
-        is_gui_app = "mainloop()" in main_content or "app.exec()" in main_content or "app.run()" in main_content
-
-        try:
-            process = subprocess.Popen(
-                [str(python_executable), str(main_file_path)],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding='utf-8',
-                cwd=project_dir
+            process = await asyncio.create_subprocess_shell(
+                cmd_to_run,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=project_dir,
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             )
 
-            if is_gui_app:
-                print("[ExecutionEngine] GUI application detected. Monitoring for stability...")
-                time.sleep(3)
-                poll_result = process.poll()
-                if poll_result is not None and poll_result != 0:
-                    stdout, stderr = process.communicate()
-                    error_output = stderr or stdout
-                    print(f"[ExecutionEngine] GUI app crashed on launch. Error:\n{error_output}")
-                    return ExecutionResult(False, stdout, error_output)
-                print("[ExecutionEngine] GUI app is stable. Terminating process and reporting success.")
-                process.terminate()
-                return ExecutionResult(True, "GUI app launched successfully.", "")
+            stdout_bytes, stderr_bytes = await process.communicate()
+            stdout = stdout_bytes.decode('utf-8', errors='replace')
+            stderr = stderr_bytes.decode('utf-8', errors='replace')
 
+            full_output = stdout + stderr
+
+            if process.returncode == 0:
+                print(f"[ExecutionEngine] Command '{command}' executed successfully.")
+                return ExecutionResult(True, stdout, stderr, command)
             else:
-                print("[ExecutionEngine] Command-line script detected. Waiting for completion...")
-                stdout, stderr = process.communicate(timeout=15)
-                if process.returncode == 0:
-                    print("[ExecutionEngine] Execution successful.")
-                    return ExecutionResult(True, stdout, stderr)
-                else:
-                    print(f"[ExecutionEngine] Execution failed with code {process.returncode}.")
-                    error_output = stderr or stdout
-                    return ExecutionResult(False, stdout, error_output)
+                print(f"[ExecutionEngine] Command '{command}' failed with exit code {process.returncode}.")
+                return ExecutionResult(False, stdout, stderr, command)
 
-        except subprocess.TimeoutExpired:
-            process.kill()
-            return ExecutionResult(False, "", "Execution timed out after 15 seconds.")
+        except FileNotFoundError:
+            err_msg = f"Command not found: {command.split()[0]}"
+            return ExecutionResult(False, "", err_msg, command)
         except Exception as e:
-            return ExecutionResult(False, "", f"An unexpected error occurred during execution: {e}")
+            err_msg = f"An unexpected error occurred during execution: {e}"
+            return ExecutionResult(False, "", err_msg, command)
+
+    def _get_subprocess_env(self, python_executable: Path | None) -> dict:
+        """Prepare the environment variables for the subprocess to use the venv."""
+        env = os.environ.copy()
+        if python_executable and python_executable.exists():
+            venv_dir = python_executable.parent.parent
+            scripts_dir = str(python_executable.parent)
+            if 'PATH' in env:
+                env['PATH'] = f"{scripts_dir}{os.pathsep}{env['PATH']}"
+            else:
+                env['PATH'] = scripts_dir
+            env['VIRTUAL_ENV'] = str(venv_dir)
+            # Add PYTHONUNBUFFERED to ensure output streams are not delayed
+            env['PYTHONUNBUFFERED'] = "1"
+        return env
+
+    def _prepare_command(self, command: str, python_executable: Path | None) -> str:
+        """
+        Modifies the command to use the venv python interpreter where appropriate.
+        """
+        parts = command.split()
+        if not parts:
+            return ""
+
+        if python_executable and python_executable.exists():
+            if parts[0] == 'python':
+                parts[0] = f'"{python_executable}"'
+            elif parts[0] == 'pip':
+                parts = [f'"{python_executable}"', '-m', 'pip'] + parts[1:]
+
+        return ' '.join(parts)

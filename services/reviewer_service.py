@@ -1,9 +1,9 @@
 # kintsugi_ava/services/reviewer_service.py
-# V10: Updated to pass role parameter for temperature settings.
+# V12: Added recursive fix attempt method.
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
-from prompts.prompts import REFINEMENT_PROMPT
+from prompts.prompts import REFINEMENT_PROMPT, RECURSIVE_FIXER_PROMPT
 import json
 
 
@@ -13,29 +13,47 @@ class ReviewerService:
         self.llm_client = llm_client
 
     async def review_and_correct_code(
-            self, project_source: dict, error_filename: str, error_report: str
+            self, project_source: dict, error_report: str, git_diff: str
     ) -> str | None:
         """
-        Uses an LLM with full project context to generate a multi-file fix.
-        This is the primary method for all bug fixing.
+        Uses an LLM with full project context and git diff for the first fix attempt.
         """
-        self.log("info", f"Reviewer analyzing architectural error from '{error_filename}'.")
-
+        self.log("info", "Reviewer analyzing error with git diff context.")
         prompt = REFINEMENT_PROMPT.format(
             project_source_json=json.dumps(project_source, indent=2),
-            error_filename=error_filename,
-            error_report=error_report
+            error_report=error_report,
+            git_diff=git_diff
         )
+        return await self._get_fix_from_llm(prompt)
 
-        # Use the 'reviewer' role, which you can now confidently set to a fast model.
+    async def attempt_recursive_fix(
+        self,
+        project_source: dict,
+        original_error_report: str,
+        attempted_fix_diff: str,
+        new_error_report: str
+    ) -> str | None:
+        """
+        Uses an LLM with full context of a failed fix attempt to try again.
+        """
+        self.log("info", "Reviewer starting recursive fix attempt.")
+        prompt = RECURSIVE_FIXER_PROMPT.format(
+            project_source_json=json.dumps(project_source, indent=2),
+            original_error_report=original_error_report,
+            attempted_fix_diff=attempted_fix_diff,
+            new_error_report=new_error_report,
+        )
+        return await self._get_fix_from_llm(prompt)
+
+    async def _get_fix_from_llm(self, prompt: str) -> str | None:
+        """Helper method to run the LLM call and handle logging."""
         provider, model = self.llm_client.get_model_for_role("reviewer")
         if not provider or not model:
             self.log("error", "No model assigned for the 'reviewer' role.")
             return None
 
-        self.log("ai_call", f"Asking {provider}/{model} to generate an architectural correction...")
+        self.log("ai_call", f"Asking {provider}/{model} for a correction...")
 
-        # Pass the "reviewer" role for proper temperature setting
         json_response_str = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt, "reviewer")])
 
         if json_response_str and json_response_str.strip():
