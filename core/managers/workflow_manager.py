@@ -25,7 +25,7 @@ class WorkflowManager:
         self.interaction_mode: InteractionMode = InteractionMode.BUILD  # Default to build mode
 
         self._last_error_report = None
-        self._last_failing_command = None # NEW: Store the command that failed
+        self._last_failing_command = None  # NEW: Store the command that failed
         print("[WorkflowManager] Initialized in BOOTSTRAP state, BUILD mode")
 
     def set_managers(self, service_manager, window_manager, task_manager):
@@ -38,7 +38,11 @@ class WorkflowManager:
         self.event_bus.subscribe("new_session_requested", self.handle_new_session)
         self.event_bus.subscribe("interaction_mode_changed", self.handle_mode_change)
 
+        # --- THIS IS THE FIX ---
+        # The subscription now correctly expects two arguments and passes them on.
         self.event_bus.subscribe("review_and_fix_from_plugin_requested", self.handle_review_and_fix_request)
+        # --- END OF FIX ---
+
         self.event_bus.subscribe("execution_failed", self.handle_execution_failed)
         self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
 

@@ -90,10 +90,20 @@ class AutonomousCodeReviewerPlugin(PluginBase):
         return True
 
     def _handle_fix_request(self, error_report: str):
-        """Handles a user-initiated request to fix a highlighted error."""
+        """
+        Handles a user-initiated request to fix a highlighted error.
+        It now sends a default command to re-run for validation.
+        """
         if not self.get_config_value("auto_fix_enabled", True):
             self.log("info", "Received fix request, but auto-fix is disabled in plugin config.")
             return
 
         self.log("info", f"Received highlighted error. Relaying to workflow manager for review and fix.")
-        self.emit_event("review_and_fix_from_plugin_requested", error_report)
+
+        # --- THIS IS THE FIX ---
+        # When triggering a fix from the highlight widget, we don't have a specific
+        # command that failed. We'll assume 'python main.py' is the default
+        # command to re-run for validation after the fix is applied.
+        default_command_for_validation = "python main.py"
+        self.emit_event("review_and_fix_from_plugin_requested", error_report, default_command_for_validation)
+        # --- END OF FIX ---
