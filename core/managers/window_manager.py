@@ -17,6 +17,8 @@ class WindowManager:
     Single responsibility: Window lifecycle and access management.
     """
 
+
+
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
 
@@ -74,8 +76,21 @@ class WindowManager:
     def show_log_viewer(self):
         if self.log_viewer: self.log_viewer.show()
 
-    def show_model_config_dialog(self):
-        if self.model_config_dialog: self.model_config_dialog.exec()
+    async def show_model_config_dialog(self):
+        """Asynchronously populates model data and then shows the dialog."""
+        if self.model_config_dialog:
+            # Prevent opening multiple instances of the dialog
+            if self.model_config_dialog.isVisible():
+                self.model_config_dialog.activateWindow()
+                self.model_config_dialog.raise_()
+                return
+
+            # Asynchronously populate the model list first
+            await self.model_config_dialog.populate_models_async()
+            # Then synchronously populate the current selections
+            self.model_config_dialog.populate_settings()
+            # Now show the dialog non-blockingly
+            self.model_config_dialog.show()
 
     def show_plugin_management_dialog(self):
         if self.plugin_management_dialog: self.plugin_management_dialog.exec()

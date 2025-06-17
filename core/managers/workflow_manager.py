@@ -25,7 +25,6 @@ class WorkflowManager:
         self.interaction_mode: InteractionMode = InteractionMode.BUILD  # Default to build mode
 
         self._last_error_report = None
-        self._last_failing_command = None  # NEW: Store the command that failed
         print("[WorkflowManager] Initialized in BOOTSTRAP state, BUILD mode")
 
     def set_managers(self, service_manager, window_manager, task_manager):
@@ -38,12 +37,11 @@ class WorkflowManager:
         self.event_bus.subscribe("new_session_requested", self.handle_new_session)
         self.event_bus.subscribe("interaction_mode_changed", self.handle_mode_change)
 
-        # --- THIS IS THE FIX ---
-        # The subscription now correctly expects two arguments and passes them on.
+        # The event system now only expects one argument for these, so the wiring is correct
         self.event_bus.subscribe("review_and_fix_from_plugin_requested", self.handle_review_and_fix_request)
-        # --- END OF FIX ---
-
         self.event_bus.subscribe("execution_failed", self.handle_execution_failed)
+
+        # This one is for the button and remains unchanged
         self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
 
     def handle_mode_change(self, new_mode: InteractionMode):
@@ -229,7 +227,6 @@ class WorkflowManager:
             self.service_manager.get_project_manager().clear_active_project()
 
         self._last_error_report = None
-        self._last_failing_command = None
         self._on_project_cleared()
 
         if self.window_manager:
@@ -243,31 +240,30 @@ class WorkflowManager:
         print("[WorkflowManager] New session state reset complete")
         self.event_bus.emit("chat_cleared")
 
-    def handle_execution_failed(self, error_report: str, command: str):
-        """Stores the error and the command that caused it."""
+    def handle_execution_failed(self, error_report: str):
+        """Stores the error report that caused the failure."""
         self._last_error_report = error_report
-        self._last_failing_command = command
         code_viewer = self.window_manager.get_code_viewer() if self.window_manager else None
         if code_viewer:
             code_viewer.show_fix_button()
 
     def handle_review_and_fix_button(self):
-        """Handles the 'Review & Fix Code' button click, using the last stored error and command."""
-        if self._last_error_report and self._last_failing_command:
-            self._initiate_fix_workflow(self._last_error_report, self._last_failing_command)
+        """Handles the 'Review & Fix Code' button click, using the last stored error."""
+        if self._last_error_report:
+            self._initiate_fix_workflow(self._last_error_report)
         else:
-            self.log("warning", "Fix button clicked but no error report and command were available.")
+            self.log("warning", "Fix button clicked but no error report was available.")
 
-    def handle_review_and_fix_request(self, error_report: str, command: str):
+    def handle_review_and_fix_request(self, error_report: str):
         """Handles a direct request to fix a specific error report (e.g., from a plugin)."""
-        if error_report and command:
-            self._initiate_fix_workflow(error_report, command)
+        if error_report:
+            self._initiate_fix_workflow(error_report)
         else:
-            self.log("warning", "Received an empty error report or command to fix.")
+            self.log("warning", "Received an empty error report to fix.")
 
     def handle_highlighted_error_fix_request(self, highlighted_text: str):
         """Handles a fix request initiated from a right-click in the terminal."""
-        if self._last_error_report and self._last_failing_command:
+        if self._last_error_report:
             # The highlighted text is good context for the LLM.
             augmented_error_report = (
                 f"The user highlighted the following part of the error log:\n"
@@ -277,11 +273,11 @@ class WorkflowManager:
                 f"Full error report:\n"
                 f"{self._last_error_report}"
             )
-            self._initiate_fix_workflow(augmented_error_report, self._last_failing_command)
+            self._initiate_fix_workflow(augmented_error_report)
         else:
             self.log("warning", "A fix was requested for highlighted text, but no previous error is stored.")
 
-    def _initiate_fix_workflow(self, error_report: str, command: str):
+    def _initiate_fix_workflow(self, error_report: str):
         """The core logic to start the AI fix workflow."""
         if not self.service_manager or not self.task_manager:
             return
@@ -292,8 +288,7 @@ class WorkflowManager:
 
         validation_service = self.service_manager.get_validation_service()
         if validation_service:
-            # Pass the command to the validation service
-            fix_coroutine = validation_service.review_and_fix_file(error_report, command)
+            fix_coroutine = validation_service.review_and_fix_file(error_report)
             self.task_manager.start_ai_workflow_task(fix_coroutine)
 
     def log(self, level, message):

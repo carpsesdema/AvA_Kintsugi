@@ -1,5 +1,7 @@
 import os
 import json
+from typing import Dict
+
 import aiohttp
 import asyncio
 from pathlib import Path
@@ -91,19 +93,59 @@ class LLMClient:
         with open(self.assignments_file, 'w') as f:
             json.dump(config_data, f, indent=2)
 
-    def get_available_models(self) -> dict:
+    async def _get_local_ollama_models(self) -> Dict[str, str]:
+        """Dynamically fetches locally available models from an Ollama server."""
+        ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/tags"
+        local_models = {}
+        try:
+            # Use a short timeout to avoid blocking the UI for too long if server is unresponsive
+            timeout = aiohttp.ClientTimeout(total=2.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(ollama_url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        for model_info in data.get("models", []):
+                            model_name = model_info.get("name")
+                            if model_name:
+                                key = f"ollama/{model_name}"
+                                display_name = f"Ollama: {model_name}"
+                                local_models[key] = display_name
+                        if local_models:
+                            print(f"[LLMClient] Discovered {len(local_models)} local Ollama models.")
+                    else:
+                        # Non-fatal warning if the server is there but returns an error
+                        print(
+                            f"[LLMClient] Ollama server responded with status {response.status}. Could not list models.")
+        except asyncio.TimeoutError:
+            print(f"[LLMClient] Timed out connecting to Ollama server at {ollama_url}. Is it running?")
+        except aiohttp.ClientConnectorError:
+            # This is the most common error if the server is not running
+            print(f"[LLMClient] Could not connect to Ollama server at {ollama_url}. Is it running?")
+        except Exception as e:
+            # Catch-all for other unexpected errors
+            print(f"[LLMClient] An unexpected error occurred while fetching Ollama models: {e}")
+
+        return local_models
+
+    async def get_available_models(self) -> dict:
         models = {}
-        if "openai" in self.clients: models["openai/gpt-4o"] = "OpenAI: GPT-4o"
+        if "openai" in self.clients:
+            models["openai/gpt-4o"] = "OpenAI: GPT-4o"
+
+        # --- THIS IS THE FIX ---
         if "deepseek" in self.clients:
-            models["deepseek/deepseek-coder"] = "DeepSeek: Coder"
+            models["deepseek/deepseek-chat"] = "DeepSeek: Chat"
             models["deepseek/deepseek-reasoner"] = "DeepSeek: Reasoner (R1-0528)"
+        # --- END OF FIX ---
+
         if "google" in self.clients:
             models["google/gemini-2.5-pro-preview-06-05"] = "Google: Gemini 2.5 Pro"
             models["google/gemini-2.5-flash-preview-05-20"] = "Google: Gemini 2.5 Flash"
+
         if "ollama" in self.clients:
-            models["ollama/llama3"] = "Ollama: Llama3"
-            models["ollama/codellama"] = "Ollama: CodeLlama"
-            models["ollama/mistral"] = "Ollama: Mistral"
+            ollama_models = await self._get_local_ollama_models()
+            models.update(ollama_models)
+
         return models
 
     def get_role_assignments(self) -> dict:
@@ -138,7 +180,7 @@ class LLMClient:
 
     async def stream_chat(self, provider: str, model: str, prompt: str, role: str = None):
         if provider not in self.clients:
-            yield f"Error: Provider {provider} not configured.";
+            yield f"Error: Provider {provider} not configured."
             return
 
         temperature = self.get_role_temperature(role) if role else 0.7
@@ -148,7 +190,7 @@ class LLMClient:
         client = self.clients.get(provider)
         stream_func = router.get(provider)
         if not stream_func or (client is None and provider != 'google'):
-            yield f"Error: Streaming function for {provider} not found.";
+            yield f"Error: Streaming function for {provider} not found."
             return
         if provider in ["openai", "deepseek"]:
             stream = stream_func(client, model, prompt, temperature)
@@ -174,9 +216,6 @@ class LLMClient:
             api_model_name = f"models/{model}" if not model.startswith("models/") else model
             generation_config = {'temperature': temperature}
 
-            # --- THIS IS THE FIX ---
-            # Added safety_settings to be less restrictive. This might help, but the
-            # primary fix is the try/except block below.
             safety_settings = [
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -191,13 +230,10 @@ class LLMClient:
             )
             async for chunk in await model_instance.generate_content_async(prompt, stream=True):
                 try:
-                    # The access to `chunk.text` is what causes the crash.
                     if chunk.text: yield chunk.text
                 except Exception as e:
-                    # This is our graceful handling. If a chunk is blocked by safety filters,
-                    # we log it and continue, preventing a crash.
                     print(f"[LLMClient] Gemini safety filter triggered: A content part was blocked. Message: {e}")
-                    yield ""  # Yield an empty string to keep the stream going.
+                    yield ""
 
         except Exception as e:
             yield f"\n\nError from Google API: {e}"

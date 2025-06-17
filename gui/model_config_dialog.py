@@ -53,9 +53,6 @@ class ModelConfigurationDialog(QDialog):
         button_layout.addWidget(apply_button)
         main_layout.addLayout(button_layout)
 
-        # Populate with current settings
-        self._populate_current_settings()
-
     def _create_role_configuration_frame(self, role_display_name: str, role_key: str) -> QFrame:
         """
         Create a frame containing model selection and temperature controls for a role.
@@ -139,29 +136,40 @@ class ModelConfigurationDialog(QDialog):
 
         return frame
 
-    def _populate_current_settings(self):
+    def populate_settings(self):
         """Populate the dialog with current model and temperature settings."""
-        available_models = self.llm_client.get_available_models()
         current_assignments = self.llm_client.get_role_assignments()
         current_temperatures = self.llm_client.get_role_temperatures()
 
         for role, combo in self.role_combos.items():
-            # Populate model dropdown
-            combo.clear()
             current_model_key = current_assignments.get(role)
-            current_index = 0
-
-            for i, (key, name) in enumerate(available_models.items()):
-                combo.addItem(name, key)
-                if key == current_model_key:
-                    current_index = i
-
-            combo.setCurrentIndex(current_index)
+            # Find the index of the current model in the combo box
+            index = combo.findData(current_model_key)
+            if index != -1:
+                combo.setCurrentIndex(index)
+            elif combo.count() > 0:
+                # If the saved model is not found (e.g., Ollama model deleted), select the first one
+                combo.setCurrentIndex(0)
 
             # Set temperature slider value
             if role in self.temperature_sliders:
                 current_temp = current_temperatures.get(role, 0.7)
                 self.temperature_sliders[role].set_temperature(current_temp)
+
+    async def populate_models_async(self):
+        """Asynchronously fetch available models and populate dropdowns."""
+        available_models = await self.llm_client.get_available_models()
+
+        if not available_models:
+             QMessageBox.warning(
+                self, "No Models Found",
+                "Could not find any configured or local AI models. Please check your .env file or Ollama server."
+            )
+
+        for role, combo in self.role_combos.items():
+            combo.clear()
+            for key, name in available_models.items():
+                combo.addItem(name, key)
 
     def apply_changes(self):
         """Apply the model and temperature changes."""
@@ -169,7 +177,11 @@ class ModelConfigurationDialog(QDialog):
             # Collect new model assignments
             new_assignments = {}
             for role, combo in self.role_combos.items():
-                new_assignments[role] = combo.currentData()
+                if combo.currentData() is not None:
+                    new_assignments[role] = combo.currentData()
+                else:
+                    print(f"Warning: No model selected for role '{role}'. Skipping.")
+
 
             # Collect new temperature settings
             new_temperatures = {}

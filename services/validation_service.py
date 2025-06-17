@@ -16,7 +16,7 @@ class ValidationService:
         self.project_manager = project_manager
         self.reviewer_service = reviewer_service
 
-    async def review_and_fix_file(self, error_report: str, command: str) -> bool:
+    async def review_and_fix_file(self, error_report: str) -> bool:
         """
         Performs a one-shot intelligent fix without automated re-validation.
         The user remains in control of the execution loop.

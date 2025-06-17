@@ -46,7 +46,10 @@ class EventCoordinator:
         self.event_bus.subscribe("load_project_requested", self.workflow_manager.handle_load_project)
 
         # Model Configuration
-        self.event_bus.subscribe("configure_models_requested", self.window_manager.show_model_config_dialog)
+        self.event_bus.subscribe(
+            "configure_models_requested",
+            lambda: asyncio.create_task(self.window_manager.show_model_config_dialog())
+        )
 
         # RAG Management
         rag_manager = self.service_manager.get_rag_manager()

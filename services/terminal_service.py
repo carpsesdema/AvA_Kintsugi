@@ -51,8 +51,8 @@ class TerminalService:
             else:
                 self.event_bus.emit("terminal_error_received", exit_message, session_id)
                 # Emit the consolidated error report for the fix workflow
-                # The command is passed along for the re-validation step
-                self.event_bus.emit("execution_failed", result.error, result.command)
+                # This only provides the error, not the command, preventing auto-re-validation
+                self.event_bus.emit("execution_failed", result.error)
 
         except asyncio.CancelledError:
             self.event_bus.emit("terminal_error_received", "\nCommand was cancelled.\n", session_id)
