@@ -1,9 +1,9 @@
 # kintsugi_ava/services/reviewer_service.py
-# V12: Added recursive fix attempt method.
+# V13: Simplified by removing the now-unused recursive fix method.
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
-from prompts.prompts import REFINEMENT_PROMPT, RECURSIVE_FIXER_PROMPT
+from prompts.prompts import REFINEMENT_PROMPT
 import json
 
 
@@ -23,25 +23,6 @@ class ReviewerService:
             project_source_json=json.dumps(project_source, indent=2),
             error_report=error_report,
             git_diff=git_diff
-        )
-        return await self._get_fix_from_llm(prompt)
-
-    async def attempt_recursive_fix(
-        self,
-        project_source: dict,
-        original_error_report: str,
-        attempted_fix_diff: str,
-        new_error_report: str
-    ) -> str | None:
-        """
-        Uses an LLM with full context of a failed fix attempt to try again.
-        """
-        self.log("info", "Reviewer starting recursive fix attempt.")
-        prompt = RECURSIVE_FIXER_PROMPT.format(
-            project_source_json=json.dumps(project_source, indent=2),
-            original_error_report=original_error_report,
-            attempted_fix_diff=attempted_fix_diff,
-            new_error_report=new_error_report,
         )
         return await self._get_fix_from_llm(prompt)
 

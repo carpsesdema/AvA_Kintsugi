@@ -1,5 +1,5 @@
 # prompts/prompts.py
-# UPDATED: Added new intelligent fixer prompts and applied custom indentation.
+# UPDATED: Infused with "Observability-First" logging requirements.
 
 import textwrap
 
@@ -39,19 +39,19 @@ HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
     **CRITICAL INSTRUCTIONS:**
     1.  Deconstruct the user's request into a logical, multi-file Python project.
     2.  For each file, provide a concise, one-sentence "purpose" describing its role.
-    3.  The main executable script **MUST be named `main.py`**.
-    4.  Identify all necessary pip installable dependencies.
-    5.  Your response **MUST** be ONLY a valid JSON object. Do not include any other text, explanations, or markdown.
-    6.  **DO NOT write any implementation code.** Focus ONLY on the structure.
+    3.  **A utility module for setting up consistent logging MUST be created at `utils/logging_config.py`**.
+    4.  The main executable script **MUST be named `main.py`** and it **MUST call the logging setup function from `utils/logging_config.py` at the very beginning.**
+    5.  Identify all necessary pip installable dependencies.
+    6.  Your response **MUST** be ONLY a valid JSON object. Do not include any other text, explanations, or markdown.
+    7.  **DO NOT write any implementation code.** Focus ONLY on the structure.
 
     **EXAMPLE RESPONSE:**
     {{
       "files": [
-        {{ "filename": "main.py", "purpose": "Main application entry point, initializes the Flask app and database." }},
+        {{ "filename": "utils/logging_config.py", "purpose": "Configures a centralized logging system (e.g., using logging.basicConfig) for the entire application." }},
+        {{ "filename": "main.py", "purpose": "Main application entry point, calls the logging setup, initializes the Flask app and database." }},
         {{ "filename": "models.py", "purpose": "Defines the database models, such as the User table." }},
-        {{ "filename": "routes.py", "purpose": "Contains all Flask routes for authentication and core features." }},
-        {{ "filename": "templates/base.html", "purpose": "The main Jinja2 base template for consistent page layout." }},
-        {{ "filename": "static/css/style.css", "purpose": "Main stylesheet for the application's appearance." }}
+        {{ "filename": "routes.py", "purpose": "Contains all Flask routes for authentication and core features." }}
       ],
       "dependencies": ["Flask", "Flask-SQLAlchemy", "Flask-Login"]
     }}
@@ -124,66 +124,40 @@ CODER_PROMPT = textwrap.dedent("""
     {symbol_index_json}
     ```
 
-    **📁 EXISTING FILE CONTENTS (Files already written in this session):**
-    ```json
-    {existing_files_json}
-    ```
-
-    **🔗 DEPENDENCY MAP (Who imports what):**
-    ```json
-    {dependency_map_json}
-    ```
-
-    **🏗️ PROJECT STRUCTURE:**
-    ```json
-    {project_structure_json}
-    ```
-
-    **📚 RELEVANT KNOWLEDGE BASE CONTEXT:**
-    ```    {rag_context}
-    ```
-
     ---
-    **⚡ CRITICAL IMPORT AND INTEGRATION RULES:**
+    **⚡ CRITICAL REQUIREMENTS - READ AND FOLLOW EXACTLY**
 
-    1. **PERFECT IMPORT ACCURACY**: Use the symbol index above to ensure 100% accurate imports:
-       - If you need class `Player` and the symbol index shows it's in `engine/player.py`, use: `from engine.player import Player`
-       - If you need function `calculate_score` and it's in `utils/scoring.py`, use: `from utils.scoring import calculate_score`
-       - NEVER guess import paths - always reference the symbol index!
+    **1. LOGGING REQUIREMENTS (NON-NEGOTIABLE):**
+       - **NEVER use `print()` for debugging.** ALWAYS use the `logging` module.
+       - At the top of the module, get a logger instance: `import logging` and `logger = logging.getLogger(__name__)`.
+       - Use descriptive logging messages.
+       - Use `logger.info()` for startup sequences and major lifecycle events (e.g., "Initializing service...", "Component ready.").
+       - Use `logger.debug()` for detailed state information or frequent updates (e.g., `logger.debug(f"Processing item {{item_id}}")`).
+       - Use `logger.warning()` for non-critical issues or potential problems.
+       - Use `logger.error()` within `except` blocks to log exceptions before re-raising or handling them.
 
-    2. **DEPENDENCY AWARENESS**: Check the dependency map to see what other files import:
-       - If `main.py` imports from your module, ensure you provide the expected classes/functions
-       - If your module depends on others, import them correctly using the symbol index
-
-    3. **INTEGRATION REQUIREMENTS**:
-       - Your code must work seamlessly with all existing files shown above
-       - Use exact class names, method signatures, and module paths from the context
-       - Follow the architectural patterns established in existing files
-
-    4. **FILE STRUCTURE COMPLIANCE**:
-       - Respect the project structure shown above
-       - If creating a class in a subdirectory, ensure proper package imports
-       - Add `__init__.py` imports if your code will be imported by others
+    **2. IMPORT AND INTEGRATION RULES:**
+       - Use the symbol index above to ensure 100% accurate imports.
+       - If you need class `Player` and the index shows it's in `engine/player.py`, you MUST use: `from engine.player import Player`.
+       - Your code must work seamlessly with all existing files in the project.
+       - Use exact class names and method signatures from the context.
 
     ---
     **📋 IMPLEMENTATION CHECKLIST:**
 
-    ✅ **Import Statements**: Use EXACT paths from symbol index
-    ✅ **Class Names**: Match EXACT names from existing files
-    ✅ **Method Signatures**: Follow patterns in existing code
-    ✅ **Dependencies**: Import everything you need, nothing you don't
-    ✅ **Integration**: Your code must work with main.py and other modules
-    ✅ **Error Handling**: Include proper exception handling
-    ✅ **Documentation**: Add docstrings for classes and complex methods
+    ✅ **Professional Logging**: Followed all logging requirements.
+    ✅ **Import Statements**: Used EXACT paths from symbol index.
+    ✅ **Class Names**: Matched EXACT names from existing files.
+    ✅ **Method Signatures**: Followed patterns in existing code.
+    ✅ **Error Handling**: Included proper exception handling (`try...except`).
+    ✅ **Documentation**: Added docstrings for all classes and complex methods.
 
     ---
     **🎯 OUTPUT REQUIREMENTS:**
 
-    1. **Complete Implementation**: Write the full, working code for `{filename}`
-    2. **Perfect Imports**: Every import must be accurate based on the symbol index
-    3. **Seamless Integration**: Your code must integrate flawlessly with existing files
-    4. **Production Ready**: Include error handling, docstrings, and clean code
-    5. **Raw Code Only**: Return ONLY the Python code - no explanations or markdown
+    1. **Complete Implementation**: Write the full, working code for `{filename}`.
+    2. **Production Ready**: Include logging, error handling, and docstrings.
+    3. **Raw Code Only**: Return ONLY the Python code - no explanations or markdown.
 
     **🚀 BEGIN IMPLEMENTATION:**
     Write the complete, integration-ready code for `{filename}` now:

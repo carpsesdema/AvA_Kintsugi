@@ -1,5 +1,5 @@
 # kintsugi_ava/core/managers/service_manager.py
-# Fixed to only import what actually exists in your project
+# Final polish: Updated ValidationService instantiation.
 
 from core.event_bus import EventBus
 from core.llm_client import LLMClient
@@ -128,10 +128,9 @@ class ServiceManager:
             self.llm_client
         )
 
-        # Validation Service
+        # Validation Service - now simplified
         self.validation_service = ValidationService(
             self.event_bus,
-            self.execution_engine,
             self.project_manager,
             self.reviewer_service
         )
