@@ -12,6 +12,7 @@ from core.managers import (
     WorkflowManager,
     TaskManager
 )
+from core.plugins import PluginState
 
 
 class Application:
@@ -122,19 +123,49 @@ class Application:
         )
 
     def _wire_plugin_events(self):
-        """Wire plugin-specific events."""
+        """Wire plugin-specific events, including UI updates."""
         plugin_manager = self.service_manager.get_plugin_manager()
         if not plugin_manager:
             return
 
-        # Subscribe to application shutdown to ensure plugins are properly shut down
         self.event_bus.subscribe("application_shutdown",
                                  lambda: asyncio.create_task(plugin_manager.shutdown()))
 
-        # Log plugin state changes
-        self.event_bus.subscribe("plugin_state_changed",
-                                 lambda name, old, new: print(
-                                     f"[Application] Plugin '{name}': {old.value} -> {new.value}"))
+        sidebar = self.window_manager.get_main_window().sidebar
+
+        # --- NEW: Handler for plugin state changes that updates the UI ---
+        def handle_plugin_state_change(name, old_state, new_state):
+            """This function is called by the event bus on any plugin state change."""
+            # Log the change to the console for debugging
+            print(f"[Application] Plugin '{name}': {old_state.value} -> {new_state.value}")
+
+            # Update the sidebar UI with the new total status
+            if plugin_manager and sidebar:
+                try:
+                    all_status = plugin_manager.get_all_plugin_status()
+                    # Filter for plugins that are 'STARTED'
+                    active_plugins = [
+                        s for s in all_status.values()
+                        if s.get('state') == PluginState.STARTED.value
+                    ]
+                    sidebar.update_plugin_status(len(active_plugins), len(all_status))
+                except Exception as e:
+                    print(f"[Application] Error updating plugin status on sidebar: {e}")
+
+        # Subscribe the unified handler to the event
+        self.event_bus.subscribe("plugin_state_changed", handle_plugin_state_change)
+
+        # Call once on startup to set the initial state correctly
+        if sidebar:
+            try:
+                all_status = plugin_manager.get_all_plugin_status()
+                active_plugins = [
+                    s for s in all_status.values()
+                    if s.get('state') == PluginState.STARTED.value
+                ]
+                sidebar.update_plugin_status(len(active_plugins), len(all_status))
+            except Exception as e:
+                print(f"[Application] Error setting initial plugin status on sidebar: {e}")
 
         print("[Application] Plugin events wired")
 

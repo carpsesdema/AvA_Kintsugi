@@ -1,5 +1,5 @@
 # kintsugi_ava/gui/enhanced_sidebar.py
-# UPDATED: Removed the "Workflow Monitor" button.
+# UPDATED: Re-laid out plugin panel and added an update method.
 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QPushButton
@@ -85,26 +85,44 @@ class EnhancedSidebar(QWidget):
         return panel
 
     def _create_plugin_panel(self) -> QFrame:
-        """New plugin management panel."""
+        """New plugin management panel with better layout."""
         panel, layout = self._create_styled_panel("Plugin System")
+
+        # Use a QHBoxLayout to put the label and button on the same line
+        plugin_main_layout = QHBoxLayout()
+        plugin_main_layout.setContentsMargins(0, 0, 0, 0)
+        plugin_main_layout.setSpacing(4)
+
         self.plugin_status_label = QLabel("Plugins: Loading...")
         self.plugin_status_label.setFont(Typography.body())
         self.plugin_status_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()}; padding: 2px 0px;")
-        layout.addWidget(self.plugin_status_label)
-        plugin_buttons_layout = QHBoxLayout()
-        plugin_buttons_layout.setSpacing(4)
+
         manage_plugins_btn = QPushButton("Manage")
         manage_plugins_btn.setFont(Typography.body())
-        manage_plugins_btn.setMaximumHeight(24)
+        manage_plugins_btn.setCursor(Qt.PointingHandCursor)
+        manage_plugins_btn.setMaximumHeight(28)
         manage_plugins_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {Colors.ELEVATED_BG.name()}; color: {Colors.TEXT_PRIMARY.name()}; border: 1px solid {Colors.BORDER_DEFAULT.name()}; border-radius: 4px; padding: 2px 8px; }}
-            QPushButton:hover {{ background-color: {Colors.ACCENT_BLUE.name()}; }}
+            QPushButton {{ 
+                background-color: {Colors.ELEVATED_BG.name()}; 
+                color: {Colors.TEXT_PRIMARY.name()}; 
+                border: 1px solid {Colors.BORDER_DEFAULT.name()}; 
+                border-radius: 6px; 
+                padding: 4px 12px; 
+            }}
+            QPushButton:hover {{ 
+                background-color: {Colors.ACCENT_BLUE.name()}; 
+                border-color: {Colors.ACCENT_BLUE.name()};
+            }}
         """)
         manage_plugins_btn.clicked.connect(lambda: self.event_bus.emit("plugin_management_requested"))
-        plugin_buttons_layout.addWidget(manage_plugins_btn)
-        plugin_buttons_layout.addStretch()
-        layout.addLayout(plugin_buttons_layout)
+
+        plugin_main_layout.addWidget(self.plugin_status_label)
+        plugin_main_layout.addStretch()
+        plugin_main_layout.addWidget(manage_plugins_btn)
+
+        layout.addLayout(plugin_main_layout)
         return panel
+
 
     def _create_actions_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Actions & Tools")
@@ -135,3 +153,10 @@ class EnhancedSidebar(QWidget):
 
     def update_project_display(self, project_name: str):
         self.project_name_label.setText(f"Project: {project_name}")
+
+    def update_plugin_status(self, active_count: int, total_count: int):
+        """Updates the plugin status label in the sidebar."""
+        if total_count == 0:
+            self.plugin_status_label.setText("No plugins found")
+        else:
+            self.plugin_status_label.setText(f"{active_count}/{total_count} plugins active")
