@@ -3,9 +3,9 @@
 
 from pathlib import Path
 from typing import Dict, Optional
-from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget
-from PySide6.QtCore import Qt, QRect, QSize
-from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont
+from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget, QMessageBox
+from PySide6.QtCore import Qt, QRect, QSize, Signal
+from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QKeySequence, QShortcut
 
 from .components import Colors, Typography
 from .code_viewer_helpers import PythonHighlighter
@@ -31,6 +31,11 @@ class EnhancedCodeEditor(QPlainTextEdit):
     error highlighting, and enhanced editing keyboard shortcuts.
     """
 
+    # Signal emitted when content is modified
+    content_changed = Signal()
+    # Signal emitted when save is requested
+    save_requested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -47,12 +52,20 @@ class EnhancedCodeEditor(QPlainTextEdit):
         self.line_number_color = Colors.TEXT_SECONDARY
         self.line_number_bg_color = Colors.SECONDARY_BG
 
+        # Track modification state
+        self._is_dirty = False
+        self._original_content = ""
+
         self.setup_styling()
+        self.setup_shortcuts()
 
         # Connect signals for line numbers and highlighting
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
+
+        # Connect content change tracking
+        self.textChanged.connect(self._on_content_changed)
 
         self.update_line_number_area_width(0)
         self.highlight_current_line()
@@ -67,6 +80,37 @@ class EnhancedCodeEditor(QPlainTextEdit):
                 selection-background-color: {Colors.ACCENT_BLUE.name()};
             }}
         """)
+
+    def setup_shortcuts(self):
+        """Set up keyboard shortcuts for the editor."""
+        # Save shortcut
+        save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
+        save_shortcut.activated.connect(self.save_requested.emit)
+
+    def set_content(self, content: str):
+        """Set content and mark as clean."""
+        self.setPlainText(content)
+        self._original_content = content
+        self._is_dirty = False
+
+    def is_dirty(self) -> bool:
+        """Check if the content has been modified."""
+        return self._is_dirty
+
+    def mark_clean(self):
+        """Mark the content as saved/clean."""
+        self._original_content = self.toPlainText()
+        self._is_dirty = False
+        self.content_changed.emit()
+
+    def _on_content_changed(self):
+        """Handle content changes to track dirty state."""
+        current_content = self.toPlainText()
+        was_dirty = self._is_dirty
+        self._is_dirty = current_content != self._original_content
+
+        if was_dirty != self._is_dirty:
+            self.content_changed.emit()
 
     def line_number_area_width(self):
         digits = 1
@@ -96,25 +140,28 @@ class EnhancedCodeEditor(QPlainTextEdit):
     def line_number_area_paint_event(self, event):
         painter = QPainter(self.line_number_area)
         painter.fillRect(event.rect(), self.line_number_bg_color)
+
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
         top = self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
         bottom = top + self.blockBoundingRect(block).height()
 
-        while block.isValid() and top <= event.rect().bottom():
-            if block.isVisible() and bottom >= event.rect().top():
+        height = self.fontMetrics().height()
+        while block.isValid() and (top <= event.rect().bottom()):
+            if block.isVisible() and (bottom >= event.rect().top()):
                 number = str(block_number + 1)
                 painter.setPen(self.line_number_color)
-                painter.drawText(0, int(top), self.line_number_area.width() - 5, self.fontMetrics().height(),
+                painter.drawText(0, int(top), self.line_number_area.width() - 5, height,
                                  Qt.AlignmentFlag.AlignRight, number)
+
             block = block.next()
             top = bottom
             bottom = top + self.blockBoundingRect(block).height()
             block_number += 1
 
     def highlight_current_line(self):
-        extra_selections = self.extraSelections()
-        extra_selections = [sel for sel in extra_selections if sel.format.background() != self.current_line_color]
+        extra_selections = []
+        extra_selections = [sel for sel in self.extraSelections() if sel.format.background() != self.current_line_color]
 
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
@@ -128,12 +175,10 @@ class EnhancedCodeEditor(QPlainTextEdit):
 
     def highlight_error_line(self, line_number: int):
         extra_selections = self.extraSelections()
-        extra_selections = [sel for sel in extra_selections if sel.format.background() != self.error_line_color]
 
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(self.error_line_color)
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-
         block = self.document().findBlockByNumber(line_number - 1)
         cursor = QTextCursor(block)
         selection.cursor = cursor
@@ -240,7 +285,7 @@ class EnhancedCodeEditor(QPlainTextEdit):
 
 
 class EditorTabManager:
-    """Manages editor tabs with enhanced code editors."""
+    """Manages editor tabs with enhanced code editors and file saving."""
 
     def __init__(self, tab_widget: QTabWidget):
         self.tab_widget = tab_widget
@@ -291,6 +336,10 @@ class EditorTabManager:
         if path_key.endswith('.py'):
             PythonHighlighter(editor.document())
 
+        # Connect save signal
+        editor.save_requested.connect(lambda: self.save_file(path_key))
+        editor.content_changed.connect(lambda: self._update_tab_title(path_key))
+
         tab_index = self.tab_widget.addTab(editor, Path(path_key).name)
         self.tab_widget.setTabToolTip(tab_index, path_key)
         self.editors[path_key] = editor
@@ -299,7 +348,8 @@ class EditorTabManager:
 
     def set_editor_content(self, path_key: str, content: str):
         if path_key in self.editors:
-            self.editors[path_key].setPlainText(content)
+            self.editors[path_key].set_content(content)
+            self._update_tab_title(path_key)
 
     def stream_content_to_editor(self, path_key: str, chunk: str):
         if path_key not in self.editors:
@@ -335,10 +385,113 @@ class EditorTabManager:
     def close_tab(self, index: int):
         tooltip = self.tab_widget.tabToolTip(index)
         if tooltip in self.editors:
+            editor = self.editors[tooltip]
+            # Check if file needs saving
+            if editor.is_dirty():
+                result = self._prompt_save_before_close(Path(tooltip).name)
+                if result == QMessageBox.StandardButton.Save:
+                    if not self.save_file(tooltip):
+                        return  # Cancel close if save failed
+                elif result == QMessageBox.StandardButton.Cancel:
+                    return  # Cancel close
+                # If Discard, continue with close
+
             del self.editors[tooltip]
+
         self.tab_widget.removeTab(index)
         if self.tab_widget.count() == 0:
             self._add_welcome_tab("All tabs closed. Open a file or generate code.")
+
+    def save_file(self, path_key: str) -> bool:
+        """Save the file content to disk."""
+        if path_key not in self.editors:
+            print(f"[EditorTabManager] Cannot save: No editor for {path_key}")
+            return False
+
+        editor = self.editors[path_key]
+        try:
+            file_path = Path(path_key)
+            content = editor.toPlainText()
+
+            # Ensure parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write content to file
+            file_path.write_text(content, encoding='utf-8')
+
+            # Mark as clean
+            editor.mark_clean()
+            self._update_tab_title(path_key)
+
+            print(f"[EditorTabManager] Saved file: {file_path.name}")
+            return True
+
+        except Exception as e:
+            print(f"[EditorTabManager] Error saving file {path_key}: {e}")
+            self._show_save_error(Path(path_key).name, str(e))
+            return False
+
+    def save_current_file(self) -> bool:
+        """Save the currently active file."""
+        current_path = self.get_active_file_path()
+        if current_path:
+            return self.save_file(current_path)
+        return False
+
+    def save_all_files(self) -> bool:
+        """Save all modified files."""
+        all_saved = True
+        for path_key, editor in self.editors.items():
+            if editor.is_dirty():
+                if not self.save_file(path_key):
+                    all_saved = False
+        return all_saved
+
+    def has_unsaved_changes(self) -> bool:
+        """Check if any file has unsaved changes."""
+        return any(editor.is_dirty() for editor in self.editors.values())
+
+    def get_unsaved_files(self) -> list[str]:
+        """Get list of files with unsaved changes."""
+        return [path_key for path_key, editor in self.editors.items() if editor.is_dirty()]
+
+    def _update_tab_title(self, path_key: str):
+        """Update tab title to show dirty state."""
+        if path_key not in self.editors:
+            return
+
+        editor = self.editors[path_key]
+        base_name = Path(path_key).name
+        title = f"{'*' if editor.is_dirty() else ''}{base_name}"
+
+        for i in range(self.tab_widget.count()):
+            if self.tab_widget.tabToolTip(i) == path_key:
+                self.tab_widget.setTabText(i, title)
+                break
+
+    def _prompt_save_before_close(self, filename: str) -> QMessageBox.StandardButton:
+        """Prompt user to save before closing."""
+        msg_box = QMessageBox()
+        msg_box.setIcon(QMessageBox.Icon.Question)
+        msg_box.setWindowTitle("Unsaved Changes")
+        msg_box.setText(f"'{filename}' has unsaved changes.")
+        msg_box.setInformativeText("Do you want to save your changes?")
+        msg_box.setStandardButtons(
+            QMessageBox.StandardButton.Save |
+            QMessageBox.StandardButton.Discard |
+            QMessageBox.StandardButton.Cancel
+        )
+        msg_box.setDefaultButton(QMessageBox.StandardButton.Save)
+        return msg_box.exec()
+
+    def _show_save_error(self, filename: str, error: str):
+        """Show error dialog when save fails."""
+        msg_box = QMessageBox()
+        msg_box.setIcon(QMessageBox.Icon.Critical)
+        msg_box.setWindowTitle("Save Error")
+        msg_box.setText(f"Could not save '{filename}'")
+        msg_box.setDetailedText(error)
+        msg_box.exec()
 
     def highlight_error(self, file_path_str: str, line_number: int):
         """
