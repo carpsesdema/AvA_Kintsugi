@@ -265,6 +265,22 @@ class WorkflowManager:
         else:
             self.log("warning", "Received an empty error report or command to fix.")
 
+    def handle_highlighted_error_fix_request(self, highlighted_text: str):
+        """Handles a fix request initiated from a right-click in the terminal."""
+        if self._last_error_report and self._last_failing_command:
+            # The highlighted text is good context for the LLM.
+            augmented_error_report = (
+                f"The user highlighted the following part of the error log:\n"
+                f"--- HIGHLIGHTED START ---\n"
+                f"{highlighted_text}\n"
+                f"--- HIGHLIGHTED END ---\n\n"
+                f"Full error report:\n"
+                f"{self._last_error_report}"
+            )
+            self._initiate_fix_workflow(augmented_error_report, self._last_failing_command)
+        else:
+            self.log("warning", "A fix was requested for highlighted text, but no previous error is stored.")
+
     def _initiate_fix_workflow(self, error_report: str, command: str):
         """The core logic to start the AI fix workflow."""
         if not self.service_manager or not self.task_manager:

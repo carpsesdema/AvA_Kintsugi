@@ -70,7 +70,7 @@ class TerminalWidget(QWidget):
         # Action to fix selection, only shown if text is selected
         if self.output_view.textCursor().hasSelection():
             fix_action = QAction("Ask AI to Fix This Error", self)
-            fix_action.triggered.connect(self._request_fix_for_selection)
+            fix_action.triggered.connect(self._request_fix_for_highlighted_error)
             menu.addAction(fix_action)
             menu.addSeparator()
 
@@ -83,8 +83,8 @@ class TerminalWidget(QWidget):
 
         menu.exec(self.output_view.viewport().mapToGlobal(pos))
 
-    def _request_fix_for_selection(self):
-        """Emits an event with the selected text to be fixed."""
+    def _request_fix_for_highlighted_error(self):
+        """Emits an event with the selected text to be fixed by the WorkflowManager."""
         selected_text = self.output_view.textCursor().selectedText().strip()
         if selected_text:
             self.event_bus.emit("fix_highlighted_error_requested", selected_text)

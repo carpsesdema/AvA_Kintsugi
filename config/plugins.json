@@ -1,0 +1,44 @@
+{
+  "enabled_plugins": [
+    "living_design_agent",
+    "autonomous_code_reviewer"
+  ],
+  "plugin_settings": {
+    "code_monitor": {
+      "report_frequency": 5,
+      "track_file_types": true,
+      "detailed_logging": false
+    },
+    "hello_world": {
+      "greeting_message": "Hello from the plugin system!",
+      "track_sessions": true,
+      "max_greetings": 5
+    },
+    "autonomous_code_reviewer": {
+      "auto_fix_enabled": false,
+      "proactive_analysis": true,
+      "error_monitoring": true,
+      "security_analysis": true,
+      "performance_analysis": false,
+      "learning_enabled": true,
+      "auto_commit_fixes": false,
+      "analysis_frequency": 600
+    },
+    "living_design_agent": {
+      "auto_update_frequency": 300,
+      "generate_diagrams": true,
+      "track_api_changes": true,
+      "detailed_logging": true
+    },
+    "system_integrator": {
+      "auto_integration_check": true,
+      "auto_fix_enabled": true,
+      "analysis_depth": "deep",
+      "fix_main_py": true,
+      "validate_interfaces": true,
+      "check_signatures": true,
+      "detailed_logging": true,
+      "fix_confidence_threshold": 0.8
+    }
+  }
+}
