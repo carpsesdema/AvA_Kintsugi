@@ -140,18 +140,25 @@ class ArchitectService:
 
             plan = await self._get_plan_from_llm(plan_prompt)
 
-            if plan:
+            if not plan or not isinstance(plan.get("files"), list):
+                self.log("error", "The AI's modification plan was invalid or missing the 'files' list.")
+                return None
+            try:
+                # This is the line that caused the original error.
+                # Now it's wrapped in a try/except to handle malformed entries.
                 planned_filenames = {f['filename'] for f in plan.get('files', [])}
-                is_creating_new_main = "main.py" in planned_filenames and "main.py" not in existing_files
-                is_creating_new_config = "config.py" in planned_filenames and "config.py" not in existing_files
-
-                if is_creating_new_main or is_creating_new_config:
-                    error_msg = "AI attempted to re-architect the project by creating a new entry point or config. Aborting."
-                    self.log("error", error_msg)
-                    self.event_bus.emit("ai_response_ready",
-                                        "The AI proposed an invalid change that would break the project structure. I've stopped it. Please try rephrasing your request.")
-                    return None
-
+            except KeyError:
+                self.log("error", "The AI's modification plan contained an entry without a 'filename' key. Aborting.")
+                self.event_bus.emit("ai_response_ready", "Sorry, the AI generated an invalid modification plan. Please try again.")
+                return None
+            is_creating_new_main = "main.py" in planned_filenames and "main.py" not in existing_files
+            is_creating_new_config = "config.py" in planned_filenames and "config.py" not in existing_files
+            if is_creating_new_main or is_creating_new_config:
+                error_msg = "AI attempted to re-architect the project by creating a new entry point or config. Aborting."
+                self.log("error", error_msg)
+                self.event_bus.emit("ai_response_ready",
+                                    "The AI proposed an invalid change that would break the project structure. I've stopped it. Please try rephrasing your request.")
+                return None
             return plan
         except Exception as e:
             self.handle_error("architect", f"An unexpected error during modification planning: {e}")

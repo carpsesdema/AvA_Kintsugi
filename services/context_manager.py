@@ -47,9 +47,11 @@ class ContextManager:
             # Get living design context with error handling
             living_design_context = {}
             try:
-                living_design_agent = self.service_manager.get_active_plugin_instance("living_design_agent")
-                if living_design_agent and hasattr(living_design_agent, 'get_current_documentation'):
-                    living_design_context = living_design_agent.get_current_documentation() or {}
+                plugin_manager = self.service_manager.get_plugin_manager()
+                if plugin_manager:
+                    living_design_agent = plugin_manager.get_active_plugin_instance("living_design_agent")
+                    if living_design_agent and hasattr(living_design_agent, 'get_current_documentation'):
+                        living_design_context = living_design_agent.get_current_documentation() or {}
             except Exception as e:
                 print(f"Warning: Could not get living design context: {e}")
 

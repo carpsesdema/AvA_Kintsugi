@@ -80,13 +80,29 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
 
     **CRITICAL INSTRUCTIONS - READ CAREFULLY:**
     1.  **DO NOT RE-ARCHITECT THE PROJECT:** Your only job is to modify the existing files or add new, secondary files to fulfill the user's request.
-    2.  **DO NOT CREATE A NEW `main.py` OR `config.py`:** The project's entry point and configuration are already defined. Do not create duplicates.
-    3.  **STRICTLY ADHERE TO EXISTING FILENAMES AND PATHS:** When modifying a file, you MUST use its exact path from the list above (e.g., `todo_app/routes.py`). Do not invent new paths or create duplicate directories.
-    4.  **DETERMINE NECESSARY CHANGES:** Based on the user's request, decide which files to modify and which NEW helper files to create (if and only if a new file is truly required).
-    5.  **JSON OUTPUT ONLY:** Your response MUST be ONLY a valid JSON object with a single "files" key. Do not add any other text, explanations, or markdown.
+    2.  **STRICTLY ADHERE TO EXISTING FILENAMES AND PATHS:** When modifying a file, you MUST use its exact path from the list above (e.g., `todo_app/routes.py`). Do not invent new paths or create duplicate directories.
+    3.  **DETERMINE NECESSARY CHANGES:** Based on the user's request, decide which files to modify and which NEW helper files to create (if and only if a new file is truly required).
+    4.  **PROVIDE A DETAILED PURPOSE:** For each file in your plan, write a clear, specific "purpose" explaining *exactly* what changes are needed (e.g., "Add a '/delete/<int:task_id>' route to handle task deletion.").
+    5.  **JSON OUTPUT ONLY:** Your response MUST be ONLY a valid JSON object. Do not add any other text, explanations, or markdown.
 
     ---
-    **Generate the JSON modification plan now. Remember your critical instructions.**
+    **EXAMPLE JSON RESPONSE FORMAT:**
+    ```json
+    {{
+      "files": [
+        {{
+          "filename": "todo_app/routes.py",
+          "purpose": "Modify this file to add a new route for deleting tasks. The route should be '/delete/<int:task_id>' and handle the database operation."
+        }},
+        {{
+          "filename": "todo_app/templates/index.html",
+          "purpose": "Modify the template to add a 'Delete' button next to each task item in the list. This button should link to the new delete route."
+        }}
+      ]
+    }}
+    ```
+    ---
+    **Generate the JSON modification plan now. Ensure your output matches the example format exactly.**
     """)
 
 
@@ -125,8 +141,7 @@ CODER_PROMPT = textwrap.dedent("""
     ```
 
     **📚 RELEVANT KNOWLEDGE BASE CONTEXT:**
-    ```
-    {rag_context}
+    ```    {rag_context}
     ```
 
     ---
