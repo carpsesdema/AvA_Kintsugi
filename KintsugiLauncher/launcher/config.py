@@ -10,7 +10,7 @@ APP_EXECUTABLE_NAME = "main.exe"  # The name of the exe created by your *main ap
 # The URL pointing to your version_manifest.json on GitHub.
 # IMPORTANT: Use the "raw" URL.
 # Replace 'YOUR_USERNAME' and 'YOUR_REPO' with your actual GitHub details.
-MANIFEST_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/version_manifest.json"
+MANIFEST_URL = "https://raw.githubusercontent.com/carpsesdema/AvA_Kintsugi/refs/heads/master/version_manifest.json"
 
 # --- Directory Structure ---
 # The launcher will assume the main application is installed in a subdirectory
