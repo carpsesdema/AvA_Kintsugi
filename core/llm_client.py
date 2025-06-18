@@ -15,6 +15,10 @@ try:
     import google.generativeai as genai
 except ImportError:
     genai = None
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
 
 
 class LLMClient:
@@ -43,6 +47,14 @@ class LLMClient:
                 genai.configure(api_key=gemini_key)
                 self.clients["google"] = "configured"
                 print("[LLMClient] Google Gemini client configured.")
+
+        # --- THIS IS THE FIX ---
+        if anthropic:
+            if anthropic_key := os.getenv("ANTHROPIC_API_KEY"):
+                self.clients["anthropic"] = anthropic.AsyncAnthropic(api_key=anthropic_key)
+                print("[LLMClient] Anthropic client configured.")
+        # --- END OF FIX ---
+
         self.clients["ollama"] = "configured"
         print("[LLMClient] Ollama client configured.")
 
@@ -139,11 +151,16 @@ class LLMClient:
         if "google" in self.clients:
             models["google/gemini-2.5-pro-preview-06-05"] = "Google: Gemini 2.5 Pro"
             models["google/gemini-2.5-flash-preview-05-20"] = "Google: Gemini 2.5 Flash"
-            # --- THIS IS THE FIX ---
             models["google/gemini-2.0-flash"] = "Google: Gemini 2.0 Flash"
-            # --- END OF FIX ---
             models["google/gemini-1.5-flash-latest"] = "Google: Gemini 1.5 Flash"
             models["google/gemini-1.0-pro"] = "Google: Gemini 1.0 Pro"
+
+        # --- THIS IS THE FIX ---
+        if "anthropic" in self.clients:
+            models["anthropic/claude-3-5-sonnet-20240620"] = "Anthropic: Claude 3.5 Sonnet"
+            models["anthropic/claude-3-opus-20240229"] = "Anthropic: Claude 3 Opus"
+            models["anthropic/claude-3-haiku-20240307"] = "Anthropic: Claude 3 Haiku"
+        # --- END OF FIX ---
 
         if "ollama" in self.clients:
             ollama_models = await self._get_local_ollama_models()
@@ -189,13 +206,13 @@ class LLMClient:
         temperature = self.get_role_temperature(role) if role else 0.7
         print(f"[LLMClient] Streaming from {provider}/{model} (temp: {temperature:.2f})...")
         router = {"openai": self._stream_openai_compatible, "deepseek": self._stream_openai_compatible,
-                  "google": self._stream_google, "ollama": self._stream_ollama}
+                  "google": self._stream_google, "ollama": self._stream_ollama, "anthropic": self._stream_anthropic}
         client = self.clients.get(provider)
         stream_func = router.get(provider)
         if not stream_func or (client is None and provider != 'google'):
             yield f"Error: Streaming function for {provider} not found."
             return
-        if provider in ["openai", "deepseek"]:
+        if provider in ["openai", "deepseek", "anthropic"]:
             stream = stream_func(client, model, prompt, temperature)
         else:
             stream = stream_func(model, prompt, temperature)
@@ -240,6 +257,19 @@ class LLMClient:
 
         except Exception as e:
             yield f"\n\nError from Google API: {e}"
+
+    async def _stream_anthropic(self, client, model: str, prompt: str, temperature: float):
+        try:
+            async with client.messages.stream(
+                    max_tokens=4096,
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield text
+        except Exception as e:
+            yield f"\n\nError from Anthropic API: {e}"
 
     async def _stream_ollama(self, model: str, prompt: str, temperature: float):
         ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/chat"

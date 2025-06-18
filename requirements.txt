@@ -8,7 +8,7 @@ aiohttp
 # --- LLM and AI Libraries ---
 openai
 google-generativeai
-
+anthropic
 # --- RAG and Vector DB ---
 chromadb
 sentence-transformers
