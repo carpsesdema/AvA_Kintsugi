@@ -30,11 +30,15 @@ def main():
     # 2. Run PyInstaller
     spec_path = project_root / SPEC_FILE # Path to the spec file in the root
     print(f"\nStep 2: Running PyInstaller with spec file: {spec_path}...")
+    # --- THIS IS THE FIX ---
+    # We remove the --hidden-import from the command line because
+    # the launcher.spec file is now handling all the configuration.
     command = [
         "pyinstaller",
         str(spec_path),
         "--noconfirm"
     ]
+    # --- END OF FIX ---
     try:
         # Run from the project root directory for correct path context
         subprocess.run(command, check=True, capture_output=False, text=True, cwd=project_root)
@@ -49,7 +53,7 @@ def main():
         print(f"--- PyInstaller Output ---\n{e.stdout}\n--- PyInstaller Errors ---\n{e.stderr}")
         return
 
-    # 3. Final instructions --- THIS IS THE FIX ---
+    # 3. Final instructions
     output_folder = dist_dir / 'KintsugiLauncher'
     print("\n--- Launcher Build Complete! ---")
     print(f"The standalone launcher has been created in:")

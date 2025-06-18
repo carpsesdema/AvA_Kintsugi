@@ -19,8 +19,8 @@ a = Analysis(
     binaries=[],
     datas=[('launcher', 'launcher')],
     # --- THIS IS THE CRITICAL FIX ---
-    # Manually tell PyInstaller to bundle these libraries that it missed.
-    hiddenimports=['qasync', 'requests', 'packaging'],
+    # We explicitly add 'packaging.version' because PyInstaller isn't finding it automatically.
+    hiddenimports=['qasync', 'requests', 'packaging', 'packaging.version'],
     # --- END OF FIX ---
     hookspath=[],
     hooksconfig={},

@@ -162,7 +162,7 @@ class Updater:
     @staticmethod
     def launch_application(app_path: Path):
         """
-        Launches the main application executable.
+        Launches the main application executable, setting its working directory.
 
         Args:
             app_path (Path): Path to the application executable.
@@ -171,8 +171,12 @@ class Updater:
             logger.error(f"Cannot launch application: Executable not found at {app_path}")
             return
 
+        # The working directory should be the directory containing the executable.
+        # This is crucial for the application to find its own resources (assets, etc.).
+        working_dir = app_path.parent
         logger.info(f"Launching application: {app_path}")
+        logger.info(f"Setting working directory to: {working_dir}")
         try:
-            subprocess.Popen([str(app_path)])
+            subprocess.Popen([str(app_path)], cwd=working_dir)
         except Exception as e:
             logger.error(f"Failed to launch application: {e}")
