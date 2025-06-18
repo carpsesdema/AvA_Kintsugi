@@ -1,71 +1,37 @@
 # main.spec
-# This file tells PyInstaller how to build your application.
 
-import sys
-import os # Import the os module
+# -*- mode: python ; coding: utf-8 -*-
+
 from pathlib import Path
 
-# --- Setup Paths (The Robust Way) ---
-# THIS IS THE FIX: When PyInstaller runs a .spec file, __file__ is not defined.
-# The reliable way to get the root directory is from sys.argv[0].
-spec_root = os.path.abspath(os.path.dirname(sys.argv[0]))
-project_root = Path(spec_root)
-# --- END OF FIX ---
-src_path = project_root / 'src'
+block_cipher = None
 
-# --- The Analysis ---
-# This is the core part where PyInstaller analyzes your code to find all dependencies.
 a = Analysis(
-    # The entry point of your application
-    ['src/ava/main.py'],
-    # Paths where PyInstaller should look for modules
-    pathex=[str(project_root), str(src_path)],
+    ['src/ava/main.py'],  # Make sure this points to your main entry script
+    pathex=['src'],  # Tell PyInstaller to look for imports in the 'src' directory
     binaries=[],
-    # Bundle data files (like icons, configs, and plugins) into the executable
-    datas=[
-        (str(project_root / 'src/ava/assets'), 'ava/assets'),
-        (str(project_root / 'config'), 'config'),
-        (str(project_root / 'plugins'), 'plugins'),
-        (str(project_root / 'src/ava/core/plugins/examples'), 'ava/core/plugins/examples')
-    ],
-    # Hidden imports for dynamically loaded modules that PyInstaller might miss
-    hiddenimports=[
-        'qasync',
-        'qtawesome',
-        'PySide6.QtSvg',
-        'PySide6.QtOpenGLWidgets',
-        'uvicorn',
-        'fastapi',
-        'anthropic',
-        'google.generativeai',
-        'openai',
-        'chromadb',
-        'sentence_transformers',
-        'git',
-        # Your dynamically loaded plugins!
-        'ava.core.plugins.examples.living_design_agent_final',
-        'ava.core.plugins.examples.autonomous_code_reviewer',
-    ],
+    datas=[('src/ava/assets', 'ava/assets')],  # Correctly bundle the assets folder
+    hiddenimports=['PySide6.QtSvg', 'qasync', 'qtawesome'],
     hookspath=[],
+    hooksconfig={},
     runtime_hooks=[],
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
-    cipher=None,
+    cipher=block_cipher,
     noarchive=False,
 )
-
-# --- Packaging ---
-# These sections define how the collected files are bundled together.
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=None)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Kintsugi AvA',
+    # --- THIS IS THE REAL, FINAL FIX ---
+    # We change the name of the output .exe file right here.
+    name='main',
+    # --- END OF FIX ---
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -76,10 +42,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # Set the application icon
-    icon=str(project_root / 'src/ava/assets/Ava_Icon.ico')
+    icon='src/ava/assets/Ava_Icon.ico' # Corrected path to icon
 )
-
 coll = COLLECT(
     exe,
     a.binaries,
@@ -88,5 +52,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='main',
+    name='main' # The output folder will now also be 'main'
 )

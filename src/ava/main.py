@@ -7,30 +7,30 @@ import qasync
 from pathlib import Path
 
 # --- THIS IS THE FIX ---
-# Add the 'src' directory to the Python path at the very beginning.
-# This makes imports like `from ava.core...` work correctly and consistently,
-# which is crucial for both running from source and for PyInstaller builds.
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root / 'src'))
+# The path manipulation logic is now separated for running from source vs. running as a
+# bundled executable. This is the key to making the PyInstaller build work.
 
-# For PyInstaller: when the app is bundled, `sys.frozen` is True.
-# The resources (like icons) will be in a temporary folder `_MEIPASS`.
-# We need to add this to the path as well for bundled assets to be found.
 if getattr(sys, 'frozen', False):
-    # This path is where PyInstaller unpacks data files
+    # This block runs when the application is bundled by PyInstaller.
+    # We add the temporary _MEIPASS directory to the path, which is where
+    # PyInstaller unpacks bundled assets (like icons).
     meipass_path = Path(sys._MEIPASS)
     sys.path.insert(0, str(meipass_path))
-
+else:
+    # This block runs when you run the script directly from your IDE.
+    # It adds the 'src' directory to the path so that imports like
+    # 'from ava.core...' are found correctly.
+    project_root = Path(__file__).parent.parent.parent
+    sys.path.insert(0, str(project_root / 'src'))
 # --- END OF FIX ---
 
 
 from PySide6.QtWidgets import QApplication
 
 # --- Import the main Application class that orchestrates everything ---
-from ava.core.application import Application  # <-- Changed import path
-# --- END IMPORT ---
-
-from ava.utils.exception_handler import setup_exception_hook  # <-- Changed import path
+# These imports now work correctly in both environments.
+from ava.core.application import Application
+from ava.utils.exception_handler import setup_exception_hook
 
 
 async def main_async_logic():

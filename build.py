@@ -4,7 +4,11 @@ from pathlib import Path
 
 # --- Configuration ---
 SPEC_FILE = "main.spec"
-APP_NAME = "Kintsugi AvA"
+# --- THIS IS THE FIX ---
+# Change the APP_NAME to 'main'. This will make PyInstaller create 'main.exe',
+# which is exactly what your launcher is configured to look for.
+APP_NAME = "AvAkin"
+# --- END OF FIX ---
 APP_VERSION = "1.0.0"  # <-- NEW: Version number for the build
 
 # Define project paths
