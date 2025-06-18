@@ -74,29 +74,17 @@ class MainWindow(QMainWindow):
         """
         print("[MainWindow] Close event triggered - starting graceful shutdown...")
 
-        # Ignore the close event initially to handle cleanup
-        event.ignore()
+        try:
+            # Emit application shutdown event to trigger cleanup
+            if self.event_bus:
+                self.event_bus.emit("application_shutdown")
+        except Exception as e:
+            print(f"[MainWindow] Error during shutdown event: {e}")
 
-        # Start the shutdown process
-        self._start_shutdown()
-
-    def _start_shutdown(self):
-        """Start the graceful shutdown process."""
-        # Emit application shutdown event to trigger cleanup
-        if self.event_bus:
-            self.event_bus.emit("application_shutdown")
-
-        # Give a short delay for cleanup to complete, then force close
-        QTimer.singleShot(500, self._force_close)
-
-    def _force_close(self):
-        """Force close the application after cleanup delay."""
-        print("[MainWindow] Forcing application closure...")
+        # Accept the close event - let the window close normally
+        event.accept()
 
         # Get the QApplication instance and quit it properly
         app = QApplication.instance()
         if app:
             app.quit()
-        else:
-            # Fallback: close the window directly
-            super().close()

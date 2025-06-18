@@ -1,7 +1,6 @@
 # kintsugi_ava/core/plugins/examples/autonomous_code_reviewer/__init__.py
 # A plugin that provides autonomous code review and fixing capabilities.
-
-from src.ava.core.plugins import PluginBase, PluginMetadata, PluginState
+from ava.core.plugins.plugin_system import PluginState, PluginMetadata, PluginBase
 
 
 class AutonomousCodeReviewerPlugin(PluginBase):
