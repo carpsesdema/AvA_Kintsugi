@@ -17,8 +17,11 @@ a = Analysis(
     [main_script],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=['qasync'], # Ensure qasync is included
+    datas=[('launcher', 'launcher')],
+    # --- THIS IS THE CRITICAL FIX ---
+    # Manually tell PyInstaller to bundle these libraries that it missed.
+    hiddenimports=['qasync', 'requests', 'packaging'],
+    # --- END OF FIX ---
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -46,9 +49,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # --- THIS IS THE FIX ---
-    # We point to the icon relative to this spec file's location.
-    # '../' goes up from KintsugiLauncher to the main AvA_Kintsugi folder.
     icon='../src/ava/assets/Ava_Icon.ico'
 )
 coll = COLLECT(

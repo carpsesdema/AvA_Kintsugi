@@ -1,5 +1,3 @@
-# KintsugiLauncher/build_launcher.py
-
 import subprocess
 import shutil
 from pathlib import Path
@@ -8,8 +6,9 @@ from pathlib import Path
 SPEC_FILE = "launcher.spec"
 APP_NAME = "Kintsugi AvA Launcher"
 
-# Define project paths
-project_root = Path(__file__).parent
+# --- Project Paths ---
+# Since this script is in the root, the project_root is its parent directory
+project_root = Path(__file__).parent.resolve()
 build_dir = project_root / "build"
 dist_dir = project_root / "dist"
 
@@ -29,15 +28,16 @@ def main():
         print(f"  - Warning: Could not completely clean old directories: {e}")
 
     # 2. Run PyInstaller
-    print(f"\nStep 2: Running PyInstaller with spec file: {SPEC_FILE}...")
+    spec_path = project_root / SPEC_FILE # Path to the spec file in the root
+    print(f"\nStep 2: Running PyInstaller with spec file: {spec_path}...")
     command = [
         "pyinstaller",
-        SPEC_FILE,
+        str(spec_path),
         "--noconfirm"
     ]
-
     try:
-        subprocess.run(command, check=True, capture_output=False, text=True)
+        # Run from the project root directory for correct path context
+        subprocess.run(command, check=True, capture_output=False, text=True, cwd=project_root)
         print(" - PyInstaller finished successfully.")
 
     except FileNotFoundError:
@@ -49,13 +49,15 @@ def main():
         print(f"--- PyInstaller Output ---\n{e.stdout}\n--- PyInstaller Errors ---\n{e.stderr}")
         return
 
-    # 3. Final instructions
+    # 3. Final instructions --- THIS IS THE FIX ---
+    output_folder = dist_dir / 'KintsugiLauncher'
     print("\n--- Launcher Build Complete! ---")
     print(f"The standalone launcher has been created in:")
-    print(f"{dist_dir.resolve()}")
-    print("\nTo use the launcher, you would typically place it one level above")
-    print("the main application directory.")
-    print("---------------------------------\n")
+    print(f"{output_folder.resolve()}")
+    print("\nTo test, copy this 'KintsugiLauncher' folder to a clean directory")
+    print("(like C:\\app_testing\\) and run the .exe from there.")
+    print("----------------------------------\n")
+
 
 if __name__ == "__main__":
     main()
