@@ -48,12 +48,10 @@ class LLMClient:
                 self.clients["google"] = "configured"
                 print("[LLMClient] Google Gemini client configured.")
 
-        # --- THIS IS THE FIX ---
         if anthropic:
             if anthropic_key := os.getenv("ANTHROPIC_API_KEY"):
                 self.clients["anthropic"] = anthropic.AsyncAnthropic(api_key=anthropic_key)
                 print("[LLMClient] Anthropic client configured.")
-        # --- END OF FIX ---
 
         self.clients["ollama"] = "configured"
         print("[LLMClient] Ollama client configured.")
@@ -155,12 +153,16 @@ class LLMClient:
             models["google/gemini-1.5-flash-latest"] = "Google: Gemini 1.5 Flash"
             models["google/gemini-1.0-pro"] = "Google: Gemini 1.0 Pro"
 
-        # --- THIS IS THE FIX ---
         if "anthropic" in self.clients:
             models["anthropic/claude-3-5-sonnet-20240620"] = "Anthropic: Claude 3.5 Sonnet"
             models["anthropic/claude-3-opus-20240229"] = "Anthropic: Claude 3 Opus"
             models["anthropic/claude-3-haiku-20240307"] = "Anthropic: Claude 3 Haiku"
-        # --- END OF FIX ---
+            # --- THIS IS THE FIX ---
+            models["anthropic/claude-opus-4-20250514"] = "Anthropic: Claude Opus 4"
+            models["anthropic/claude-sonnet-4-20250514"] = "Anthropic: Claude Sonnet 4"
+            models["anthropic/claude-3-7-sonnet-20250219"] = "Anthropic: Claude Sonnet 3.7"
+            models["anthropic/claude-3-5-haiku-20241022"] = "Anthropic: Claude Haiku 3.5"
+            # --- END OF FIX ---
 
         if "ollama" in self.clients:
             ollama_models = await self._get_local_ollama_models()
