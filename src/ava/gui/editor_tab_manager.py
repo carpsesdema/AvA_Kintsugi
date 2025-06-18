@@ -1,9 +1,9 @@
 # kintsugi_ava/gui/editor_tab_manager.py
-# V4: Final polish. Error highlighting now automatically opens the file if it's not already in a tab.
+# V5: All QMessageBox popups have been removed.
 
 from pathlib import Path
 from typing import Dict, Optional
-from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget, QMessageBox
+from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget
 from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QKeySequence, QShortcut
 
@@ -386,15 +386,9 @@ class EditorTabManager:
         tooltip = self.tab_widget.tabToolTip(index)
         if tooltip in self.editors:
             editor = self.editors[tooltip]
-            # Check if file needs saving
+            # --- FIX: Silently save the file before closing if it has changes ---
             if editor.is_dirty():
-                result = self._prompt_save_before_close(Path(tooltip).name)
-                if result == QMessageBox.StandardButton.Save:
-                    if not self.save_file(tooltip):
-                        return  # Cancel close if save failed
-                elif result == QMessageBox.StandardButton.Cancel:
-                    return  # Cancel close
-                # If Discard, continue with close
+                self.save_file(tooltip)
 
             del self.editors[tooltip]
 
@@ -469,29 +463,9 @@ class EditorTabManager:
                 self.tab_widget.setTabText(i, title)
                 break
 
-    def _prompt_save_before_close(self, filename: str) -> QMessageBox.StandardButton:
-        """Prompt user to save before closing."""
-        msg_box = QMessageBox()
-        msg_box.setIcon(QMessageBox.Icon.Question)
-        msg_box.setWindowTitle("Unsaved Changes")
-        msg_box.setText(f"'{filename}' has unsaved changes.")
-        msg_box.setInformativeText("Do you want to save your changes?")
-        msg_box.setStandardButtons(
-            QMessageBox.StandardButton.Save |
-            QMessageBox.StandardButton.Discard |
-            QMessageBox.StandardButton.Cancel
-        )
-        msg_box.setDefaultButton(QMessageBox.StandardButton.Save)
-        return msg_box.exec()
-
     def _show_save_error(self, filename: str, error: str):
-        """Show error dialog when save fails."""
-        msg_box = QMessageBox()
-        msg_box.setIcon(QMessageBox.Icon.Critical)
-        msg_box.setWindowTitle("Save Error")
-        msg_box.setText(f"Could not save '{filename}'")
-        msg_box.setDetailedText(error)
-        msg_box.exec()
+        """Logs a save error to the console instead of showing a dialog."""
+        print(f"CRITICAL: Could not save '{filename}'\nError: {error}")
 
     def highlight_error(self, file_path_str: str, line_number: int):
         """
