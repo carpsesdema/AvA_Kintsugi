@@ -132,15 +132,18 @@ class LLMClient:
         if "openai" in self.clients:
             models["openai/gpt-4o"] = "OpenAI: GPT-4o"
 
-        # --- THIS IS THE FIX ---
         if "deepseek" in self.clients:
             models["deepseek/deepseek-chat"] = "DeepSeek: Chat"
             models["deepseek/deepseek-reasoner"] = "DeepSeek: Reasoner (R1-0528)"
-        # --- END OF FIX ---
 
         if "google" in self.clients:
             models["google/gemini-2.5-pro-preview-06-05"] = "Google: Gemini 2.5 Pro"
             models["google/gemini-2.5-flash-preview-05-20"] = "Google: Gemini 2.5 Flash"
+            # --- THIS IS THE FIX ---
+            models["google/gemini-2.0-flash"] = "Google: Gemini 2.0 Flash"
+            # --- END OF FIX ---
+            models["google/gemini-1.5-flash-latest"] = "Google: Gemini 1.5 Flash"
+            models["google/gemini-1.0-pro"] = "Google: Gemini 1.0 Pro"
 
         if "ollama" in self.clients:
             ollama_models = await self._get_local_ollama_models()
