@@ -1,15 +1,12 @@
-# launcher/main.py
-
 import sys
 from pathlib import Path
 
-# --- This makes it runnable from source and for PyInstaller ---
-# Add the parent directory (KintsugiLauncher) to the path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# No more sys.path manipulation needed!
 
 from PySide6.QtWidgets import QApplication
-import qasync  # We'll use qasync for a smooth event loop, just like in your main app
+import qasync
 
+# Clean imports because main.py is outside the 'launcher' package
 from launcher.gui import LauncherWindow
 from launcher.updater import Updater
 from launcher.config import (
@@ -19,14 +16,12 @@ from launcher.config import (
     configure_launcher_logging
 )
 
-
 def get_current_version(app_dir: Path) -> str:
     """Reads the version from the version.txt file."""
     version_file = app_dir / "version.txt"
     if version_file.exists():
         return version_file.read_text().strip()
     return "0.0.0"  # Default version if not found
-
 
 def main():
     """The main entry point for the launcher."""
@@ -41,8 +36,8 @@ def main():
         # We are running in a bundle (e.g., from PyInstaller)
         launcher_dir = Path(sys.executable).parent
     else:
-        # We are running from source
-        launcher_dir = Path(__file__).resolve().parent.parent
+        # We are running from source, and this script is in the root
+        launcher_dir = Path(__file__).resolve().parent
 
     app_install_dir = launcher_dir / APP_SUBDIRECTORY_NAME
     app_exe_path = app_install_dir / APP_EXECUTABLE_NAME

@@ -7,7 +7,7 @@ from pathlib import Path
 block_cipher = None
 
 # --- Main Application Entry Point ---
-main_script = 'launcher/main.py'
+main_script = 'main.py'  # <-- UPDATED PATH
 
 # --- Application Name (used for the .exe) ---
 app_name = 'Kintsugi_AvA_Launcher'

@@ -1,71 +1,44 @@
-# launcher/main.py
-
-import sys
+import logging
 from pathlib import Path
 
-# --- This makes it runnable from source and for PyInstaller ---
-# Add the parent directory (KintsugiLauncher) to the path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# --- Core Application Details ---
+# This is the single source of truth for your application's name and executable.
+APP_NAME = "Kintsugi AvA"
+APP_EXECUTABLE_NAME = "main.exe"  # The name of the exe created by your *main app's* build.py
 
-from PySide6.QtWidgets import QApplication
-import qasync  # We'll use qasync for a smooth event loop, just like in your main app
+# --- Update Manifest ---
+# The URL pointing to your version_manifest.json on GitHub.
+# IMPORTANT: Use the "raw" URL.
+# Replace 'YOUR_USERNAME' and 'YOUR_REPO' with your actual GitHub details.
+MANIFEST_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/version_manifest.json"
 
-from launcher.gui import LauncherWindow
-from launcher.updater import Updater
-from launcher.config import (
-    MANIFEST_URL,
-    APP_SUBDIRECTORY_NAME,
-    APP_EXECUTABLE_NAME,
-    configure_launcher_logging
-)
-
-
-def get_current_version(app_dir: Path) -> str:
-    """Reads the version from the version.txt file."""
-    version_file = app_dir / "version.txt"
-    if version_file.exists():
-        return version_file.read_text().strip()
-    return "0.0.0"  # Default version if not found
+# --- Directory Structure ---
+# The launcher will assume the main application is installed in a subdirectory
+# relative to the launcher's executable. This is a standard and robust pattern.
+# For example:
+# C:/Kintsugi/
+#  |- Kintsugi_AvA_Launcher.exe  (This launcher)
+#  |- KintsugiApp/               (The directory where the main app lives)
+#     |- main.exe
+#     |- ... all other app files
+APP_SUBDIRECTORY_NAME = "KintsugiApp"
 
 
-def main():
-    """The main entry point for the launcher."""
-    # 1. Configure logging
-    configure_launcher_logging()
+# --- Logging Configuration ---
+# You can customize logging for the launcher here.
+def configure_launcher_logging():
+    """Sets up a simple logger for the launcher."""
+    log_dir = Path("launcher_logs")
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "launcher.log"
 
-    # 2. Set up the Qt Application
-    app = QApplication(sys.argv)
-
-    # 3. Determine application paths
-    if getattr(sys, 'frozen', False):
-        # We are running in a bundle (e.g., from PyInstaller)
-        launcher_dir = Path(sys.executable).parent
-    else:
-        # We are running from source
-        launcher_dir = Path(__file__).resolve().parent.parent
-
-    app_install_dir = launcher_dir / APP_SUBDIRECTORY_NAME
-    app_exe_path = app_install_dir / APP_EXECUTABLE_NAME
-
-    # Ensure the app directory exists
-    app_install_dir.mkdir(exist_ok=True)
-
-    # 4. Get current installed version
-    current_version = get_current_version(app_install_dir)
-
-    # 5. Initialize the core components
-    updater = Updater(
-        manifest_url=MANIFEST_URL,
-        app_dir=app_install_dir,
-        current_version=current_version
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - [%(levelname)s] - %(name)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
     )
-
-    window = LauncherWindow(updater, str(app_exe_path))
-    window.show()
-
-    # 6. Run the application
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()
+    logging.info("--------------------")
+    logging.info("Launcher started.")
