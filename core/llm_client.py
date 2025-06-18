@@ -151,7 +151,7 @@ class LLMClient:
             models["google/gemini-2.5-flash-preview-05-20"] = "Google: Gemini 2.5 Flash(preview)"
             models["google/gemini-2.0-flash"] = "Google: Gemini 2.0 Flash"
             models["google/gemini-1.5-flash-latest"] = "Google: Gemini 1.5 Flash"
-            models[models/"gemini-2.5-flash"] = "Google: Gemini 2.5 Flash(latest)"
+            models["google/gemini-2.5-flash"] = "Google: Gemini 2.5 Flash"
 
         if "anthropic" in self.clients:
             models["anthropic/claude-3-5-sonnet-20240620"] = "Anthropic: Claude 3.5 Sonnet"
