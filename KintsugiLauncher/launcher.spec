@@ -7,7 +7,7 @@ from pathlib import Path
 block_cipher = None
 
 # --- Main Application Entry Point ---
-main_script = 'main.py'  # <-- UPDATED PATH
+main_script = 'main.py'
 
 # --- Application Name (used for the .exe) ---
 app_name = 'Kintsugi_AvA_Launcher'
@@ -40,14 +40,16 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False, # Set to False for a GUI application
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # --- FIX: We can add an icon for the launcher exe here later ---
-    # icon='path/to/your/launcher_icon.ico'
+    # --- THIS IS THE FIX ---
+    # We point to the icon relative to this spec file's location.
+    # '../' goes up from KintsugiLauncher to the main AvA_Kintsugi folder.
+    icon='../src/ava/assets/Ava_Icon.ico'
 )
 coll = COLLECT(
     exe,
@@ -57,5 +59,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='KintsugiLauncher', # This will be the name of the output folder in 'dist'
+    name='KintsugiLauncher',
 )
