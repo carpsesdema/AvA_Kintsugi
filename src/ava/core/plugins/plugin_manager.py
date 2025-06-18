@@ -41,10 +41,9 @@ class PluginManager:
         """Connect to event bus for plugin-related events."""
         self.event_bus.subscribe("plugin_state_changed", self._on_plugin_state_changed)
 
-        # Wrap the async handler in asyncio.create_task to prevent the "never awaited" warning.
-        # This correctly fires the async shutdown sequence from a sync event call.
-        self.event_bus.subscribe("application_shutdown",
-                                 lambda: asyncio.create_task(self.shutdown()))
+        # This is now handled by the Application class wiring
+        # self.event_bus.subscribe("application_shutdown",
+        #                          lambda: asyncio.create_task(self.shutdown()))
 
     def add_discovery_path(self, path: Path):
         """
@@ -455,15 +454,25 @@ class PluginManager:
         return all_status
 
     async def shutdown(self):
-        """Shutdown all plugins in reverse dependency order."""
+        """
+        Shutdown all plugins in reverse dependency order, with robust error handling.
+        """
         print("[PluginManager] Shutting down plugins...")
 
         # Get all active plugins in reverse dependency order
         active_plugin_names = set(self._active_plugins.keys())
         unload_order = list(reversed(self._calculate_load_order(active_plugin_names)))
 
+        # --- THIS IS THE FIX ---
+        # We now loop through and try to unload each plugin individually,
+        # so that one failing plugin doesn't stop others from unloading.
         for plugin_name in unload_order:
-            await self.unload_plugin(plugin_name)
+            try:
+                await self.unload_plugin(plugin_name)
+            except Exception as e:
+                # Log the error but continue to the next plugin
+                print(f"[PluginManager] Error unloading plugin '{plugin_name}' during shutdown: {e}")
+        # --- END OF FIX ---
 
         print("[PluginManager] Plugin shutdown complete")
 

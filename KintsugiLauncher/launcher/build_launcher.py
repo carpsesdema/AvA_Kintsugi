@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 # --- Configuration ---
-SPEC_FILE = "launcher.spec"
+SPEC_FILE = "../launcher.spec"
 APP_NAME = "Kintsugi AvA Launcher"
 
 # Define project paths

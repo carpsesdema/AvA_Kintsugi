@@ -2,11 +2,15 @@
 # This file tells PyInstaller how to build your application.
 
 import sys
+import os # Import the os module
 from pathlib import Path
 
-# --- Setup Paths ---
-# This ensures PyInstaller knows where to find your source code and data files.
-project_root = Path(__file__).parent.resolve()
+# --- Setup Paths (The Robust Way) ---
+# THIS IS THE FIX: When PyInstaller runs a .spec file, __file__ is not defined.
+# The reliable way to get the root directory is from sys.argv[0].
+spec_root = os.path.abspath(os.path.dirname(sys.argv[0]))
+project_root = Path(spec_root)
+# --- END OF FIX ---
 src_path = project_root / 'src'
 
 # --- The Analysis ---
@@ -24,7 +28,7 @@ a = Analysis(
         (str(project_root / 'plugins'), 'plugins'),
         (str(project_root / 'src/ava/core/plugins/examples'), 'ava/core/plugins/examples')
     ],
-    // Hidden imports for dynamically loaded modules that PyInstaller might miss
+    # Hidden imports for dynamically loaded modules that PyInstaller might miss
     hiddenimports=[
         'qasync',
         'qtawesome',
@@ -39,7 +43,7 @@ a = Analysis(
         'sentence_transformers',
         'git',
         # Your dynamically loaded plugins!
-        'ava.core.plugins.examples.living_design_agent',
+        'ava.core.plugins.examples.living_design_agent_final',
         'ava.core.plugins.examples.autonomous_code_reviewer',
     ],
     hookspath=[],
@@ -66,8 +70,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    # Set to False to hide the console window on launch
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
