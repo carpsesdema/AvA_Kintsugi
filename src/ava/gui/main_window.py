@@ -2,8 +2,10 @@
 # The main window class. Its single responsibility is to hold and lay out
 # the primary UI components like the sidebar and the chat interface.
 
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout
-from PySide6.QtGui import QIcon
+import asyncio
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QApplication
+from PySide6.QtGui import QIcon, QCloseEvent
+from PySide6.QtCore import QTimer
 from importlib import resources
 
 from .enhanced_sidebar import EnhancedSidebar
@@ -24,6 +26,9 @@ class MainWindow(QMainWindow):
         down to its child components that need to communicate.
         """
         super().__init__()
+
+        # Store event bus reference for cleanup
+        self.event_bus = event_bus
 
         # --- Basic Window Configuration ---
         self.setWindowTitle("Kintsugi AvA - The Unbreakable Foundation")
@@ -61,3 +66,37 @@ class MainWindow(QMainWindow):
         # as the sidebar.
         main_layout.addWidget(self.sidebar, 1)
         main_layout.addWidget(self.chat_interface, 3)
+
+    def closeEvent(self, event: QCloseEvent):
+        """
+        Handle window close event with proper async cleanup.
+        This prevents the annoying error popups when closing the app.
+        """
+        print("[MainWindow] Close event triggered - starting graceful shutdown...")
+
+        # Ignore the close event initially to handle cleanup
+        event.ignore()
+
+        # Start the shutdown process
+        self._start_shutdown()
+
+    def _start_shutdown(self):
+        """Start the graceful shutdown process."""
+        # Emit application shutdown event to trigger cleanup
+        if self.event_bus:
+            self.event_bus.emit("application_shutdown")
+
+        # Give a short delay for cleanup to complete, then force close
+        QTimer.singleShot(500, self._force_close)
+
+    def _force_close(self):
+        """Force close the application after cleanup delay."""
+        print("[MainWindow] Forcing application closure...")
+
+        # Get the QApplication instance and quit it properly
+        app = QApplication.instance()
+        if app:
+            app.quit()
+        else:
+            # Fallback: close the window directly
+            super().close()

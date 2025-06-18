@@ -38,7 +38,7 @@ MANIFEST
 # AvA generated workspace and logs
 workspace/
 logs/
-rag_db/
+src/ava/rag_db/
 *.db
 *.db-journal
 
@@ -81,4 +81,4 @@ yarn-error.log*
 # --- Other ---
 # ZIP files (often used for updates or temporary archives)
 *.zip!/config/
-config/role_assignments.json
+src/ava/config/role_assignments.json
