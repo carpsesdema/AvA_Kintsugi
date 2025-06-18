@@ -1,6 +1,7 @@
 # launcher/gui.py
 
 import logging
+from pathlib import Path
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QLabel, QProgressBar, QTextEdit
 )
@@ -79,7 +80,8 @@ class LauncherWindow(QMainWindow):
     def __init__(self, updater: Updater, app_exe_path: str):
         super().__init__()
         self.updater = updater
-        self.app_exe_path = app_exe_path
+        # FIX: Convert string path to Path object for proper handling
+        self.app_exe_path = Path(app_exe_path)
 
         self.setWindowTitle("Kintsugi AvA Launcher")
         self.setFixedSize(450, 300)
@@ -211,6 +213,7 @@ class LauncherWindow(QMainWindow):
     @Slot()
     def on_launch_ready(self):
         self.status_label.setText("Launching application...")
+        # FIX: Now properly passing Path object instead of string
         self.updater.launch_application(self.app_exe_path)
         # Close the launcher a moment after launching the app
         QTimer.singleShot(1000, self.close)
