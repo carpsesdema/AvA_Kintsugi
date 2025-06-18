@@ -1,9 +1,9 @@
 {
   "role_assignments": {
     "architect": "google/gemini-2.5-pro-preview-06-05",
-    "coder": "google/gemini-2.0-flash",
+    "coder": "anthropic/claude-sonnet-4-20250514",
     "chat": "deepseek/deepseek-chat",
-    "reviewer": "google/gemini-2.0-flash"
+    "reviewer": "google/gemini-2.5-flash-preview-05-20"
   },
   "role_temperatures": {
     "architect": 0.31,
