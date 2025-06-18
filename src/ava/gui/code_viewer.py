@@ -1,11 +1,10 @@
 # src/ava/gui/code_viewer.py
-# Enhanced code viewer with save, find/replace, and quick file finder functionality
+# V2: All QMessageBox popups have been removed.
 
 from pathlib import Path
-from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter,
-                               QMessageBox)
+from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter)
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent
 import qasync
 
 from ava.gui.project_context_manager import ProjectContextManager
@@ -15,7 +14,7 @@ from ava.gui.integrated_terminal import IntegratedTerminal
 from ava.gui.find_replace_dialog import FindReplaceDialog
 from ava.gui.quick_file_finder import QuickFileFinder
 from ava.core.project_manager import ProjectManager
-from .status_bar import StatusBar  # Keep custom status bar for now
+from .status_bar import StatusBar
 
 
 class CodeViewerWindow(QMainWindow):
@@ -229,9 +228,10 @@ class CodeViewerWindow(QMainWindow):
         return self.editor_manager.get_active_file_path() if self.editor_manager else None
 
     def prepare_for_new_project_session(self):
-        if self.editor_manager.has_unsaved_changes():
-            if not self._confirm_close_with_unsaved_changes():
-                return
+        # --- FIX: No longer prompt, just save everything ---
+        if self.editor_manager and self.editor_manager.has_unsaved_changes():
+            self.editor_manager.save_all_files()
+
         self.project_context.clear_context()
         self.file_tree_manager.clear_tree()
         self.editor_manager.prepare_for_new_project()
@@ -328,30 +328,8 @@ class CodeViewerWindow(QMainWindow):
 
     # === Window Management ===
 
-    def _confirm_close_with_unsaved_changes(self) -> bool:
-        unsaved_files = self.editor_manager.get_unsaved_files()
-        file_list = "\n".join([Path(f).name for f in unsaved_files[:5]])
-        if len(unsaved_files) > 5:
-            file_list += f"\n... and {len(unsaved_files) - 5} more"
-
-        reply = QMessageBox.question(
-            self,
-            "Unsaved Changes",
-            f"You have unsaved changes in:\n\n{file_list}\n\nDo you want to save before closing?",
-            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel
-        )
-
-        if reply == QMessageBox.StandardButton.Save:
-            return self.editor_manager.save_all_files()
-        elif reply == QMessageBox.StandardButton.Cancel:
-            return False
-        return True  # Discard
-
-    def closeEvent(self, event):
-        """Handle window close event - check for unsaved changes."""
+    def closeEvent(self, event: QCloseEvent):
+        """Handle window close event - save all changes silently."""
         if self.editor_manager and self.editor_manager.has_unsaved_changes():
-            if not self._confirm_close_with_unsaved_changes():
-                event.ignore()
-                return
+            self.editor_manager.save_all_files()
         event.accept()

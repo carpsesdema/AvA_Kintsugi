@@ -20,8 +20,13 @@ class Application:
     Single responsibility: Initialize and coordinate managers.
     """
 
-    def __init__(self):
+    def __init__(self, project_root: Path):
         print("[Application] Initializing with plugin-enabled manager architecture...")
+
+        # --- THIS IS THE FIX ---
+        # Store the stable project root passed from main.py
+        self.project_root = project_root
+        # --- END OF FIX ---
 
         # --- Central Communication ---
         self.event_bus = EventBus()
@@ -64,12 +69,13 @@ class Application:
 
         # 2. Initialize plugin system (depends on core components)
         self.service_manager.initialize_plugin_system()
-        # FIX: Tell the plugin manager where to look for plugins.
-        # These paths are relative to the project root.
-        plugin_manager = self.service_manager.get_plugin_manager()
-        plugin_manager.add_discovery_path(Path("src/ava/core/plugins/examples"))
-        plugin_manager.add_discovery_path(Path("plugins"))
 
+        # --- THIS IS THE FIX ---
+        # Use the reliable project_root to discover plugins.
+        plugin_manager = self.service_manager.get_plugin_manager()
+        plugin_manager.add_discovery_path(self.project_root / "src" / "ava" / "core" / "plugins" / "examples")
+        plugin_manager.add_discovery_path(self.project_root / "plugins")
+        # --- END OF FIX ---
 
         # 3. Discover and load plugins (async operation)
         plugin_success = await self.service_manager.initialize_plugins()

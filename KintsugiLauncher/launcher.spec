@@ -18,10 +18,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('launcher', 'launcher')],
-    # --- THIS IS THE CRITICAL FIX ---
-    # We explicitly add 'packaging.version' because PyInstaller isn't finding it automatically.
+    # These hidden imports are all correct and necessary.
     hiddenimports=['qasync', 'requests', 'packaging', 'packaging.version'],
-    # --- END OF FIX ---
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -49,6 +47,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    # This path is correct, relative to this spec file's location.
     icon='../src/ava/assets/Ava_Icon.ico'
 )
 coll = COLLECT(

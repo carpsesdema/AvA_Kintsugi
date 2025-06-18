@@ -6,12 +6,50 @@ from pathlib import Path
 
 block_cipher = None
 
+# <<< FIX: Explicitly define the src_root for robust pathing >>>
+# This makes it clear where our source and data files are located.
+src_root = Path('./src').resolve()
+
 a = Analysis(
-    ['src/ava/main.py'],  # Make sure this points to your main entry script
-    pathex=['src'],  # Tell PyInstaller to look for imports in the 'src' directory
+    ['src/ava/main.py'],
+    # <<< FIX: Use the resolved src_root for reliability >>>
+    pathex=[str(src_root)],
     binaries=[],
-    datas=[('src/ava/assets', 'ava/assets')],  # Correctly bundle the assets folder
-    hiddenimports=['PySide6.QtSvg', 'qasync', 'qtawesome'],
+    datas=[
+        # --- Bundle all necessary non-code files ---
+        ('src/ava/assets', 'ava/assets'),
+        ('src/ava/rag_server.py', '.'), # Place in root of build for simplicity
+        ('src/ava/requirements_rag.txt', '.'),
+
+        # <<< FIX: Correctly include the config and plugins folders >>>
+        # The original was missing these, which caused the plugin system to fail.
+        ('src/ava/config', 'config'),
+        ('src/ava/core/plugins/examples', 'ava/core/plugins/examples'),
+        ('plugins', 'plugins')
+    ],
+    hiddenimports=[
+        # PySide6 and GUI libs
+        'PySide6.QtSvg',
+        'PySide6.QtGui',
+        'PySide6.QtCore',
+        'PySide6.QtWidgets',
+        'qasync',
+        'qtawesome',
+        'Pygments',
+
+        # Core libs
+        'packaging',
+        'packaging.version',
+        'importlib.resources',
+
+        # Async and RAG libs
+        'aiohttp',
+        'asyncio',
+        'queue',
+        'threading',
+        'subprocess',
+        'socket',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -28,10 +66,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    # --- THIS IS THE REAL, FINAL FIX ---
-    # We change the name of the output .exe file right here.
-    name='main',
-    # --- END OF FIX ---
+    name='main', # Creates main.exe, as expected by the build script
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -42,7 +77,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='src/ava/assets/Ava_Icon.ico' # Corrected path to icon
+    icon='src/ava/assets/Ava_Icon.ico'
 )
 coll = COLLECT(
     exe,
@@ -52,5 +87,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='main' # The output folder will now also be 'main'
+    name='main' # The output folder will be 'dist/main'
 )

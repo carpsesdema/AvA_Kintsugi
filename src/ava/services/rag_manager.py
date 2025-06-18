@@ -1,5 +1,5 @@
 # services/rag_manager.py
-# V9: Enhanced with proper error capture and diagnostics
+# V10: Robust shutdown and event loop handling.
 
 import asyncio
 import subprocess
@@ -47,6 +47,10 @@ class RAGManager(QObject):
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
         )
 
+        # --- THIS IS THE FIX: Connect shutdown signal ---
+        self.event_bus.subscribe("application_shutdown", self.terminate_rag_server)
+        # --- END OF FIX ---
+
         print("[RAGManager] Initialized with enhanced error capture.")
 
     def set_project_manager(self, project_manager):
@@ -67,6 +71,7 @@ class RAGManager(QObject):
                 return
 
             python_executable = sys.executable
+            # Correctly locate rag_server.py within the package
             server_script_path = Path(__file__).parent.parent / "rag_server.py"
             requirements_path = Path(__file__).parent.parent / "requirements_rag.txt"
 
@@ -122,7 +127,7 @@ class RAGManager(QObject):
     def _check_database_permissions(self) -> bool:
         """Check if we can create/write to the rag_db directory."""
         try:
-            rag_db_path = Path(__file__).parent.parent / "rag_db"
+            rag_db_path = Path.cwd() / "rag_db"  # Use CWD to be consistent with bundled app
             rag_db_path.mkdir(exist_ok=True)
             test_file = rag_db_path / "test_permissions.tmp"
             test_file.write_text("test")
@@ -271,8 +276,11 @@ class RAGManager(QObject):
 
     def terminate_rag_server(self):
         """Terminate the RAG server process."""
-        if hasattr(self, 'output_timer'):
+        if hasattr(self, 'output_timer') and self.output_timer.isActive():
             self.output_timer.stop()
+
+        if hasattr(self, 'status_check_timer') and self.status_check_timer.isActive():
+            self.status_check_timer.stop()
 
         if self.rag_server_process and self.rag_server_process.poll() is None:
             self.log_message.emit("RAGManager", "info",
@@ -352,10 +360,25 @@ class RAGManager(QObject):
         except Exception as e:
             self.log_message.emit("RAGManager", "error", f"Ingestion process failed: {e}")
 
-
     def check_server_status_async(self):
-        """Check server status asynchronously."""
-        asyncio.create_task(self._check_and_log_status())
+        """
+        Check server status asynchronously, now safely.
+        """
+        # --- THIS IS THE FIX ---
+        # Before creating a task, check if the event loop is actually running.
+        # This prevents the "no running event loop" error during shutdown.
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                asyncio.create_task(self._check_and_log_status())
+            else:
+                # Don't log here, as we're likely in the process of shutting down
+                pass
+        except RuntimeError:
+            # This happens if get_running_loop() is called when no loop is set.
+            # It's safe to ignore this during shutdown.
+            pass
+        # --- END OF FIX ---
 
     async def _check_and_log_status(self):
         """Check and log server status changes."""

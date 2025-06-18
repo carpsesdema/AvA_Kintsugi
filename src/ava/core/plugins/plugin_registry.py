@@ -35,10 +35,15 @@ class PluginRegistry:
             print(f"[PluginRegistry] Warning: Discovery path does not exist: {resolved_path}")
             return
 
-        # Ensure the project root is in the path to allow for package imports like 'core.plugins'
-        project_root = Path.cwd()
-        if str(project_root) not in sys.path:
-            sys.path.insert(0, str(project_root))
+        # --- THIS IS THE FIX ---
+        # Ensure the *parent* of the discovery path (e.g., 'src') is in sys.path
+        # so that package imports like 'ava.core.plugins...' work correctly.
+        # This is more robust than just adding the project root.
+        # It also handles both `src/ava/...` and `plugins/...` structures.
+        search_root = resolved_path.parent
+        if str(search_root) not in sys.path:
+            sys.path.insert(0, str(search_root))
+        # --- END OF FIX ---
 
         self._discovery_paths.append(resolved_path)
         print(f"[PluginRegistry] Added discovery path: {resolved_path}")
@@ -68,16 +73,20 @@ class PluginRegistry:
             Number of plugins found in this directory
         """
         count = 0
-        project_root = Path.cwd()
+
+        # The search root is the parent of the plugins directory (e.g., 'src' or project root)
+        search_root = directory.parent
 
         try:
             # Look for Python packages (directories with __init__.py)
             for item in directory.iterdir():
                 if item.is_dir() and (item / "__init__.py").exists():
                     try:
-                        # Construct the fully qualified module name from the project root
-                        # e.g., 'core.plugins.examples.living_design_agent'
-                        module_path_str = ".".join(item.relative_to(project_root).parts)
+                        # --- THIS IS THE FIX ---
+                        # Correctly construct the module name relative to the search root
+                        # that we added to sys.path earlier.
+                        # e.g., 'ava.core.plugins.examples.living_design_agent' from 'src'
+                        module_path_str = ".".join(item.relative_to(search_root).parts)
 
                         if self._try_load_plugin_from_module(module_path_str):
                             count += 1

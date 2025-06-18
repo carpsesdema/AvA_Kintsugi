@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Dict, Any, List
 from datetime import datetime
 from collections import defaultdict
-from ava.core.plugins import PluginBase, PluginMetadata, PluginState
+
+from ava.core.plugins.plugin_system import PluginBase, PluginMetadata, PluginState
 
 
 class LivingDesignAgentPlugin(PluginBase):

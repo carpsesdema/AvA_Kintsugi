@@ -34,15 +34,16 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Kintsugi AvA - The Unbreakable Foundation")
         self.setGeometry(100, 100, 1200, 800)  # x, y, width, height
 
-        # --- THIS IS THE FIX: Set the Window Icon ---
+        # --- FIX #1: Set the Window Icon (robustly) ---
         try:
             # Correctly locate the icon within the 'ava' package's 'assets' sub-folder
             # This method is robust and works even when the app is packaged.
-            with resources.files('ava.assets').joinpath('Ava_Icon.ico') as icon_path:
+            icon_traversable = resources.files('ava.assets').joinpath('Ava_Icon.ico')
+            with resources.as_file(icon_traversable) as icon_path:
                 self.setWindowIcon(QIcon(str(icon_path)))
         except Exception as e:
             print(f"[MainWindow] Could not load window icon: {e}")
-        # --- END OF FIX ---
+        # --- END OF FIX #1 ---
 
         # --- Main Layout ---
         # A central widget is required for a QMainWindow.
@@ -74,6 +75,10 @@ class MainWindow(QMainWindow):
         """
         print("[MainWindow] Close event triggered - starting graceful shutdown...")
 
+        # --- FIX #2: Don't force quit the application here ---
+        # By simply accepting the event, we allow Qt to emit the 'aboutToQuit'
+        # signal, which our main async logic is waiting for. This prevents
+        # the "Event loop stopped before Future completed" error.
         try:
             # Emit application shutdown event to trigger cleanup
             if self.event_bus:
@@ -81,10 +86,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[MainWindow] Error during shutdown event: {e}")
 
-        # Accept the close event - let the window close normally
+        # Let the Qt event loop handle the rest of the shutdown gracefully.
         event.accept()
-
-        # Get the QApplication instance and quit it properly
-        app = QApplication.instance()
-        if app:
-            app.quit()
+        # --- END OF FIX #2 ---

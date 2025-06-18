@@ -1,3 +1,4 @@
+# KintsugiLauncher/launcher/config.py
 import logging
 from pathlib import Path
 
@@ -18,10 +19,12 @@ MANIFEST_URL = "https://raw.githubusercontent.com/carpsesdema/AvA_Kintsugi/refs/
 # For example:
 # C:/Kintsugi/
 #  |- Kintsugi_AvA_Launcher.exe  (This launcher)
-#  |- KintsugiApp/               (The directory where the main app lives)
+#  |- main/                      (The directory where the main app lives)
 #     |- main.exe
 #     |- ... all other app files
-APP_SUBDIRECTORY_NAME = "KintsugiApp"
+# <<< THIS IS THE FIX >>>
+# Change this to match the output folder name from your main app's build process.
+APP_SUBDIRECTORY_NAME = "main"
 
 
 # --- Logging Configuration ---

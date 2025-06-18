@@ -1,83 +1,74 @@
 # src/ava/main.py
-# V7: Centralized path configuration for robust execution and building.
+# V8: Finalized startup and shutdown logic for robustness.
 
 import sys
 import asyncio
 import qasync
 from pathlib import Path
 
-# --- THIS IS THE FIX ---
-# The path manipulation logic is now separated for running from source vs. running as a
-# bundled executable. This is the key to making the PyInstaller build work.
-
+# --- Pathing Setup ---
+# This determines the correct project root whether running from source or bundled.
 if getattr(sys, 'frozen', False):
-    # This block runs when the application is bundled by PyInstaller.
-    # We add the temporary _MEIPASS directory to the path, which is where
-    # PyInstaller unpacks bundled assets (like icons).
-    meipass_path = Path(sys._MEIPASS)
-    sys.path.insert(0, str(meipass_path))
+    # Running as a bundled executable (PyInstaller)
+    project_root = Path(sys.executable).parent
+    # The _MEIPASS directory is where bundled assets are unpacked.
+    sys.path.insert(0, str(Path(sys._MEIPASS)))
 else:
-    # This block runs when you run the script directly from your IDE.
-    # It adds the 'src' directory to the path so that imports like
-    # 'from ava.core...' are found correctly.
-    project_root = Path(__file__).parent.parent.parent
-    sys.path.insert(0, str(project_root / 'src'))
-# --- END OF FIX ---
+    # Running from source
+    project_root = Path(__file__).resolve().parent.parent.parent
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
 
 
 from PySide6.QtWidgets import QApplication
 
 # --- Import the main Application class that orchestrates everything ---
-# These imports now work correctly in both environments.
 from ava.core.application import Application
 from ava.utils.exception_handler import setup_exception_hook
 
 
-async def main_async_logic():
+async def main_async_logic(root_path: Path):
     """
     The main asynchronous coroutine for the application.
-    Now includes async plugin initialization.
+    Now accepts the project root for stable pathing.
     """
-    # qasync ensures QApplication.instance() exists
     app = QApplication.instance()
-
-    # This will hold our main application logic instance
     ava_app = None
-
-    # Create a Future to signal when it's safe to exit the event loop
     shutdown_future = asyncio.get_event_loop().create_future()
 
     async def on_about_to_quit():
         """
-        This function is called right before the app quits.
-        It properly handles task and plugin shutdown.
+        This is the single, authoritative handler for shutting down the application.
+        It's connected to the Qt 'aboutToQuit' signal for maximum reliability.
         """
+        print("[main] Application is about to quit. Starting graceful shutdown...")
         if ava_app:
-            print("[main] Application is about to quit. Shutting down plugins and tasks...")
-            # Cancel all running tasks and shutdown plugins managed by the Application class
-            await ava_app.cancel_all_tasks()
+            try:
+                # This one call handles shutting down plugins, services, and tasks.
+                await ava_app.cancel_all_tasks()
+            except Exception as e:
+                print(f"[main] Error during shutdown tasks: {e}")
 
-        # Now that everything is shut down, signal that it's safe to exit
+        # Signal that the async cleanup is complete.
         if not shutdown_future.done():
             shutdown_future.set_result(True)
+        print("[main] Graceful shutdown complete.")
 
-    # Connect the signal to our async shutdown handler
+    # Connect the Qt signal to our async shutdown handler.
     app.aboutToQuit.connect(lambda: asyncio.create_task(on_about_to_quit()))
 
     try:
-        # Create the application instance
-        ava_app = Application()
+        # --- THIS IS THE FIX ---
+        # Pass the reliable project_root to the Application.
+        ava_app = Application(project_root=root_path)
+        # --- END OF FIX ---
 
-        # Perform async initialization (plugins, etc.)
-        print("[main] Starting async initialization...")
         await ava_app.initialize_async()
-
-        # Show the application
         ava_app.show()
+        print("[main] Application ready and displayed.")
 
-        print("[main] Application ready and displayed")
-
-        # Wait here until the shutdown_future is resolved by on_about_to_quit
+        # Wait here until on_about_to_quit resolves the future.
         await shutdown_future
 
     except Exception as e:
@@ -85,30 +76,21 @@ async def main_async_logic():
         import traceback
         traceback.print_exc()
 
-        # Try to show an error message if possible
         try:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(None, "Startup Error",
                                  f"Failed to start Kintsugi AvA.\n\nError: {e}")
         except:
             pass
-
     finally:
-        print("[main] Shutdown sequence complete. Exiting.")
+        print("[main] Main async logic has finished. Exiting.")
 
 
 if __name__ == "__main__":
-    # Removed the old path manipulation/creation code.
-    # It is no longer needed and was causing issues.
-
-    # Set up global error handling first
     setup_exception_hook()
-
-    # Initialize the QApplication. This is necessary before any widgets are created.
     app = QApplication(sys.argv)
 
-    # Use qasync.run to manage the lifecycle of the asyncio event loop
-    # and integrate it with Qt's event loop.
-    qasync.run(main_async_logic())
+    # Pass the calculated project_root into the main async logic.
+    qasync.run(main_async_logic(project_root))
 
     print("[main] Application has exited cleanly.")
