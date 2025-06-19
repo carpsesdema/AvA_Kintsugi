@@ -1,7 +1,7 @@
 # KintsugiLauncher/launcher.spec
 # -*- mode: python ; coding: utf-8 -*-
 
-# This spec file is optimized for the release of the Kintsugi AvA Launcher.
+# This spec file is optimized for the release of the Avakin Launcher.
 # It ensures all assets are bundled and the final executable is a clean, GUI-only application.
 
 from PyInstaller.utils.hooks import collect_data_files
@@ -14,7 +14,7 @@ a = Analysis(
     binaries=[],
     datas=[
         # This line ensures your launcher's icon is included in the build.
-        ('launcher/assets', 'launcher/assets'),
+        ('launcher/assets', 'assets'),
         # This explicitly collects the qtawesome font files, guaranteeing icons will work.
         *collect_data_files('qtawesome'),
     ],
@@ -48,7 +48,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Kintsugi AvA Launcher',  # The name of the final .exe file
+    name='Avakin Launcher',  # The name of the final .exe file
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -76,5 +76,5 @@ coll = COLLECT(
     upx=True,
     upx_exclude=[],
     # The output folder name must match what build_launcher.py expects.
-    name='KintsugiLauncher'
+    name='AvakinLauncher'
 )
