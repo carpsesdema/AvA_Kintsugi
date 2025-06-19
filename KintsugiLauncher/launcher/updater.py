@@ -28,7 +28,7 @@ class Updater:
         self.current_version = current_version
         self.session = requests.Session()
         # Set a user-agent so GitHub doesn't block us!
-        self.session.headers.update({'User-Agent': 'KintsugiLauncher/1.0'})
+        self.session.headers.update({'User-Agent': 'AvakinLauncher/1.0'})
 
     def check_for_updates(self) -> (bool, dict | None):
         """

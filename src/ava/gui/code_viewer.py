@@ -36,7 +36,7 @@ class CodeViewerWindow(QMainWindow):
         self.quick_file_finder = None
         self.auto_save_timer = QTimer()
 
-        self.setWindowTitle("Kintsugi AvA - Code Viewer")
+        self.setWindowTitle("Avakin - Code Viewer")
         self.setGeometry(100, 100, 1400, 900)
         self._init_ui()
         self._create_menus()

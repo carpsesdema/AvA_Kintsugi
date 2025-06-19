@@ -1,6 +1,7 @@
 # launcher/gui.py
 
 import logging
+import sys
 from pathlib import Path
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QLabel, QProgressBar, QTextEdit
@@ -83,7 +84,7 @@ class LauncherWindow(QMainWindow):
         # FIX: Convert string path to Path object for proper handling
         self.app_exe_path = Path(app_exe_path)
 
-        self.setWindowTitle("Kintsugi AvA Launcher")
+        self.setWindowTitle("Avakin Launcher")
         self.setFixedSize(450, 300)
 
         # --- Window Setup ---
@@ -98,11 +99,22 @@ class LauncherWindow(QMainWindow):
     def setup_window_style(self):
         """Set up the window's appearance."""
         # --- FIX: We will need an icon for the launcher too ---
-        # try:
-        #     with resources.files('launcher.assets').joinpath('Launcher_Icon.ico') as icon_path:
-        #         self.setWindowIcon(QIcon(str(icon_path)))
-        # except Exception as e:
-        #     logger.warning(f"Could not load launcher window icon: {e}")
+        try:
+            if getattr(sys, 'frozen', False):
+                # In a PyInstaller bundle, the path is relative to the _MEIPASS dir
+                icon_path = Path(sys._MEIPASS) / "assets" / "Launcher_Icon.ico"
+            else:
+                # In source mode, it's relative to the project root
+                # This script is in KintsugiLauncher/launcher/gui.py
+                # The icon is in KintsugiLauncher/assets/Launcher_Icon.ico
+                icon_path = Path(__file__).resolve().parent.parent / "assets" / "Launcher_Icon.ico"
+
+            if icon_path.exists():
+                self.setWindowIcon(QIcon(str(icon_path)))
+            else:
+                logger.warning(f"Could not find launcher window icon at {icon_path}")
+        except Exception as e:
+            logger.warning(f"Could not load launcher window icon: {e}")
 
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, Colors.PRIMARY_BG)
@@ -118,7 +130,7 @@ class LauncherWindow(QMainWindow):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Title Label
-        title_label = QLabel("Kintsugi AvA")
+        title_label = QLabel("Avakin")
         title_label.setFont(Typography.heading(24))
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet(f"color: {Colors.TEXT_PRIMARY.name()};")

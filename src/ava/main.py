@@ -87,7 +87,7 @@ async def main_async_logic(root_path: Path):
         try:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(None, "Startup Error",
-                                 f"Failed to start Kintsugi AvA.\n\nError: {e}")
+                                 f"Failed to start Avakin.\n\nError: {e}")
         except:
             pass
     finally:
@@ -101,8 +101,8 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     # Set application metadata
-    app.setApplicationName("Kintsugi AvA")
-    app.setOrganizationName("Kintsugi")
+    app.setApplicationName("Avakin")
+    app.setOrganizationName("Avakin")
 
     # --- THIS IS THE FIX: SET THE APPLICATION ICON ---
     if getattr(sys, 'frozen', False):

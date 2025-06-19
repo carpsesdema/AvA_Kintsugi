@@ -4,7 +4,7 @@ from pathlib import Path
 
 # --- Configuration ---
 SPEC_FILE = "launcher.spec"
-APP_NAME = "Kintsugi AvA Launcher"
+APP_NAME = "Avakin Launcher"
 
 # --- Project Paths ---
 # Since this script is in the root, the project_root is its parent directory
@@ -54,11 +54,11 @@ def main():
         return
 
     # 3. Final instructions
-    output_folder = dist_dir / 'KintsugiLauncher'
+    output_folder = dist_dir / 'AvakinLauncher'
     print("\n--- Launcher Build Complete! ---")
     print(f"The standalone launcher has been created in:")
     print(f"{output_folder.resolve()}")
-    print("\nTo test, copy this 'KintsugiLauncher' folder to a clean directory")
+    print("\nTo test, copy this 'AvakinLauncher' folder to a clean directory")
     print("(like C:\\app_testing\\) and run the .exe from there.")
     print("----------------------------------\n")
 

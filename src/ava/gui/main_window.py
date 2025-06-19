@@ -20,7 +20,7 @@ class MainWindow(QWidget):
 
         # --- Set Window Properties ---
         # This changes the title of the main window
-        self.setWindowTitle("Kintsugi AvA")
+        self.setWindowTitle("Avakin")
 
         # Set window size and minimum size
         self.resize(1400, 900)

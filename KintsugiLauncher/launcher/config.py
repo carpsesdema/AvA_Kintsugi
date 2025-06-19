@@ -4,21 +4,21 @@ from pathlib import Path
 
 # --- Core Application Details ---
 # This is the single source of truth for your application's name and executable.
-APP_NAME = "Kintsugi AvA"
+APP_NAME = "Avakin"
 APP_EXECUTABLE_NAME = "main.exe"  # The name of the exe created by your *main app's* build.py
 
 # --- Update Manifest ---
 # The URL pointing to your version_manifest.json on GitHub.
 # IMPORTANT: Use the "raw" URL.
 # Replace 'YOUR_USERNAME' and 'YOUR_REPO' with your actual GitHub details.
-MANIFEST_URL = "https://raw.githubusercontent.com/carpsesdema/AvA_Kintsugi/refs/heads/master/version_manifest.json"
+MANIFEST_URL = "https://raw.githubusercontent.com/carpsesdema/Avakin/refs/heads/master/version_manifest.json"
 
 # --- Directory Structure ---
 # The launcher will assume the main application is installed in a subdirectory
 # relative to the launcher's executable. This is a standard and robust pattern.
 # For example:
-# C:/Kintsugi/
-#  |- Kintsugi_AvA_Launcher.exe  (This launcher)
+# C:/Avakin/
+#  |- Avakin_Launcher.exe  (This launcher)
 #  |- main/                      (The directory where the main app lives)
 #     |- main.exe
 #     |- ... all other app files

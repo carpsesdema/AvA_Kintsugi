@@ -5,9 +5,9 @@ from pathlib import Path
 # --- Configuration ---
 SPEC_FILE = "main.spec"
 # --- THIS IS THE FIX ---
-# Change the APP_NAME to 'main'. This will make PyInstaller create 'main.exe',
+# Change the APP_NAME to 'Avakin'. This will make PyInstaller create 'Avakin.exe',
 # which is exactly what your launcher is configured to look for.
-APP_NAME = "Kintsugi AvA"
+APP_NAME = "Avakin"
 # --- END OF FIX ---
 APP_VERSION = "1.0.0"  # <-- NEW: Version number for the build
 
