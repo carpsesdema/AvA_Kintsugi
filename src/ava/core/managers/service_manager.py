@@ -1,6 +1,7 @@
 # src/ava/core/managers/service_manager.py
 # Final polish: Updated ValidationService instantiation.
 
+from pathlib import Path
 from ava.core.event_bus import EventBus
 from ava.core.llm_client import LLMClient
 from ava.core.project_manager import ProjectManager
@@ -57,23 +58,23 @@ class ServiceManager:
 
         print("[ServiceManager] Initialized")
 
-    def initialize_core_components(self):
+    def initialize_core_components(self, project_root: Path):
         """Initialize core components in dependency order."""
         print("[ServiceManager] Initializing core components...")
 
         # Core components (with correct dependency injection)
-        self.llm_client = LLMClient()
+        self.llm_client = LLMClient(project_root)
         self.project_manager = ProjectManager()
         self.execution_engine = ExecutionEngine(self.project_manager)
 
         print("[ServiceManager] Core components initialized")
 
-    def initialize_plugin_system(self):
+    def initialize_plugin_system(self, project_root: Path):
         """Initialize the plugin system."""
         print("[ServiceManager] Initializing plugin system...")
 
         # Create plugin manager
-        self.plugin_manager = PluginManager(self.event_bus)
+        self.plugin_manager = PluginManager(self.event_bus, project_root)
 
         print("[ServiceManager] Plugin system initialized")
 
@@ -112,6 +113,9 @@ class ServiceManager:
         )
 
         # Architect Service
+        # --- THIS IS THE FIX ---
+        # The ArchitectService needs the `rag_service` from *inside* the `rag_manager`,
+        # not a `rag_service` on the ServiceManager itself.
         self.architect_service = ArchitectService(
             self,
             self.event_bus,
@@ -121,6 +125,7 @@ class ServiceManager:
             self.project_indexer_service,
             self.import_fixer_service
         )
+        # --- END OF FIX ---
 
         # Reviewer Service
         self.reviewer_service = ReviewerService(

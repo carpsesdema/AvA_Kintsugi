@@ -35,15 +35,13 @@ class PluginRegistry:
             print(f"[PluginRegistry] Warning: Discovery path does not exist: {resolved_path}")
             return
 
-        # --- THIS IS THE FIX ---
-        # Ensure the *parent* of the discovery path (e.g., 'src') is in sys.path
-        # so that package imports like 'ava.core.plugins...' work correctly.
-        # This is more robust than just adding the project root.
-        # It also handles both `src/ava/...` and `plugins/...` structures.
+        # Ensure the *parent* of the discovery path (e.g., 'src' or the project root) is in sys.path
+        # so that package imports like 'ava.core.plugins...' or 'plugins.my_plugin' work correctly.
+        # This is robust for both source and bundled executables.
         search_root = resolved_path.parent
         if str(search_root) not in sys.path:
             sys.path.insert(0, str(search_root))
-        # --- END OF FIX ---
+            print(f"[PluginRegistry] Added search root to sys.path: {search_root}")
 
         self._discovery_paths.append(resolved_path)
         print(f"[PluginRegistry] Added discovery path: {resolved_path}")
@@ -73,20 +71,42 @@ class PluginRegistry:
             Number of plugins found in this directory
         """
         count = 0
+        if not directory.is_dir():
+            print(f"[PluginRegistry] Error: Cannot scan non-existent directory {directory}")
+            return 0
 
-        # The search root is the parent of the plugins directory (e.g., 'src' or project root)
-        search_root = directory.parent
+        # --- THIS IS THE FIX ---
+        # Find the correct package root from sys.path. An ancestor of the plugin directory
+        # must be in sys.path for Python's import system to work. We find the longest
+        # matching path to handle nested source structures correctly.
+        package_root = None
+        for p_str in sorted(sys.path, key=len, reverse=True):
+            try:
+                # Make sure the path entry is valid before creating a Path object
+                if not p_str or not Path(p_str).is_dir():
+                    continue
+                p = Path(p_str).resolve()
+                if p in directory.resolve().parents or p == directory.resolve():
+                    package_root = p
+                    break
+            except (FileNotFoundError, OSError):
+                continue
+
+        if not package_root:
+            print(
+                f"[PluginRegistry] FATAL: Could not determine package root for discovery path {directory}. The parent directory or an ancestor must be in sys.path.")
+            return 0
+        # --- END OF FIX ---
 
         try:
             # Look for Python packages (directories with __init__.py)
             for item in directory.iterdir():
                 if item.is_dir() and (item / "__init__.py").exists():
                     try:
-                        # --- THIS IS THE FIX ---
-                        # Correctly construct the module name relative to the search root
-                        # that we added to sys.path earlier.
-                        # e.g., 'ava.core.plugins.examples.living_design_agent' from 'src'
-                        module_path_str = ".".join(item.relative_to(search_root).parts)
+                        # Construct the module name relative to the found package root.
+                        # e.g., 'ava.core.plugins.examples.x' from package_root '.../src'
+                        # or 'my_plugin' from package_root '.../plugins'
+                        module_path_str = ".".join(item.relative_to(package_root).parts)
 
                         if self._try_load_plugin_from_module(module_path_str):
                             count += 1

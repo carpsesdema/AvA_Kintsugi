@@ -15,8 +15,11 @@ class PluginConfig:
     Single responsibility: Handle plugin configuration storage and retrieval.
     """
 
-    def __init__(self, config_file_path: str = "config/plugins.json"):
-        self.config_file = Path(config_file_path)
+    def __init__(self, project_root: Path):
+        # --- THIS IS THE FIX ---
+        # Use the provided project_root to locate the config file reliably.
+        self.config_file = project_root / "src" / "ava" / "config" / "plugins.json"
+        # --- END OF FIX ---
         self.config_file.parent.mkdir(exist_ok=True)
 
         # Configuration structure:

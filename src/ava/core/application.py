@@ -23,10 +23,7 @@ class Application:
     def __init__(self, project_root: Path):
         print("[Application] Initializing with plugin-enabled manager architecture...")
 
-        # --- THIS IS THE FIX ---
-        # Store the stable project root passed from main.py
         self.project_root = project_root
-        # --- END OF FIX ---
 
         # --- Central Communication ---
         self.event_bus = EventBus()
@@ -64,18 +61,19 @@ class Application:
         """Initialize all managers in the correct dependency order with plugin support."""
         print("[Application] Initializing managers in dependency order...")
 
+        # --- THIS IS THE FIX ---
+        # Pass the reliable project_root to the managers that need it.
         # 1. Initialize core components first (no dependencies)
-        self.service_manager.initialize_core_components()
+        self.service_manager.initialize_core_components(self.project_root)
 
         # 2. Initialize plugin system (depends on core components)
-        self.service_manager.initialize_plugin_system()
+        self.service_manager.initialize_plugin_system(self.project_root)
+        # --- END OF FIX ---
 
-        # --- THIS IS THE FIX ---
-        # Use the reliable project_root to discover plugins.
+        # Add discovery paths using the reliable project_root
         plugin_manager = self.service_manager.get_plugin_manager()
         plugin_manager.add_discovery_path(self.project_root / "src" / "ava" / "core" / "plugins" / "examples")
         plugin_manager.add_discovery_path(self.project_root / "plugins")
-        # --- END OF FIX ---
 
         # 3. Discover and load plugins (async operation)
         plugin_success = await self.service_manager.initialize_plugins()

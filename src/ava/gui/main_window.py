@@ -75,10 +75,7 @@ class MainWindow(QMainWindow):
         """
         print("[MainWindow] Close event triggered - starting graceful shutdown...")
 
-        # --- FIX #2: Don't force quit the application here ---
-        # By simply accepting the event, we allow Qt to emit the 'aboutToQuit'
-        # signal, which our main async logic is waiting for. This prevents
-        # the "Event loop stopped before Future completed" error.
+
         try:
             # Emit application shutdown event to trigger cleanup
             if self.event_bus:
@@ -86,6 +83,5 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[MainWindow] Error during shutdown event: {e}")
 
-        # Let the Qt event loop handle the rest of the shutdown gracefully.
+
         event.accept()
-        # --- END OF FIX #2 ---

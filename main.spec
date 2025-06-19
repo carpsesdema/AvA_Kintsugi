@@ -1,30 +1,27 @@
-# main.spec
-
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
 
 block_cipher = None
 
-# <<< FIX: Explicitly define the src_root for robust pathing >>>
-# This makes it clear where our source and data files are located.
+# Define the root of our source code for reliable pathing.
 src_root = Path('./src').resolve()
+project_root = Path('.').resolve()
 
 a = Analysis(
     ['src/ava/main.py'],
-    # <<< FIX: Use the resolved src_root for reliability >>>
-    pathex=[str(src_root)],
+    pathex=[str(project_root)],  # Add project root to path for plugins discovery
     binaries=[],
     datas=[
-        # --- Bundle all necessary non-code files ---
+        # --- THIS IS THE FIX: Bundle all necessary non-code files ---
+        # We specify ('source_path', 'destination_in_bundle')
+        # This ensures that PyInstaller copies these folders into the final .exe package
+        # and places them where our code expects to find them.
         ('src/ava/assets', 'ava/assets'),
-        ('src/ava/rag_server.py', '.'), # Place in root of build for simplicity
-        ('src/ava/requirements_rag.txt', '.'),
-
-        # <<< FIX: Correctly include the config and plugins folders >>>
-        # The original was missing these, which caused the plugin system to fail.
-        ('src/ava/config', 'config'),
+        ('src/ava/config', 'src/ava/config'),
         ('src/ava/core/plugins/examples', 'ava/core/plugins/examples'),
+
+        # Include the top-level 'plugins' directory if it exists, for custom plugins.
         ('plugins', 'plugins')
     ],
     hiddenimports=[
