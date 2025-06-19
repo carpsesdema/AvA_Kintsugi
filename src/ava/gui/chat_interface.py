@@ -1,19 +1,21 @@
 # src/ava/gui/chat_interface.py
-# UPDATED: Implemented session save/load functionality.
+# UPDATED: Correctly uses the new GIF-based loading indicator.
 
 import json
 import base64
 import io
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QScrollArea, QHBoxLayout, QFileDialog, QMessageBox
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPalette, QPixmap, QImage
+from PySide6.QtGui import QPalette, QPixmap, QImage, QMovie
 import qtawesome as qta
 
 from .components import Colors, Typography, ModernButton
 from .mode_toggle import ModeToggle
 from .advanced_chat_input import AdvancedChatInput
+from .loading_indicator import LoadingIndicator
 from ava.core.event_bus import EventBus
 from ava.core.app_state import AppState
 from ava.core.interaction_mode import InteractionMode
@@ -21,7 +23,6 @@ from typing import Optional
 
 
 class ChatBubble(QFrame):
-    # (This class remains unchanged from the previous version)
     def __init__(self, text: str, sender: str, is_user: bool, image: Optional[QImage] = None):
         super().__init__()
         self.setObjectName("chat_bubble")
@@ -71,7 +72,6 @@ class ChatBubble(QFrame):
 
 
 class ChatMessageWidget(QWidget):
-    # (This class remains unchanged from the previous version)
     def __init__(self, text: str, sender: str, is_user: bool, image: Optional[QImage] = None):
         super().__init__()
         layout = QHBoxLayout(self)
@@ -101,7 +101,6 @@ class ChatInterface(QWidget):
     def __init__(self, event_bus: EventBus):
         super().__init__()
         self.event_bus = event_bus
-        # THIS IS THE FIX: The history now stores dictionaries matching our save format.
         self.conversation_history = []
         self.streaming_message_widget = None
         self.current_app_state = AppState.BOOTSTRAP
@@ -135,6 +134,7 @@ class ChatInterface(QWidget):
         self.event_bus.subscribe("streaming_message_chunk", self.on_streaming_chunk)
         self.event_bus.subscribe("streaming_message_end", self.on_streaming_end)
         self.event_bus.subscribe("interaction_mode_changed", self.on_mode_changed)
+
         self.on_app_state_changed(AppState.BOOTSTRAP, None)
 
     def _create_top_input_bar(self) -> QWidget:
@@ -161,15 +161,16 @@ class ChatInterface(QWidget):
         self.mode_toggle.setMode(new_mode)
         if new_mode == InteractionMode.CHAT:
             self.input_widget.setPlaceholderText("Ask a question, brainstorm ideas, or paste an image...")
-            if not is_state_change: self._add_message(text="Switched to Chat mode.", is_user=False, is_feedback=True)
+            if not is_state_change: self._add_message(
+                message_data={"role": "assistant", "text": "Switched to Chat mode."}, is_feedback=True)
         elif new_mode == InteractionMode.BUILD:
             if self.current_app_state == AppState.BOOTSTRAP:
                 self.input_widget.setPlaceholderText("Describe the new application you want to build...")
             else:
                 self.input_widget.setPlaceholderText(
                     f"What changes for '{self.current_project_name}'? Paste an image of an error!")
-            if not is_state_change: self._add_message(text="Switched to Build mode. Ready to code.", is_user=False,
-                                                      is_feedback=True)
+            if not is_state_change: self._add_message(
+                message_data={"role": "assistant", "text": "Switched to Build mode. Ready to code."}, is_feedback=True)
 
     def _create_input_widget(self) -> AdvancedChatInput:
         input_widget = AdvancedChatInput()
@@ -177,13 +178,7 @@ class ChatInterface(QWidget):
         return input_widget
 
     def _on_user_message_sent(self, text: str, image_bytes: Optional[bytes], image_media_type: Optional[str]):
-        q_image = QImage()
-        image_b64 = None
-        if image_bytes and q_image.loadFromData(image_bytes):
-            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-        else:
-            q_image = None
-
+        image_b64 = base64.b64encode(image_bytes).decode('utf-8') if image_bytes else None
         history_entry = {"role": "user", "text": text, "image_b64": image_b64, "media_type": image_media_type}
         self._add_message(history_entry)
         self.event_bus.emit("user_request_submitted", text, self.conversation_history, image_bytes, image_media_type)
@@ -193,12 +188,10 @@ class ChatInterface(QWidget):
         is_user = role == "user"
         text = message_data.get("text", "")
         image_b64 = message_data.get("image_b64")
-
         q_image = None
         if image_b64:
-            image_bytes = base64.b64decode(image_b64)
             q_image = QImage()
-            q_image.loadFromData(image_bytes)
+            q_image.loadFromData(base64.b64decode(image_b64))
 
         sender_name = "You" if is_user else message_data.get("sender", "Kintsugi AvA")
 
@@ -209,53 +202,86 @@ class ChatInterface(QWidget):
 
         QTimer.singleShot(10, lambda: self.scroll_area.verticalScrollBar().setValue(
             self.scroll_area.verticalScrollBar().maximum()))
-
-        if not is_feedback:
-            self.conversation_history.append(message_data)
-
+        if not is_feedback: self.conversation_history.append(message_data)
         return message_widget
 
     def on_streaming_start(self, sender: str):
-        message_data = {"role": "assistant", "sender": sender, "text": ""}
-        self.streaming_message_widget = self._add_message(message_data, is_feedback=True)
+        # --- THIS IS THE ARCHITECTURALLY CORRECT FIX ---
+        self._remove_loading_indicator()
+
+        # 1. Create a ChatMessageWidget with NO text. This creates the correctly aligned avatar and bubble.
+        self.streaming_message_widget = self._add_message(
+            {"role": "assistant", "sender": sender, "text": None},
+            is_feedback=True
+        )
+
+        # 2. Get the empty bubble from the widget.
+        bubble = self.streaming_message_widget.bubble
+        bubble.sender_label.hide()  # Hide the sender name temporarily
+
+        # 3. Create the loading indicator and add it INSIDE the bubble's layout.
+        indicator = LoadingIndicator()
+        indicator.setFixedSize(32, 32)
+        bubble.layout().addWidget(indicator, alignment=Qt.AlignCenter)
+        bubble.setMinimumHeight(50)  # Give it some space
+        # --- END OF FIX ---
 
     def on_streaming_chunk(self, chunk: str):
+        if self.streaming_message_widget and self.streaming_message_widget.bubble.layout().count() > 1:
+            # This means it's still a loading bubble. We need to convert it.
+            bubble = self.streaming_message_widget.bubble
+
+            # Remove the indicator widget
+            indicator_item = bubble.layout().takeAt(1)
+            if indicator_item and indicator_item.widget():
+                indicator_item.widget().deleteLater()
+
+            # Show the sender label again and set its text
+            bubble.sender_label.show()
+
         if self.streaming_message_widget:
             self.streaming_message_widget.append_text(chunk)
             QTimer.singleShot(1, lambda: self.scroll_area.verticalScrollBar().setValue(
                 self.scroll_area.verticalScrollBar().maximum()))
 
+    def _remove_loading_indicator(self):
+        # This now just cleans up the whole widget if a new stream starts before the old one finishes.
+        if self.streaming_message_widget:
+            # Check if it's a loading widget (has more than just the sender label)
+            if self.streaming_message_widget.bubble.layout().count() > 1:
+                self.streaming_message_widget.deleteLater()
+                self.streaming_message_widget = None
+
     def on_streaming_end(self):
         if self.streaming_message_widget:
-            full_text = ""
+            # If the widget still exists, it's a completed text stream.
+            # We need to add its content to the history.
             if self.streaming_message_widget.bubble.message_label:
                 full_text = self.streaming_message_widget.bubble.message_label.text()
+                final_message_data = {"role": "assistant", "text": full_text, "image_b64": None, "media_type": None}
+                self.conversation_history.append(final_message_data)
 
-            # Now finalize the entry in the conversation history
-            final_message_data = {"role": "assistant", "text": full_text, "image_b64": None, "media_type": None}
-            self.conversation_history.append(final_message_data)
             self.streaming_message_widget = None
 
     def clear_chat(self, initial_message: str = "New session started."):
+        self._remove_loading_indicator()
         while self.bubble_layout.count() > 1:
             item = self.bubble_layout.takeAt(0)
-            if item.widget(): item.widget().deleteLater()
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    child = item.layout().takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
         self.conversation_history.clear()
         self._add_message(message_data={"role": "assistant", "text": initial_message})
 
-    # --- NEW SESSION MANAGEMENT METHODS ---
     def save_session(self):
-        """Saves the current chat history to a JSON file."""
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Chat Session", "", "JSON Files (*.json)")
-        if not file_path:
-            return
-
-        session_data = {
-            "schema_version": "1.0",
-            "saved_at": datetime.now().isoformat(),
-            "conversation_history": self.conversation_history
-        }
-
+        if not file_path: return
+        session_data = {"schema_version": "1.0", "saved_at": datetime.now().isoformat(),
+                        "conversation_history": self.conversation_history}
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(session_data, f, indent=2)
@@ -264,28 +290,16 @@ class ChatInterface(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to save chat session: {e}")
 
     def load_session(self):
-        """Loads a chat history from a JSON file."""
         file_path, _ = QFileDialog.getOpenFileName(self, "Load Chat Session", "", "JSON Files (*.json)")
-        if not file_path:
-            return
-
+        if not file_path: return
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 session_data = json.load(f)
-
-            if "conversation_history" not in session_data:
-                raise ValueError("Invalid session file: 'conversation_history' key not found.")
-
-            # Clear current session and rebuild UI
-            while self.bubble_layout.count() > 1:
-                item = self.bubble_layout.takeAt(0)
-                if item.widget(): item.widget().deleteLater()
-            self.conversation_history.clear()
-
-            for message_data in session_data["conversation_history"]:
-                self._add_message(message_data)
-
+            if "conversation_history" not in session_data: raise ValueError(
+                "Invalid session file: 'conversation_history' key not found.")
+            self.clear_chat("Session loaded.")
+            self.conversation_history.pop()
+            for message_data in session_data["conversation_history"]: self._add_message(message_data)
             QMessageBox.information(self, "Success", "Chat session loaded successfully.")
-
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load chat session: {e}")
+            QMessageBox.information(self, "Error", f"Failed to load chat session: {e}")

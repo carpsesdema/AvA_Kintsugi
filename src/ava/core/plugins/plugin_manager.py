@@ -397,7 +397,10 @@ class PluginManager:
             for plugin_name in all_metadata.keys()
         ]
 
-    def _on_plugin_state_changed(self, plugin_name: str, new_state: PluginState):
+    # --- THIS IS THE FIX ---
+    # The event emitter sends three arguments, so we need to accept all three.
+    def _on_plugin_state_changed(self, plugin_name: str, old_state: PluginState, new_state: PluginState):
         """Handle plugin state change events."""
-        print(f"[PluginManager] Plugin '{plugin_name}' state changed to: {new_state.value}")
+        print(f"[PluginManager] Plugin '{plugin_name}' state changed from {old_state.value} to: {new_state.value}")
         self._plugin_states[plugin_name] = new_state
+    # --- END OF FIX ---

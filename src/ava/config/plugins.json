@@ -1,5 +1,7 @@
 {
-  "enabled_plugins": [],
+  "enabled_plugins": [
+    "autonomous_code_reviewer"
+  ],
   "plugin_settings": {
     "code_monitor": {
       "report_frequency": 5,

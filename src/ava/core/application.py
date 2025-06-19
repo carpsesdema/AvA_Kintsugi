@@ -86,9 +86,6 @@ class Application:
             # Initialize plugins using the single manager
             await self.service_manager.initialize_plugins()
 
-            # After plugins are loaded, update the sidebar UI to reflect the status
-            self.update_sidebar_plugin_status()
-
             # Initialize services
             self.service_manager.initialize_services()
 
@@ -97,6 +94,11 @@ class Application:
                 self.service_manager.get_llm_client(),
                 self.service_manager
             )
+
+            # --- THIS IS THE FIX ---
+            # After plugins are loaded AND windows are created, update the sidebar UI.
+            self.update_sidebar_plugin_status()
+            # --- END OF FIX ---
 
             # Set manager references for all coordinators
             self.task_manager.set_managers(self.service_manager, self.window_manager)
