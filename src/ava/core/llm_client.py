@@ -135,20 +135,33 @@ class LLMClient:
 
     async def get_available_models(self) -> dict:
         models = {}
-        if "openai" in self.clients: models["openai/gpt-4o"] = "OpenAI: GPT-4o"
+        if "openai" in self.clients:
+            models["openai/gpt-4o"] = "OpenAI: GPT-4o"
+
         if "deepseek" in self.clients:
             models["deepseek/deepseek-chat"] = "DeepSeek: Chat"
             models["deepseek/deepseek-reasoner"] = "DeepSeek: Reasoner (R1-0528)"
+
         if "google" in self.clients:
             models["google/gemini-2.5-pro-preview-06-05"] = "Google: Gemini 2.5 Pro(preview)"
             models["google/gemini-2.5-flash-preview-05-20"] = "Google: Gemini 2.5 Flash(preview)"
+            models["google/gemini-2.0-flash"] = "Google: Gemini 2.0 Flash"
+            models["google/gemini-1.5-flash-latest"] = "Google: Gemini 1.5 Flash"
+            models["google/gemini-2.5-flash"] = "Google: Gemini 2.5 Flash"
+
         if "anthropic" in self.clients:
             models["anthropic/claude-3-5-sonnet-20240620"] = "Anthropic: Claude 3.5 Sonnet"
             models["anthropic/claude-3-opus-20240229"] = "Anthropic: Claude 3 Opus"
             models["anthropic/claude-3-haiku-20240307"] = "Anthropic: Claude 3 Haiku"
+            models["anthropic/claude-opus-4-20250514"] = "Anthropic: Claude Opus 4"
+            models["anthropic/claude-sonnet-4-20250514"] = "Anthropic: Claude Sonnet 4"
+            models["anthropic/claude-3-7-sonnet-20250219"] = "Anthropic: Claude Sonnet 3.7"
+            models["anthropic/claude-3-5-haiku-20241022"] = "Anthropic: Claude Haiku 3.5"
+
         if "ollama" in self.clients:
             ollama_models = await self._get_local_ollama_models()
             models.update(ollama_models)
+
         return models
 
     def get_role_assignments(self) -> dict:
