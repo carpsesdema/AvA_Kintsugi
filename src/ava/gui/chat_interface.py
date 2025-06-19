@@ -1,9 +1,10 @@
 # src/ava/gui/chat_interface.py
-# UPDATED: Correctly uses the new GIF-based loading indicator.
+# UPDATED: Avatar now uses loading_gear_base.png instead of atom icon
 
 import json
 import base64
 import io
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -72,7 +73,7 @@ class ChatBubble(QFrame):
 
 
 class ChatMessageWidget(QWidget):
-    def __init__(self, text: str, sender: str, is_user: bool, image: Optional[QImage] = None):
+    def __init__(self, text: str, sender: str, is_user: bool, image: Optional[QImage] = None, is_loading: bool = False):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setSpacing(10)
@@ -80,21 +81,77 @@ class ChatMessageWidget(QWidget):
         self.bubble = ChatBubble(text, sender, is_user, image)
         bubble_width = self.parent().width() * 0.75 if self.parent() else 800
         self.bubble.setMaximumWidth(int(bubble_width))
+
         if is_user:
             layout.addStretch()
             layout.addWidget(self.bubble)
         else:
-            avatar = QLabel()
-            avatar_icon = qta.icon("fa5s.atom", color=Colors.ACCENT_BLUE)
-            avatar.setPixmap(avatar_icon.pixmap(28, 28))
-            avatar.setFixedSize(30, 30)
-            avatar.setAlignment(Qt.AlignmentFlag.AlignTop)
-            layout.addWidget(avatar)
+            # FIXED: Use gear image instead of atom icon
+            if is_loading:
+                # For loading state, use the LoadingIndicator widget
+                self.avatar_widget = LoadingIndicator()
+                self.avatar_widget.setFixedSize(30, 30)
+            else:
+                # For normal state, use the gear base image
+                self.avatar_widget = QLabel()
+
+                # Find the gear base image
+                if getattr(sys, 'frozen', False):
+                    asset_dir = Path(sys._MEIPASS) / "ava" / "assets"
+                else:
+                    asset_dir = Path(__file__).resolve().parent.parent / "assets"
+
+                gear_base_path = asset_dir / "loading_gear_base.png"
+                if gear_base_path.exists():
+                    pixmap = QPixmap(str(gear_base_path))
+                    scaled_pixmap = pixmap.scaled(28, 28, Qt.AspectRatioMode.KeepAspectRatio,
+                                                  Qt.TransformationMode.SmoothTransformation)
+                    self.avatar_widget.setPixmap(scaled_pixmap)
+                else:
+                    # Fallback to icon if image not found
+                    avatar_icon = qta.icon("fa5s.cog", color=Colors.ACCENT_BLUE)
+                    self.avatar_widget.setPixmap(avatar_icon.pixmap(28, 28))
+
+                self.avatar_widget.setFixedSize(30, 30)
+                self.avatar_widget.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+            layout.addWidget(self.avatar_widget)
             layout.addWidget(self.bubble)
             layout.addStretch()
 
     def append_text(self, chunk: str):
         self.bubble.append_text(chunk)
+
+    def switch_to_normal_avatar(self):
+        """Switch from loading indicator to normal gear avatar"""
+        if hasattr(self, 'avatar_widget') and isinstance(self.avatar_widget, LoadingIndicator):
+            # Remove the loading indicator
+            self.layout().removeWidget(self.avatar_widget)
+            self.avatar_widget.deleteLater()
+
+            # Create normal gear avatar
+            self.avatar_widget = QLabel()
+
+            if getattr(sys, 'frozen', False):
+                asset_dir = Path(sys._MEIPASS) / "ava" / "assets"
+            else:
+                asset_dir = Path(__file__).resolve().parent.parent / "assets"
+
+            gear_base_path = asset_dir / "loading_gear_base.png"
+            if gear_base_path.exists():
+                pixmap = QPixmap(str(gear_base_path))
+                scaled_pixmap = pixmap.scaled(28, 28, Qt.AspectRatioMode.KeepAspectRatio,
+                                              Qt.TransformationMode.SmoothTransformation)
+                self.avatar_widget.setPixmap(scaled_pixmap)
+            else:
+                avatar_icon = qta.icon("fa5s.cog", color=Colors.ACCENT_BLUE)
+                self.avatar_widget.setPixmap(avatar_icon.pixmap(28, 28))
+
+            self.avatar_widget.setFixedSize(30, 30)
+            self.avatar_widget.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+            # Insert it back at position 0 (before the bubble)
+            self.layout().insertWidget(0, self.avatar_widget)
 
 
 class ChatInterface(QWidget):
@@ -122,43 +179,52 @@ class ChatInterface(QWidget):
         self.bubble_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.bubble_layout.addStretch()
         self.scroll_area.setWidget(self.bubble_container)
+        main_layout.addWidget(self.scroll_area, 1)  # Give scroll area the stretch
+
+        self._create_header_controls(main_layout)
 
         self.input_widget = self._create_input_widget()
-        main_layout.addWidget(self.scroll_area, 1)
-        main_layout.addWidget(self._create_top_input_bar())
-        main_layout.addWidget(self.input_widget)
+        main_layout.addWidget(self.input_widget)  # No stretch for input
 
-        self.event_bus.subscribe("app_state_changed", self.on_app_state_changed)
-        self.event_bus.subscribe("chat_cleared", self.clear_chat)
-        self.event_bus.subscribe("streaming_message_start", self.on_streaming_start)
-        self.event_bus.subscribe("streaming_message_chunk", self.on_streaming_chunk)
-        self.event_bus.subscribe("streaming_message_end", self.on_streaming_end)
-        self.event_bus.subscribe("interaction_mode_changed", self.on_mode_changed)
+        self._setup_event_subscriptions()
+        self._add_message({"role": "assistant", "text": "Hello! Let's build something amazing from scratch."},
+                          is_feedback=True)
 
-        self.on_app_state_changed(AppState.BOOTSTRAP, None)
-
-    def _create_top_input_bar(self) -> QWidget:
-        container = QWidget()
-        container_layout = QHBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
+    def _create_header_controls(self, layout: QVBoxLayout):
+        controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
         self.mode_toggle = ModeToggle()
-        self.mode_toggle.modeChanged.connect(lambda mode: self.event_bus.emit("interaction_mode_changed", mode))
-        container_layout.addStretch()
-        container_layout.addWidget(self.mode_toggle)
-        container_layout.addStretch()
-        return container
+        self.mode_toggle.modeChanged.connect(self._on_mode_changed)
+        self.mode_toggle.setMode(InteractionMode.BUILD, animate=False)
+        controls_layout.addWidget(self.mode_toggle)
+        controls_layout.addStretch()
+        layout.addLayout(controls_layout)
 
-    def on_app_state_changed(self, state: AppState, project_name: str | None):
-        self.current_app_state = state
+    def _setup_event_subscriptions(self):
+        self.event_bus.subscribe("app_state_changed", self._on_app_state_changed)
+        self.event_bus.subscribe("load_chat_success", self._on_chat_loaded)
+        self.event_bus.subscribe("streaming_start", self.on_streaming_start)
+        self.event_bus.subscribe("streaming_chunk", self.on_streaming_chunk)
+        self.event_bus.subscribe("streaming_end", self.on_streaming_end)
+
+    def _on_app_state_changed(self, new_state: AppState, project_name: str = None):
+        self.current_app_state = new_state
         self.current_project_name = project_name
-        self.on_mode_changed(self.mode_toggle._current_mode, is_state_change=True)
-        if state == AppState.BOOTSTRAP:
-            self.clear_chat("Hello! Let's build something amazing from scratch.")
-        else:
-            self.clear_chat(f"Project '{project_name}' is loaded. I'm ready to make changes.")
+        if new_state == AppState.BOOTSTRAP:
+            self.input_widget.setPlaceholderText("Describe the new application you want to build...")
+        elif new_state == AppState.PROJECT:
+            self.input_widget.setPlaceholderText(f"What changes for '{project_name}'? Paste an image of an error!")
+        current_mode = self.mode_toggle._current_mode
+        self._on_mode_changed(current_mode, is_state_change=True)
 
-    def on_mode_changed(self, new_mode: InteractionMode, is_state_change: bool = False):
-        self.mode_toggle.setMode(new_mode)
+    def _on_chat_loaded(self, conversation_history: list):
+        self.clear_chat(initial_message=None)
+        self.conversation_history = conversation_history.copy()
+        for message in conversation_history:
+            self._add_message(message, is_feedback=True)
+
+    def _on_mode_changed(self, new_mode: InteractionMode, is_state_change: bool = False):
+        self.event_bus.emit("interaction_mode_changed", new_mode)
         if new_mode == InteractionMode.CHAT:
             self.input_widget.setPlaceholderText("Ask a question, brainstorm ideas, or paste an image...")
             if not is_state_change: self._add_message(
@@ -175,6 +241,7 @@ class ChatInterface(QWidget):
     def _create_input_widget(self) -> AdvancedChatInput:
         input_widget = AdvancedChatInput()
         input_widget.message_sent.connect(self._on_user_message_sent)
+        input_widget.setMaximumHeight(200)  # Prevent it from growing too large
         return input_widget
 
     def _on_user_message_sent(self, text: str, image_bytes: Optional[bytes], image_media_type: Optional[str]):
@@ -183,7 +250,7 @@ class ChatInterface(QWidget):
         self._add_message(history_entry)
         self.event_bus.emit("user_request_submitted", text, self.conversation_history, image_bytes, image_media_type)
 
-    def _add_message(self, message_data: dict, is_feedback: bool = False):
+    def _add_message(self, message_data: dict, is_feedback: bool = False, is_loading: bool = False):
         role = message_data.get("role", "assistant")
         is_user = role == "user"
         text = message_data.get("text", "")
@@ -196,7 +263,7 @@ class ChatInterface(QWidget):
         sender_name = "You" if is_user else message_data.get("sender", "Kintsugi AvA")
 
         stretch_item = self.bubble_layout.takeAt(self.bubble_layout.count() - 1)
-        message_widget = ChatMessageWidget(text, sender_name, is_user, image=q_image)
+        message_widget = ChatMessageWidget(text, sender_name, is_user, image=q_image, is_loading=is_loading)
         self.bubble_layout.addWidget(message_widget)
         self.bubble_layout.addStretch()
 
@@ -206,51 +273,29 @@ class ChatInterface(QWidget):
         return message_widget
 
     def on_streaming_start(self, sender: str):
-        # --- THIS IS THE ARCHITECTURALLY CORRECT FIX ---
         self._remove_loading_indicator()
 
-        # 1. Create a ChatMessageWidget with NO text. This creates the correctly aligned avatar and bubble.
+        # Create a message widget with loading indicator as avatar
         self.streaming_message_widget = self._add_message(
             {"role": "assistant", "sender": sender, "text": None},
-            is_feedback=True
+            is_feedback=True,
+            is_loading=True  # This flag makes it use LoadingIndicator as avatar
         )
 
-        # 2. Get the empty bubble from the widget.
-        bubble = self.streaming_message_widget.bubble
-        bubble.sender_label.hide()  # Hide the sender name temporarily
-
-        # 3. Create the loading indicator and add it INSIDE the bubble's layout.
-        indicator = LoadingIndicator()
-        indicator.setFixedSize(32, 32)
-        bubble.layout().addWidget(indicator, alignment=Qt.AlignCenter)
-        bubble.setMinimumHeight(50)  # Give it some space
-        # --- END OF FIX ---
-
     def on_streaming_chunk(self, chunk: str):
-        if self.streaming_message_widget and self.streaming_message_widget.bubble.layout().count() > 1:
-            # This means it's still a loading bubble. We need to convert it.
-            bubble = self.streaming_message_widget.bubble
-
-            # Remove the indicator widget
-            indicator_item = bubble.layout().takeAt(1)
-            if indicator_item and indicator_item.widget():
-                indicator_item.widget().deleteLater()
-
-            # Show the sender label again and set its text
-            bubble.sender_label.show()
-
         if self.streaming_message_widget:
+            # When first text arrives, switch from loading indicator to normal gear avatar
+            if not self.streaming_message_widget.bubble.message_label:
+                self.streaming_message_widget.switch_to_normal_avatar()
+
             self.streaming_message_widget.append_text(chunk)
             QTimer.singleShot(1, lambda: self.scroll_area.verticalScrollBar().setValue(
                 self.scroll_area.verticalScrollBar().maximum()))
 
     def _remove_loading_indicator(self):
-        # This now just cleans up the whole widget if a new stream starts before the old one finishes.
         if self.streaming_message_widget:
-            # Check if it's a loading widget (has more than just the sender label)
-            if self.streaming_message_widget.bubble.layout().count() > 1:
-                self.streaming_message_widget.deleteLater()
-                self.streaming_message_widget = None
+            self.streaming_message_widget.deleteLater()
+            self.streaming_message_widget = None
 
     def on_streaming_end(self):
         if self.streaming_message_widget:
@@ -264,18 +309,14 @@ class ChatInterface(QWidget):
             self.streaming_message_widget = None
 
     def clear_chat(self, initial_message: str = "New session started."):
-        self._remove_loading_indicator()
-        while self.bubble_layout.count() > 1:
-            item = self.bubble_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-            elif item.layout():
-                while item.layout().count():
-                    child = item.layout().takeAt(0)
-                    if child.widget():
-                        child.widget().deleteLater()
+        for i in reversed(range(self.bubble_layout.count())):
+            widget = self.bubble_layout.itemAt(i).widget()
+            if widget:
+                widget.deleteLater()
+        self.bubble_layout.addStretch()
         self.conversation_history.clear()
-        self._add_message(message_data={"role": "assistant", "text": initial_message})
+        if initial_message:
+            self._add_message({"role": "assistant", "text": initial_message}, is_feedback=True)
 
     def save_session(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Chat Session", "", "JSON Files (*.json)")
@@ -295,11 +336,11 @@ class ChatInterface(QWidget):
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 session_data = json.load(f)
-            if "conversation_history" not in session_data: raise ValueError(
-                "Invalid session file: 'conversation_history' key not found.")
-            self.clear_chat("Session loaded.")
-            self.conversation_history.pop()
-            for message_data in session_data["conversation_history"]: self._add_message(message_data)
+            if "conversation_history" not in session_data:
+                raise ValueError("Invalid session file: 'conversation_history' key not found.")
+            self.clear_chat(None)  # Don't show initial message
+            for message_data in session_data["conversation_history"]:
+                self._add_message(message_data, is_feedback=True)
             QMessageBox.information(self, "Success", "Chat session loaded successfully.")
         except Exception as e:
-            QMessageBox.information(self, "Error", f"Failed to load chat session: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to load chat session: {e}")
