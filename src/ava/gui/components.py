@@ -1,7 +1,7 @@
 # kintsugi_ava/gui/components.py
 # Our Design System. All reusable colors, fonts, and custom widgets live here.
 
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QPushButton, QSlider, QLabel, QHBoxLayout, QWidget
 from PySide6.QtCore import Qt, Signal
 
@@ -180,3 +180,31 @@ class TemperatureSlider(QWidget):
             Float temperature value
         """
         return self.slider.value() / self.precision
+
+class StatusIndicatorDot(QWidget):
+    """A simple colored dot to indicate status."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(10, 10)
+        self._color = Colors.TEXT_SECONDARY  # Default to grey
+        self.setToolTip("Plugin status")
+
+    def setStatus(self, status: str):
+        """Sets the color of the dot based on the status string."""
+        if status == 'ok':
+            self._color = Colors.ACCENT_GREEN
+            self.setToolTip("All enabled plugins are running.")
+        elif status == 'error':
+            self._color = Colors.ACCENT_RED
+            self.setToolTip("One or more enabled plugins are not running or in an error state.")
+        else: # 'off' or any other state
+            self._color = Colors.TEXT_SECONDARY
+            self.setToolTip("No plugins are enabled.")
+        self.update() # Trigger a repaint
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._color)
+        painter.drawEllipse(0, 0, self.width(), self.height())

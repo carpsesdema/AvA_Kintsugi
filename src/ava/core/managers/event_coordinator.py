@@ -1,5 +1,5 @@
 # src/ava/core/managers/event_coordinator.py
-# UPDATED: Re-wired the main user chat event to the new central router.
+# UPDATED: Implemented new status dot logic.
 
 import asyncio
 from ava.core.event_bus import EventBus
@@ -63,9 +63,9 @@ class EventCoordinator:
         plugin_manager = self.service_manager.get_plugin_manager()
         if plugin_manager:
             self.event_bus.subscribe("plugin_enable_requested",
-                                     lambda name: asyncio.create_task(plugin_manager.enable_plugin(name)))
+                                     lambda name: asyncio.create_task(plugin_manager.start_plugin(name)))
             self.event_bus.subscribe("plugin_disable_requested",
-                                     lambda name: asyncio.create_task(plugin_manager.disable_plugin(name)))
+                                     lambda name: asyncio.create_task(plugin_manager.stop_plugin(name)))
             self.event_bus.subscribe("plugin_reload_requested",
                                      lambda name: asyncio.create_task(plugin_manager.reload_plugin(name)))
 
@@ -129,10 +129,7 @@ class EventCoordinator:
             self.event_bus.subscribe("plugin_error",
                                      lambda name, err: self.event_bus.emit("log_message_received", "Plugin", "error",
                                                                            f"Error in {name}: {err}"))
-            # --- THIS IS THE FIX ---
-            # Subscribe to state changes to keep the sidebar UI in sync.
             self.event_bus.subscribe("plugin_state_changed", self._on_plugin_state_changed_for_sidebar)
-            # --- END OF FIX ---
 
         print("[EventCoordinator] ✓ Plugin events wired")
 
@@ -141,7 +138,7 @@ class EventCoordinator:
         self._update_sidebar_plugin_status()
 
     def _update_sidebar_plugin_status(self):
-        """Helper method to calculate plugin counts and update the sidebar."""
+        """Helper method to calculate plugin status and update the sidebar dot."""
         if not self.service_manager or not self.window_manager:
             return
 
@@ -149,11 +146,18 @@ class EventCoordinator:
         if not plugin_manager:
             return
 
-        all_plugins = plugin_manager.get_all_plugins_info()
-        total_count = len(all_plugins)
-        active_count = sum(1 for p in all_plugins if p.get('state') == 'started')
+        enabled_plugins = plugin_manager.config.get_enabled_plugins()
+        if not enabled_plugins:
+            status = "off"
+        else:
+            all_plugins_info = plugin_manager.get_all_plugins_info()
+            status = "ok" # Assume OK
+            for plugin in all_plugins_info:
+                if plugin['name'] in enabled_plugins and plugin.get('state') != 'started':
+                    status = "error" # Set to error if any enabled plugin isn't running
+                    break
 
         main_window = self.window_manager.get_main_window()
         if main_window and hasattr(main_window, 'sidebar'):
-            main_window.sidebar.update_plugin_status(active_count, total_count)
-            print(f"[EventCoordinator] Sidebar plugin status updated: {active_count}/{total_count}")
+            main_window.sidebar.update_plugin_status(status)
+            print(f"[EventCoordinator] Sidebar plugin status updated to: {status}")

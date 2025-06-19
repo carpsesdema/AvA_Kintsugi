@@ -1,12 +1,12 @@
 # src/ava/gui/enhanced_sidebar.py
-# UPDATED: Re-laid out plugin panel and added an update method.
+# UPDATED: Re-laid out plugin panel and added a status dot.
 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QPushButton
 from PySide6.QtCore import Qt
 import qtawesome as qta
 
-from .components import Colors, Typography, ModernButton
+from .components import Colors, Typography, ModernButton, StatusIndicatorDot
 from ava.core.event_bus import EventBus
 
 
@@ -85,17 +85,17 @@ class EnhancedSidebar(QWidget):
         return panel
 
     def _create_plugin_panel(self) -> QFrame:
-        """New plugin management panel with better layout."""
+        """New plugin management panel with a status dot."""
         panel, layout = self._create_styled_panel("Plugin System")
 
-        # Use a QHBoxLayout to put the label and button on the same line
         plugin_main_layout = QHBoxLayout()
         plugin_main_layout.setContentsMargins(0, 0, 0, 0)
-        plugin_main_layout.setSpacing(4)
+        plugin_main_layout.setSpacing(8)  # Add a bit of space
 
-        self.plugin_status_label = QLabel("Plugins: Loading...")
-        self.plugin_status_label.setFont(Typography.body())
-        self.plugin_status_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()}; padding: 2px 0px;")
+        self.plugin_status_dot = StatusIndicatorDot()
+        status_label = QLabel("Plugins")  # Simple, static label
+        status_label.setFont(Typography.body())
+        status_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
 
         manage_plugins_btn = QPushButton("Manage")
         manage_plugins_btn.setFont(Typography.body())
@@ -116,13 +116,13 @@ class EnhancedSidebar(QWidget):
         """)
         manage_plugins_btn.clicked.connect(lambda: self.event_bus.emit("plugin_management_requested"))
 
-        plugin_main_layout.addWidget(self.plugin_status_label)
+        plugin_main_layout.addWidget(self.plugin_status_dot)
+        plugin_main_layout.addWidget(status_label)
         plugin_main_layout.addStretch()
         plugin_main_layout.addWidget(manage_plugins_btn)
 
         layout.addLayout(plugin_main_layout)
         return panel
-
 
     def _create_actions_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Actions & Tools")
@@ -154,9 +154,6 @@ class EnhancedSidebar(QWidget):
     def update_project_display(self, project_name: str):
         self.project_name_label.setText(f"Project: {project_name}")
 
-    def update_plugin_status(self, active_count: int, total_count: int):
-        """Updates the plugin status label in the sidebar."""
-        if total_count == 0:
-            self.plugin_status_label.setText("No plugins found")
-        else:
-            self.plugin_status_label.setText(f"{active_count}/{total_count} plugins active")
+    def update_plugin_status(self, status: str):
+        """Updates the plugin status dot in the sidebar."""
+        self.plugin_status_dot.setStatus(status)

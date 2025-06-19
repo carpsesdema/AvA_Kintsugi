@@ -1,6 +1,5 @@
 {
   "enabled_plugins": [
-    "living_design_agent",
     "autonomous_code_reviewer"
   ],
   "plugin_settings": {

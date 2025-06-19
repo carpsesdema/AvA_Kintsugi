@@ -86,10 +86,8 @@ class Application:
             # Initialize plugins using the single manager
             await self.service_manager.initialize_plugins()
 
-            # --- THIS IS THE FIX ---
             # After plugins are loaded, update the sidebar UI to reflect the status
             self.update_sidebar_plugin_status()
-            # --- END OF FIX ---
 
             # Initialize services
             self.service_manager.initialize_services()
@@ -149,19 +147,24 @@ class Application:
             return
 
         try:
-            all_plugins = self.plugin_manager.get_all_plugins_info()
-            total_count = len(all_plugins)
+            enabled_plugins = self.plugin_manager.config.get_enabled_plugins()
+            if not enabled_plugins:
+                status = "off"
+            else:
+                all_plugins_info = self.plugin_manager.get_all_plugins_info()
+                status = "ok"  # Assume OK unless proven otherwise
+                for plugin in all_plugins_info:
+                    if plugin['name'] in enabled_plugins and plugin.get('state') != 'started':
+                        status = "error"
+                        break
 
-            # A plugin is "active" if its state is 'started'.
-            active_count = sum(1 for p in all_plugins if p.get('state') == 'started')
-
-            # Get the sidebar from the window manager and call its update method
             main_window = self.window_manager.get_main_window()
             if main_window and hasattr(main_window, 'sidebar'):
-                main_window.sidebar.update_plugin_status(active_count, total_count)
-                print(f"[Application] Updated sidebar plugin status: {active_count}/{total_count} active.")
+                main_window.sidebar.update_plugin_status(status)
+                print(f"[Application] Updated sidebar plugin status to: {status}")
             else:
                 print("[Application] Could not find sidebar to update.")
+
         except Exception as e:
             print(f"[Application] Error updating sidebar plugin status: {e}")
 
