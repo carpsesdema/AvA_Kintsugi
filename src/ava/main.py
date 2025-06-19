@@ -22,6 +22,9 @@ else:
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QTimer
+# --- THIS IS THE FIX ---
+from PySide6.QtGui import QIcon
+# --- END OF FIX ---
 
 # --- Import the main Application class that orchestrates everything ---
 from ava.core.application import Application
@@ -100,6 +103,23 @@ if __name__ == "__main__":
     # Set application metadata
     app.setApplicationName("Kintsugi AvA")
     app.setOrganizationName("Kintsugi")
+
+    # --- THIS IS THE FIX: SET THE APPLICATION ICON ---
+    if getattr(sys, 'frozen', False):
+        # In a PyInstaller bundle, the path is relative to the _MEIPASS dir
+        icon_path = Path(sys._MEIPASS) / "ava" / "assets" / "Ava_Icon.ico"
+    else:
+        # In source mode, it's relative to the project root
+        icon_path = project_root / "src" / "ava" / "assets" / "Ava_Icon.ico"
+
+    if icon_path.exists():
+        app_icon = QIcon(str(icon_path))
+        app.setWindowIcon(app_icon)
+        print(f"[main] Application icon set from: {icon_path}")
+    else:
+        print(f"[main] WARNING: Application icon not found at {icon_path}")
+    # --- END OF FIX ---
+
 
     # Pass the calculated project_root into the main async logic.
     qasync.run(main_async_logic(project_root))
