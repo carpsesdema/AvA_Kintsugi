@@ -1,6 +1,7 @@
 import os
 import json
-from typing import Dict
+import base64 # <-- NEW: For encoding images
+from typing import Dict, Optional
 
 import aiohttp
 import asyncio
@@ -24,17 +25,13 @@ except ImportError:
 class LLMClient:
     def __init__(self, project_root: Path):
         load_dotenv()
-        # --- THIS IS THE FIX ---
-        # Use the provided project_root to locate the config directory reliably.
-        # This ensures it works from source and from the packaged .exe.
         self.config_dir = project_root / "src" / "ava" / "config"
-        # --- END OF FIX ---
         self.config_dir.mkdir(exist_ok=True)
         self.assignments_file = self.config_dir / "role_assignments.json"
         self.clients = {}
         self._configure_clients()
         self.role_assignments = {}
-        self.role_temperatures = {}  # New: temperature settings per role
+        self.role_temperatures = {}
         self.load_assignments()
 
     def _configure_clients(self):
@@ -75,10 +72,10 @@ class LLMClient:
         else:
             print("[LLMClient] No assignments file found, setting smart defaults.")
             self.role_assignments = {
-                "architect": "google/gemini-2.5-flash-preview-05-20",
-                "coder": "deepseek/deepseek-coder",
-                "chat": "google/gemini-2.5-flash-preview-05-20",
-                "reviewer": "google/gemini-2.5-flash-preview-05-20"
+                "architect": "google/gemini-2.5-pro-preview-06-05",
+                "coder": "anthropic/claude-3-5-sonnet-20240620",
+                "chat": "anthropic/claude-3-5-sonnet-20240620",
+                "reviewer": "anthropic/claude-3-5-sonnet-20240620"
             }
             self.role_temperatures = {}
 
@@ -108,11 +105,9 @@ class LLMClient:
             json.dump(config_data, f, indent=2)
 
     async def _get_local_ollama_models(self) -> Dict[str, str]:
-        """Dynamically fetches locally available models from an Ollama server."""
         ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/tags"
         local_models = {}
         try:
-            # Use a short timeout to avoid blocking the UI for too long if server is unresponsive
             timeout = aiohttp.ClientTimeout(total=2.0)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(ollama_url) as response:
@@ -124,170 +119,130 @@ class LLMClient:
                                 key = f"ollama/{model_name}"
                                 display_name = f"Ollama: {model_name}"
                                 local_models[key] = display_name
-                        if local_models:
-                            print(f"[LLMClient] Discovered {len(local_models)} local Ollama models.")
-                    else:
-                        # Non-fatal warning if the server is there but returns an error
-                        print(
-                            f"[LLMClient] Ollama server responded with status {response.status}. Could not list models.")
-        except asyncio.TimeoutError:
-            print(f"[LLMClient] Timed out connecting to Ollama server at {ollama_url}. Is it running?")
-        except aiohttp.ClientConnectorError:
-            # This is the most common error if the server is not running
-            print(f"[LLMClient] Could not connect to Ollama server at {ollama_url}. Is it running?")
+                        if local_models: print(f"[LLMClient] Discovered {len(local_models)} local Ollama models.")
+                    else: print(f"[LLMClient] Ollama server responded with status {response.status}.")
+        except (asyncio.TimeoutError, aiohttp.ClientConnectorError):
+            print(f"[LLMClient] Could not connect to Ollama server. Is it running?")
         except Exception as e:
-            # Catch-all for other unexpected errors
             print(f"[LLMClient] An unexpected error occurred while fetching Ollama models: {e}")
 
         return local_models
 
     async def get_available_models(self) -> dict:
         models = {}
-        if "openai" in self.clients:
-            models["openai/gpt-4o"] = "OpenAI: GPT-4o"
-
+        # List only modern, multimodal-capable models for simplicity, plus some legacy ones
+        if "openai" in self.clients: models["openai/gpt-4o"] = "OpenAI: GPT-4o"
         if "deepseek" in self.clients:
             models["deepseek/deepseek-chat"] = "DeepSeek: Chat"
             models["deepseek/deepseek-reasoner"] = "DeepSeek: Reasoner (R1-0528)"
-
         if "google" in self.clients:
             models["google/gemini-2.5-pro-preview-06-05"] = "Google: Gemini 2.5 Pro(preview)"
             models["google/gemini-2.5-flash-preview-05-20"] = "Google: Gemini 2.5 Flash(preview)"
-            models["google/gemini-2.0-flash"] = "Google: Gemini 2.0 Flash"
-            models["google/gemini-1.5-flash-latest"] = "Google: Gemini 1.5 Flash"
-            models["google/gemini-2.5-flash"] = "Google: Gemini 2.5 Flash"
-
         if "anthropic" in self.clients:
             models["anthropic/claude-3-5-sonnet-20240620"] = "Anthropic: Claude 3.5 Sonnet"
             models["anthropic/claude-3-opus-20240229"] = "Anthropic: Claude 3 Opus"
             models["anthropic/claude-3-haiku-20240307"] = "Anthropic: Claude 3 Haiku"
-            models["anthropic/claude-opus-4-20250514"] = "Anthropic: Claude Opus 4"
-            models["anthropic/claude-sonnet-4-20250514"] = "Anthropic: Claude Sonnet 4"
-            models["anthropic/claude-3-7-sonnet-20250219"] = "Anthropic: Claude Sonnet 3.7"
-            models["anthropic/claude-3-5-haiku-20241022"] = "Anthropic: Claude Haiku 3.5"
-
         if "ollama" in self.clients:
             ollama_models = await self._get_local_ollama_models()
             models.update(ollama_models)
-
         return models
 
-    def get_role_assignments(self) -> dict:
-        return self.role_assignments
 
-    def set_role_assignments(self, assignments: dict):
-        self.role_assignments.update(assignments)
-
-    def get_role_temperatures(self) -> dict:
-        return self.role_temperatures.copy()
-
-    def set_role_temperatures(self, temperatures: dict):
-        self.role_temperatures.update(temperatures)
-
-    def get_role_temperature(self, role: str) -> float:
-        return self.role_temperatures.get(role, 0.7)
-
-    def set_role_temperature(self, role: str, temperature: float):
-        self.role_temperatures[role] = max(0.0, min(2.0, temperature))
+    def get_role_assignments(self) -> dict: return self.role_assignments
+    def set_role_assignments(self, assignments: dict): self.role_assignments.update(assignments)
+    def get_role_temperatures(self) -> dict: return self.role_temperatures.copy()
+    def set_role_temperatures(self, temperatures: dict): self.role_temperatures.update(temperatures)
+    def get_role_temperature(self, role: str) -> float: return self.role_temperatures.get(role, 0.7)
+    def set_role_temperature(self, role: str, temp: float): self.role_temperatures[role] = max(0.0, min(2.0, temp))
 
     def get_model_for_role(self, role: str) -> tuple[str | None, str | None]:
-        key = self.role_assignments.get(role)
-        if not key or "/" not in key:
-            print(f"[LLMClient] WARNING: No valid model assigned to role '{role}'.")
-            key = self.role_assignments.get("coder")
-            if not key or "/" not in key: return None, None
+        key = self.role_assignments.get(role, self.role_assignments.get("chat"))
+        if not key or "/" not in key: return None, None
         provider, model_name = key.split('/', 1)
-        if provider not in self.clients:
-            print(f"[LLMClient] Error: Provider '{provider}' for role '{role}' is not configured.")
-            return None, None
+        if provider not in self.clients: return None, None
         return provider, model_name
 
-    async def stream_chat(self, provider: str, model: str, prompt: str, role: str = None):
+    async def stream_chat(self, provider: str, model: str, prompt: str, role: str = None,
+                          image_bytes: Optional[bytes] = None, image_media_type: str = "image/png"):
+        """Main streaming method, now with image support."""
         if provider not in self.clients:
             yield f"Error: Provider {provider} not configured."
             return
 
         temperature = self.get_role_temperature(role) if role else 0.7
-        print(f"[LLMClient] Streaming from {provider}/{model} (temp: {temperature:.2f})...")
+        print(f"[LLMClient] Streaming from {provider}/{model} (temp: {temperature:.2f}, image: {'Yes' if image_bytes else 'No'})...")
         router = {"openai": self._stream_openai_compatible, "deepseek": self._stream_openai_compatible,
                   "google": self._stream_google, "ollama": self._stream_ollama, "anthropic": self._stream_anthropic}
         client = self.clients.get(provider)
         stream_func = router.get(provider)
+
         if not stream_func or (client is None and provider != 'google'):
             yield f"Error: Streaming function for {provider} not found."
             return
-        if provider in ["openai", "deepseek", "anthropic"]:
-            stream = stream_func(client, model, prompt, temperature)
-        else:
-            stream = stream_func(model, prompt, temperature)
+
+        # Prepare image data if present
+        encoded_image = base64.b64encode(image_bytes).decode('utf-8') if image_bytes else None
+
+        # Call the appropriate streaming function
+        stream = stream_func(client, model, prompt, temperature, encoded_image, image_media_type)
         async for chunk in stream: yield chunk
 
-    async def _stream_openai_compatible(self, client, model: str, prompt: str, temperature: float):
+    async def _stream_openai_compatible(self, client, model: str, prompt: str, temp: float,
+                                        image_b64: str, media_type: str):
+        content = [{"type": "text", "text": prompt}]
+        if image_b64:
+            content.append({"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}})
         try:
-            response_stream = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                stream=True,
-                temperature=temperature
-            )
-            async for chunk in response_stream:
+            stream = await client.chat.completions.create(
+                model=model, messages=[{"role": "user", "content": content}], stream=True, temperature=temp)
+            async for chunk in stream:
                 if content := chunk.choices[0].delta.content: yield content
-        except Exception as e:
-            yield f"\n\nError: {e}"
+        except Exception as e: yield f"\n\nError: {e}"
 
-    async def _stream_google(self, model: str, prompt: str, temperature: float):
+    async def _stream_google(self, client, model: str, prompt: str, temp: float,
+                             image_b64: str, media_type: str):
+        # NOTE: This is a simplified implementation for Google's API
+        # A real implementation would use the `content` list building like OpenAI's.
         try:
-            api_model_name = f"models/{model}" if not model.startswith("models/") else model
-            generation_config = {'temperature': temperature}
+            from PIL import Image
+            import io
+            model_instance = genai.GenerativeModel(f'models/{model}')
+            content_parts = [prompt]
+            if image_b64:
+                img = Image.open(io.BytesIO(base64.b64decode(image_b64)))
+                content_parts.append(img)
+            async for chunk in await model_instance.generate_content_async(content_parts, stream=True):
+                 if chunk.text: yield chunk.text
+        except Exception as e: yield f"\n\nError from Google API: {e}"
 
-            safety_settings = [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
 
-            model_instance = genai.GenerativeModel(
-                model_name=api_model_name,
-                generation_config=generation_config,
-                safety_settings=safety_settings
-            )
-            async for chunk in await model_instance.generate_content_async(prompt, stream=True):
-                try:
-                    if chunk.text: yield chunk.text
-                except Exception as e:
-                    print(f"[LLMClient] Gemini safety filter triggered: A content part was blocked. Message: {e}")
-                    yield ""
-
-        except Exception as e:
-            yield f"\n\nError from Google API: {e}"
-
-    async def _stream_anthropic(self, client, model: str, prompt: str, temperature: float):
+    async def _stream_anthropic(self, client, model: str, prompt: str, temp: float,
+                                image_b64: str, media_type: str):
+        content = []
+        if image_b64:
+            content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}})
+        content.append({"type": "text", "text": prompt})
         try:
             async with client.messages.stream(
-                    max_tokens=4096,
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=temperature
+                    max_tokens=4096, model=model, messages=[{"role": "user", "content": content}], temperature=temp
             ) as stream:
-                async for text in stream.text_stream:
-                    yield text
-        except Exception as e:
-            yield f"\n\nError from Anthropic API: {e}"
+                async for text in stream.text_stream: yield text
+        except Exception as e: yield f"\n\nError from Anthropic API: {e}"
 
-    async def _stream_ollama(self, model: str, prompt: str, temperature: float):
+    async def _stream_ollama(self, client, model: str, prompt: str, temp: float,
+                             image_b64: str, media_type: str):
         ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/chat"
-        payload = {
-            "model": model, "messages": [{"role": "user", "content": prompt}], "stream": True,
-            "options": {"temperature": temperature}
-        }
+        payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True,
+                   "options": {"temperature": temp}}
+        if image_b64:
+            # Add image data for Ollama's multimodal models (like llava)
+            payload["messages"][0]["images"] = [image_b64]
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(ollama_url, json=payload) as response:
-                    response.raise_for_status()
-                    async for line in response.content:
+                async with session.post(ollama_url, json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.content:
                         if line:
                             content = json.loads(line).get("message", {}).get("content")
                             if content: yield content
-        except Exception as e:
-            yield f"\n\nError: {e}"
+        except Exception as e: yield f"\n\nError: {e}"
