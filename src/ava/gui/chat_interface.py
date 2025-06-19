@@ -1,5 +1,5 @@
 # src/ava/gui/chat_interface.py
-# UPDATED: Avatar now uses loading_gear_base.png instead of atom icon
+# FINAL FIX: Replaced QTimer-based scrolling with a robust rangeChanged signal.
 
 import json
 import base64
@@ -206,6 +206,16 @@ class ChatInterface(QWidget):
         self.event_bus.subscribe("streaming_chunk", self.on_streaming_chunk)
         self.event_bus.subscribe("streaming_end", self.on_streaming_end)
 
+        # --- THIS IS THE FIX ---
+        # Connect the scroll bar's rangeChanged signal to a handler that
+        # will always scroll to the bottom. This is more reliable than a timer.
+        self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
+        # --- END OF FIX ---
+
+    def _scroll_to_bottom(self):
+        """A robust slot to scroll to the bottom of the chat."""
+        self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
+
     def _on_app_state_changed(self, new_state: AppState, project_name: str = None):
         self.current_app_state = new_state
         self.current_project_name = project_name
@@ -265,8 +275,6 @@ class ChatInterface(QWidget):
         self.bubble_layout.addWidget(message_widget)
         self.bubble_layout.addStretch()
 
-        QTimer.singleShot(10, lambda: self.scroll_area.verticalScrollBar().setValue(
-            self.scroll_area.verticalScrollBar().maximum()))
         if not is_feedback: self.conversation_history.append(message_data)
         return message_widget
 
@@ -287,8 +295,6 @@ class ChatInterface(QWidget):
                 self.streaming_message_widget.switch_to_normal_avatar()
 
             self.streaming_message_widget.append_text(chunk)
-            QTimer.singleShot(1, lambda: self.scroll_area.verticalScrollBar().setValue(
-                self.scroll_area.verticalScrollBar().maximum()))
 
     def _remove_loading_indicator(self):
         if self.streaming_message_widget:
