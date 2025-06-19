@@ -2,6 +2,10 @@
 
 from pathlib import Path
 import os
+# --- THIS IS THE FIX ---
+# Import the helper function to reliably collect package data files.
+from PyInstaller.utils.hooks import collect_data_files
+# --- END OF FIX ---
 
 block_cipher = None
 
@@ -35,6 +39,11 @@ a = Analysis(
         # Core application data
         ('src/ava/assets', 'ava/assets'),
         ('src/ava/config', 'ava/config'),
+
+        # --- THIS IS THE FIX ---
+        # Explicitly collect the qtawesome font files to guarantee icons will always work.
+        *collect_data_files('qtawesome'),
+        # --- END OF FIX ---
 
         # Include all discovered plugins
         *plugin_data,

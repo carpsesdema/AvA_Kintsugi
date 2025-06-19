@@ -1,25 +1,37 @@
 # KintsugiLauncher/launcher.spec
-
 # -*- mode: python ; coding: utf-8 -*-
 
-from pathlib import Path
+# This spec file is optimized for the release of the Kintsugi AvA Launcher.
+# It ensures all assets are bundled and the final executable is a clean, GUI-only application.
+
+from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
-# --- Main Application Entry Point ---
-main_script = 'main.py'
-
-# --- Application Name (used for the .exe) ---
-app_name = 'Kintsugi_AvA_Launcher'
-
-
 a = Analysis(
-    [main_script],
-    pathex=[],
+    ['main.py'],  # The launcher's main entry point
+    pathex=['.'], # The root is the KintsugiLauncher directory where this spec resides
     binaries=[],
-    datas=[('launcher', 'launcher')],
-    # These hidden imports are all correct and necessary.
-    hiddenimports=['qasync', 'requests', 'packaging', 'packaging.version'],
+    datas=[
+        # This line ensures your launcher's icon is included in the build.
+        ('launcher/assets', 'launcher/assets'),
+        # This explicitly collects the qtawesome font files, guaranteeing icons will work.
+        *collect_data_files('qtawesome'),
+    ],
+    hiddenimports=[
+        # GUI libraries
+        'PySide6.QtSvg',
+        'PySide6.QtGui',
+        'PySide6.QtCore',
+        'PySide6.QtWidgets',
+        'qasync',
+        'qtawesome',
+
+        # Networking and utilities
+        'requests',
+        'packaging',
+        'packaging.version'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -36,20 +48,25 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name=app_name,
+    name='Kintsugi AvA Launcher',  # The name of the final .exe file
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    # --- CRITICAL FIX for RELEASE ---
+    # This ensures no console window appears behind your GUI.
     console=False,
+    # --------------------------------
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # This path is correct, relative to this spec file's location.
-    icon='../src/ava/assets/Ava_Icon.ico'
+    # The icon for the executable itself.
+    icon='launcher/assets/Launcher_Icon.ico'
 )
+
+# This creates the final output folder in 'dist/'
 coll = COLLECT(
     exe,
     a.binaries,
@@ -58,5 +75,6 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='KintsugiLauncher',
+    # The output folder name must match what build_launcher.py expects.
+    name='KintsugiLauncher'
 )
