@@ -1,6 +1,6 @@
 import os
 import json
-import base64 # <-- NEW: For encoding images
+import base64
 from typing import Dict, Optional
 
 import aiohttp
@@ -14,8 +14,12 @@ except ImportError:
     openai = None
 try:
     import google.generativeai as genai
+    from PIL import Image
+    import io
 except ImportError:
     genai = None
+    Image = None
+    io = None
 try:
     import anthropic
 except ImportError:
@@ -120,7 +124,8 @@ class LLMClient:
                                 display_name = f"Ollama: {model_name}"
                                 local_models[key] = display_name
                         if local_models: print(f"[LLMClient] Discovered {len(local_models)} local Ollama models.")
-                    else: print(f"[LLMClient] Ollama server responded with status {response.status}.")
+                    else:
+                        print(f"[LLMClient] Ollama server responded with status {response.status}.")
         except (asyncio.TimeoutError, aiohttp.ClientConnectorError):
             print(f"[LLMClient] Could not connect to Ollama server. Is it running?")
         except Exception as e:
@@ -130,7 +135,6 @@ class LLMClient:
 
     async def get_available_models(self) -> dict:
         models = {}
-        # List only modern, multimodal-capable models for simplicity, plus some legacy ones
         if "openai" in self.clients: models["openai/gpt-4o"] = "OpenAI: GPT-4o"
         if "deepseek" in self.clients:
             models["deepseek/deepseek-chat"] = "DeepSeek: Chat"
@@ -147,13 +151,23 @@ class LLMClient:
             models.update(ollama_models)
         return models
 
+    def get_role_assignments(self) -> dict:
+        return self.role_assignments
 
-    def get_role_assignments(self) -> dict: return self.role_assignments
-    def set_role_assignments(self, assignments: dict): self.role_assignments.update(assignments)
-    def get_role_temperatures(self) -> dict: return self.role_temperatures.copy()
-    def set_role_temperatures(self, temperatures: dict): self.role_temperatures.update(temperatures)
-    def get_role_temperature(self, role: str) -> float: return self.role_temperatures.get(role, 0.7)
-    def set_role_temperature(self, role: str, temp: float): self.role_temperatures[role] = max(0.0, min(2.0, temp))
+    def set_role_assignments(self, assignments: dict):
+        self.role_assignments.update(assignments)
+
+    def get_role_temperatures(self) -> dict:
+        return self.role_temperatures.copy()
+
+    def set_role_temperatures(self, temperatures: dict):
+        self.role_temperatures.update(temperatures)
+
+    def get_role_temperature(self, role: str) -> float:
+        return self.role_temperatures.get(role, 0.7)
+
+    def set_role_temperature(self, role: str, temp: float):
+        self.role_temperatures[role] = max(0.0, min(2.0, temp))
 
     def get_model_for_role(self, role: str) -> tuple[str | None, str | None]:
         key = self.role_assignments.get(role, self.role_assignments.get("chat"))
@@ -164,70 +178,76 @@ class LLMClient:
 
     async def stream_chat(self, provider: str, model: str, prompt: str, role: str = None,
                           image_bytes: Optional[bytes] = None, image_media_type: str = "image/png"):
-        """Main streaming method, now with image support."""
         if provider not in self.clients:
             yield f"Error: Provider {provider} not configured."
             return
 
         temperature = self.get_role_temperature(role) if role else 0.7
-        print(f"[LLMClient] Streaming from {provider}/{model} (temp: {temperature:.2f}, image: {'Yes' if image_bytes else 'No'})...")
+        print(
+            f"[LLMClient] Streaming from {provider}/{model} (temp: {temperature:.2f}, image: {'Yes' if image_bytes else 'No'})...")
         router = {"openai": self._stream_openai_compatible, "deepseek": self._stream_openai_compatible,
                   "google": self._stream_google, "ollama": self._stream_ollama, "anthropic": self._stream_anthropic}
         client = self.clients.get(provider)
         stream_func = router.get(provider)
 
-        if not stream_func or (client is None and provider != 'google'):
+        if not stream_func or (client is None and provider not in ['google', 'ollama']):
             yield f"Error: Streaming function for {provider} not found."
             return
 
-        # Prepare image data if present
         encoded_image = base64.b64encode(image_bytes).decode('utf-8') if image_bytes else None
 
-        # Call the appropriate streaming function
         stream = stream_func(client, model, prompt, temperature, encoded_image, image_media_type)
         async for chunk in stream: yield chunk
 
     async def _stream_openai_compatible(self, client, model: str, prompt: str, temp: float,
                                         image_b64: str, media_type: str):
-        content = [{"type": "text", "text": prompt}]
+        content = []
+        if prompt:
+            content.append({"type": "text", "text": prompt})
         if image_b64:
             content.append({"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}})
         try:
             stream = await client.chat.completions.create(
-                model=model, messages=[{"role": "user", "content": content}], stream=True, temperature=temp)
+                model=model, messages=[{"role": "user", "content": content}], stream=True, temperature=temp,
+                max_tokens=4096)
             async for chunk in stream:
                 if content := chunk.choices[0].delta.content: yield content
-        except Exception as e: yield f"\n\nError: {e}"
+        except Exception as e:
+            yield f"\n\nError: {e}"
 
     async def _stream_google(self, client, model: str, prompt: str, temp: float,
                              image_b64: str, media_type: str):
-        # NOTE: This is a simplified implementation for Google's API
-        # A real implementation would use the `content` list building like OpenAI's.
+        if not genai or not Image or not io:
+            yield "\n\nError: Google dependencies (google-generativeai, Pillow) are not installed."
+            return
         try:
-            from PIL import Image
-            import io
             model_instance = genai.GenerativeModel(f'models/{model}')
-            content_parts = [prompt]
+            content_parts = []
+            if prompt:
+                content_parts.append(prompt)
             if image_b64:
                 img = Image.open(io.BytesIO(base64.b64decode(image_b64)))
                 content_parts.append(img)
-            async for chunk in await model_instance.generate_content_async(content_parts, stream=True):
-                 if chunk.text: yield chunk.text
-        except Exception as e: yield f"\n\nError from Google API: {e}"
 
+            async for chunk in await model_instance.generate_content_async(content_parts, stream=True):
+                if chunk.text: yield chunk.text
+        except Exception as e:
+            yield f"\n\nError from Google API: {e}"
 
     async def _stream_anthropic(self, client, model: str, prompt: str, temp: float,
                                 image_b64: str, media_type: str):
         content = []
         if image_b64:
             content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}})
-        content.append({"type": "text", "text": prompt})
+        if prompt:
+            content.append({"type": "text", "text": prompt})
         try:
             async with client.messages.stream(
                     max_tokens=4096, model=model, messages=[{"role": "user", "content": content}], temperature=temp
             ) as stream:
                 async for text in stream.text_stream: yield text
-        except Exception as e: yield f"\n\nError from Anthropic API: {e}"
+        except Exception as e:
+            yield f"\n\nError from Anthropic API: {e}"
 
     async def _stream_ollama(self, client, model: str, prompt: str, temp: float,
                              image_b64: str, media_type: str):
@@ -235,7 +255,6 @@ class LLMClient:
         payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True,
                    "options": {"temperature": temp}}
         if image_b64:
-            # Add image data for Ollama's multimodal models (like llava)
             payload["messages"][0]["images"] = [image_b64]
         try:
             async with aiohttp.ClientSession() as session:
@@ -245,4 +264,5 @@ class LLMClient:
                         if line:
                             content = json.loads(line).get("message", {}).get("content")
                             if content: yield content
-        except Exception as e: yield f"\n\nError: {e}"
+        except Exception as e:
+            yield f"\n\nError: {e}"

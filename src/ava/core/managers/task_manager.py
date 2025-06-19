@@ -1,11 +1,11 @@
 # kintsugi_ava/core/managers/task_manager.py
-# Fixed task manager with session-aware terminal command handling
+# UPDATED: Standardized imports to fix class comparison bug.
 
 import asyncio
 from typing import Optional, Dict
 from PySide6.QtWidgets import QMessageBox
 
-from src.ava.core.event_bus import EventBus
+from ava.core.event_bus import EventBus
 
 
 class TaskManager:
@@ -118,11 +118,7 @@ class TaskManager:
             QMessageBox.critical(main_window, "Workflow Error",
                                  f"The AI workflow failed unexpectedly.\n\nError: {e}")
         finally:
-            # --- THIS IS THE FIX ---
-            # This event tells the UI that the AI workflow is completely finished,
-            # so it can clean up things like the "AI is fixing..." label.
             self.event_bus.emit("ai_fix_workflow_complete")
-            # --- END OF FIX ---
 
     def _on_terminal_task_done(self, task: asyncio.Task, session_id: int):
         """Handle terminal task completion."""

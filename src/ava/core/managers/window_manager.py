@@ -1,15 +1,15 @@
 # kintsugi_ava/core/managers/window_manager.py
-# UPDATED: Removed all references to WorkflowMonitorWindow.
+# UPDATED: Standardized imports to fix class comparison bug.
 
-from src.ava.gui.main_window import MainWindow
-from src.ava.gui.code_viewer import CodeViewerWindow
-from src.ava.gui.model_config_dialog import ModelConfigurationDialog
-from src.ava.gui.plugin_management_dialog import PluginManagementDialog
-from src.ava.gui.log_viewer import LogViewerWindow
+from ava.gui.main_window import MainWindow
+from ava.gui.code_viewer import CodeViewerWindow
+from ava.gui.model_config_dialog import ModelConfigurationDialog
+from ava.gui.plugin_management_dialog import PluginManagementDialog
+from ava.gui.log_viewer import LogViewerWindow
 
-from src.ava.core.event_bus import EventBus
-from src.ava.core.llm_client import LLMClient
-from src.ava.core.project_manager import ProjectManager
+from ava.core.event_bus import EventBus
+from ava.core.llm_client import LLMClient
+from ava.core.project_manager import ProjectManager
 
 
 class WindowManager:
@@ -17,8 +17,6 @@ class WindowManager:
     Creates and manages all GUI windows.
     Single responsibility: Window lifecycle and access management.
     """
-
-
 
     def __init__(self, event_bus: EventBus, project_manager: ProjectManager):
         self.event_bus = event_bus
