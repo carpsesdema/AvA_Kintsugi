@@ -9,6 +9,7 @@ from src.ava.gui.log_viewer import LogViewerWindow
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
+from src.ava.core.project_manager import ProjectManager
 
 
 class WindowManager:
@@ -19,8 +20,9 @@ class WindowManager:
 
 
 
-    def __init__(self, event_bus: EventBus):
+    def __init__(self, event_bus: EventBus, project_manager: ProjectManager):
         self.event_bus = event_bus
+        self.project_manager = project_manager
 
         # Main windows
         self.main_window: MainWindow = None
@@ -36,11 +38,10 @@ class WindowManager:
     def initialize_windows(self, llm_client: LLMClient, service_manager):
         """Initialize all GUI windows."""
         print("[WindowManager] Initializing windows...")
-        project_manager = service_manager.get_project_manager()
 
         # Create main windows
         self.main_window = MainWindow(self.event_bus)
-        self.code_viewer = CodeViewerWindow(self.event_bus, project_manager)
+        self.code_viewer = CodeViewerWindow(self.event_bus, self.project_manager)
         self.log_viewer = LogViewerWindow(self.event_bus)
 
         # Create dialogs

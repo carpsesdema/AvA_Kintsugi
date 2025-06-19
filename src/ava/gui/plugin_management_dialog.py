@@ -84,20 +84,25 @@ class PluginManagementDialog(QDialog):
 
     def populate_plugin_table(self):
         """Fills the table with the status of all discovered plugins."""
-        if not self.plugin_manager: return
-        all_status = self.plugin_manager.get_all_plugin_status()
-        self.table.setRowCount(len(all_status))
+        if not self.plugin_manager:
+            return
 
-        for row, (name, status) in enumerate(all_status.items()):
+        # --- THIS IS THE FIX ---
+        # The method is get_all_plugins_info() and it returns a list of dicts.
+        all_plugins_info = self.plugin_manager.get_all_plugins_info()
+        self.table.setRowCount(len(all_plugins_info))
+
+        for row, status_info in enumerate(all_plugins_info):
             # Name
+            name = status_info.get("name", "N/A")
             self.table.setItem(row, 0, self._create_table_item(name))
 
             # Version
-            version = status.get("metadata").version if status.get("metadata") else "N/A"
+            version = status_info.get("version", "N/A")
             self.table.setItem(row, 1, self._create_table_item(version))
 
             # Status
-            state = status.get("state", "unloaded").upper()
+            state = status_info.get("state", "unloaded").upper()
             state_item = self._create_table_item(state)
             if state == "STARTED":
                 state_item.setForeground(Colors.ACCENT_GREEN)
@@ -106,8 +111,9 @@ class PluginManagementDialog(QDialog):
             self.table.setItem(row, 2, state_item)
 
             # Description
-            description = status.get("metadata").description if status.get("metadata") else "No description available."
+            description = status_info.get("description", "No description available.")
             self.table.setItem(row, 3, self._create_table_item(description))
+        # --- END OF FIX ---
 
     def get_selected_plugin_name(self) -> str | None:
         """Gets the name of the currently selected plugin in the table."""

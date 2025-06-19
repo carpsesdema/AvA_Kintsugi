@@ -58,13 +58,13 @@ class ServiceManager:
 
         print("[ServiceManager] Initialized")
 
-    def initialize_core_components(self, project_root: Path):
+    def initialize_core_components(self, project_root: Path, project_manager: ProjectManager):
         """Initialize core components in dependency order."""
         print("[ServiceManager] Initializing core components...")
 
         # Core components (with correct dependency injection)
         self.llm_client = LLMClient(project_root)
-        self.project_manager = ProjectManager()
+        self.project_manager = project_manager
         self.execution_engine = ExecutionEngine(self.project_manager)
 
         print("[ServiceManager] Core components initialized")

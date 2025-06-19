@@ -26,6 +26,8 @@ class PluginRegistry:
     def add_discovery_path(self, path: Path):
         """
         Add a directory path to search for plugins.
+        This no longer modifies sys.path, as the application entry point
+        is responsible for setting up the correct paths.
 
         Args:
             path: Directory path to search for plugin modules
@@ -35,16 +37,9 @@ class PluginRegistry:
             print(f"[PluginRegistry] Warning: Discovery path does not exist: {resolved_path}")
             return
 
-        # Ensure the *parent* of the discovery path (e.g., 'src' or the project root) is in sys.path
-        # so that package imports like 'ava.core.plugins...' or 'plugins.my_plugin' work correctly.
-        # This is robust for both source and bundled executables.
-        search_root = resolved_path.parent
-        if str(search_root) not in sys.path:
-            sys.path.insert(0, str(search_root))
-            print(f"[PluginRegistry] Added search root to sys.path: {search_root}")
-
-        self._discovery_paths.append(resolved_path)
-        print(f"[PluginRegistry] Added discovery path: {resolved_path}")
+        if resolved_path not in self._discovery_paths:
+            self._discovery_paths.append(resolved_path)
+            print(f"[PluginRegistry] Added discovery path: {resolved_path}")
 
     def discover_plugins(self) -> int:
         """
@@ -75,7 +70,6 @@ class PluginRegistry:
             print(f"[PluginRegistry] Error: Cannot scan non-existent directory {directory}")
             return 0
 
-        # --- THIS IS THE FIX ---
         # Find the correct package root from sys.path. An ancestor of the plugin directory
         # must be in sys.path for Python's import system to work. We find the longest
         # matching path to handle nested source structures correctly.
@@ -96,7 +90,6 @@ class PluginRegistry:
             print(
                 f"[PluginRegistry] FATAL: Could not determine package root for discovery path {directory}. The parent directory or an ancestor must be in sys.path.")
             return 0
-        # --- END OF FIX ---
 
         try:
             # Look for Python packages (directories with __init__.py)

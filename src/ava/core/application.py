@@ -13,7 +13,6 @@ from ava.core.managers import (
     TaskManager
 )
 from ava.core.plugins.plugin_manager import PluginManager
-from ava.gui.project_context_manager import ProjectContextManager
 from ava.core.project_manager import ProjectManager
 
 
@@ -40,8 +39,12 @@ class Application:
         self.plugin_manager = PluginManager(self.event_bus, project_root)
 
         # Service and task management
-        self.service_manager = ServiceManager(self.event_bus, self.plugin_manager)
-        self.task_manager = TaskManager()
+        self.service_manager = ServiceManager(self.event_bus)
+        self.task_manager = TaskManager(self.event_bus)
+
+        # Workflow and Event Coordination
+        self.workflow_manager = WorkflowManager(self.event_bus)
+        self.event_coordinator = EventCoordinator(self.event_bus)
 
         # GUI components
         self.window_manager = WindowManager(self.event_bus, self.project_manager)
@@ -58,7 +61,7 @@ class Application:
         self.event_bus.subscribe("open_code_viewer_requested",
                                  lambda: self.window_manager.show_code_viewer())
         self.event_bus.subscribe("project_root_selected",
-                                 lambda root: self.project_manager.set_project_root(Path(root)))
+                                 lambda root: self.project_manager.load_project(root))
 
         # Application lifecycle
         self.event_bus.subscribe("application_shutdown",
@@ -74,11 +77,30 @@ class Application:
             # Configure plugin discovery paths
             self._configure_plugin_paths()
 
-            # Initialize service manager (includes plugin initialization)
-            await self.service_manager.initialize()
+            # Initialize service manager components
+            self.service_manager.plugin_manager = self.plugin_manager
+            self.service_manager.initialize_core_components(self.project_root, self.project_manager)
+            self.service_manager.initialize_plugin_system(self.project_root)
 
-            # Initialize any other async components
-            # ...
+            # Initialize plugins
+            await self.service_manager.initialize_plugins()
+
+            # Initialize services
+            self.service_manager.initialize_services()
+
+            # Initialize GUI windows (which may depend on services)
+            self.window_manager.initialize_windows(
+                self.service_manager.get_llm_client(),
+                self.service_manager
+            )
+
+            # Set manager references for all coordinators
+            self.task_manager.set_managers(self.service_manager, self.window_manager)
+            self.workflow_manager.set_managers(self.service_manager, self.window_manager, self.task_manager)
+            self.event_coordinator.set_managers(self.service_manager, self.window_manager, self.task_manager, self.workflow_manager)
+
+            # Wire up all events to connect the application components
+            self.event_coordinator.wire_all_events()
 
             self._initialization_complete = True
             print("[Application] Async initialization complete")
@@ -91,10 +113,13 @@ class Application:
 
     def _configure_plugin_paths(self):
         """Configure plugin discovery paths based on execution mode."""
+        # Pass the plugin manager to service manager
+        self.service_manager.plugin_manager = self.plugin_manager
+
         if getattr(sys, 'frozen', False):
             # Running as bundled executable
             # PyInstaller extracts data files to sys._MEIPASS
-            meipass = Path(sys._MEIPASS)
+            meipass = Path(getattr(sys, '_MEIPASS', ''))
 
             # Built-in plugins from the bundled application
             builtin_plugins = meipass / "ava" / "core" / "plugins" / "examples"
