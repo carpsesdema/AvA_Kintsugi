@@ -33,10 +33,13 @@ class Application:
 
         # Core components
         self.event_bus = EventBus()
-        self.project_manager = ProjectManager()  # Only takes workspace path parameter
+        self.project_manager = ProjectManager()
 
-        # Plugin system - pass the project root
+        # --- FIX: Create the single, authoritative PluginManager here ---
         self.plugin_manager = PluginManager(self.event_bus, project_root)
+
+        # --- FIX: Pass the single ProjectManager to the WindowManager ---
+        self.window_manager = WindowManager(self.event_bus, self.project_manager)
 
         # Service and task management
         self.service_manager = ServiceManager(self.event_bus)
@@ -45,9 +48,6 @@ class Application:
         # Workflow and Event Coordination
         self.workflow_manager = WorkflowManager(self.event_bus)
         self.event_coordinator = EventCoordinator(self.event_bus)
-
-        # GUI components
-        self.window_manager = WindowManager(self.event_bus, self.project_manager)
 
         # State
         self._initialization_complete = False
@@ -74,15 +74,16 @@ class Application:
         print("[Application] Starting async initialization...")
 
         try:
-            # Configure plugin discovery paths
+            # --- FIX: Pass the single PluginManager instance to the ServiceManager ---
+            self.service_manager.plugin_manager = self.plugin_manager
+
+            # Configure plugin discovery paths on the single PluginManager
             self._configure_plugin_paths()
 
-            # Initialize service manager components
-            self.service_manager.plugin_manager = self.plugin_manager
+            # Initialize service manager's other core components
             self.service_manager.initialize_core_components(self.project_root, self.project_manager)
-            self.service_manager.initialize_plugin_system(self.project_root)
 
-            # Initialize plugins
+            # Initialize plugins using the single manager
             await self.service_manager.initialize_plugins()
 
             # Initialize services
@@ -97,7 +98,8 @@ class Application:
             # Set manager references for all coordinators
             self.task_manager.set_managers(self.service_manager, self.window_manager)
             self.workflow_manager.set_managers(self.service_manager, self.window_manager, self.task_manager)
-            self.event_coordinator.set_managers(self.service_manager, self.window_manager, self.task_manager, self.workflow_manager)
+            self.event_coordinator.set_managers(self.service_manager, self.window_manager, self.task_manager,
+                                                self.workflow_manager)
 
             # Wire up all events to connect the application components
             self.event_coordinator.wire_all_events()
@@ -113,33 +115,24 @@ class Application:
 
     def _configure_plugin_paths(self):
         """Configure plugin discovery paths based on execution mode."""
-        # Pass the plugin manager to service manager
-        self.service_manager.plugin_manager = self.plugin_manager
-
         if getattr(sys, 'frozen', False):
             # Running as bundled executable
-            # PyInstaller extracts data files to sys._MEIPASS
             meipass = Path(getattr(sys, '_MEIPASS', ''))
-
-            # Built-in plugins from the bundled application
             builtin_plugins = meipass / "ava" / "core" / "plugins" / "examples"
             if builtin_plugins.exists():
                 self.plugin_manager.add_discovery_path(builtin_plugins)
                 print(f"[Application] Added bundled plugin path: {builtin_plugins}")
 
-            # Custom plugins directory next to the executable
             custom_plugins = self.project_root / "plugins"
             if custom_plugins.exists():
                 self.plugin_manager.add_discovery_path(custom_plugins)
                 print(f"[Application] Added custom plugin path: {custom_plugins}")
         else:
             # Running from source
-            # Built-in example plugins
             builtin_plugins = self.project_root / "src" / "ava" / "core" / "plugins" / "examples"
             if builtin_plugins.exists():
                 self.plugin_manager.add_discovery_path(builtin_plugins)
 
-            # Custom plugins directory
             custom_plugins = self.project_root / "plugins"
             if custom_plugins.exists():
                 self.plugin_manager.add_discovery_path(custom_plugins)

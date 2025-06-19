@@ -69,15 +69,6 @@ class ServiceManager:
 
         print("[ServiceManager] Core components initialized")
 
-    def initialize_plugin_system(self, project_root: Path):
-        """Initialize the plugin system."""
-        print("[ServiceManager] Initializing plugin system...")
-
-        # Create plugin manager
-        self.plugin_manager = PluginManager(self.event_bus, project_root)
-
-        print("[ServiceManager] Plugin system initialized")
-
     async def initialize_plugins(self) -> bool:
         """Initialize plugins asynchronously."""
         if not self.plugin_manager:
