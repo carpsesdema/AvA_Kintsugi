@@ -11,25 +11,24 @@ class Colors:
     A modern, professional color palette inspired by tools like GitHub and VS Code.
     This creates a consistent look and feel across the entire application.
     """
-    # Backgrounds
+    # --- Professional Dev-Tool Palette ---
     PRIMARY_BG = QColor("#0d1117")  # Near-black, for main backgrounds
     SECONDARY_BG = QColor("#161b22")  # Dark grey, for sidebars and panels
-    ELEVATED_BG = QColor("#21262d")  # Lighter grey, for elevated elements like buttons
-
-    # Text
-    TEXT_PRIMARY = QColor("#f0f6fc")  # Off-white, for primary text
-    TEXT_SECONDARY = QColor("#8b949e")  # Grey, for secondary or muted text
-
-    # Borders
+    ELEVATED_BG = QColor("#21262d")  # Lighter grey, for elevated elements like buttons/inputs
     BORDER_DEFAULT = QColor("#30363d")  # Standard border color
 
-    # Accents
-    ACCENT_BLUE = QColor("#58a6ff")  # For primary actions and highlights
+    # --- THIS IS THE FIX ---
+    TEXT_PRIMARY = QColor("#f0f6fc")  # Brighter white for better contrast
+    TEXT_SECONDARY = QColor("#8b949e")  # Grey, for secondary or muted text
+
+    # --- VIBRANT ORANGE ACCENT ---
+    ACCENT_BLUE = QColor("#ffa500")  # Swapped blue for a vibrant orange
+
     ACCENT_GREEN = QColor("#3fb950")  # For success states
     ACCENT_RED = QColor("#f85149")  # For error states
 
-    # Diff-specific highlights
-    DIFF_ADD_BG = QColor(63, 185, 80, 40)  # Transparent Green
+    # Transparent background for highlighting lines in the editor
+    DIFF_ADD_BG = QColor(46, 160, 67, 40)  # More subtle green highlight
 
 
 class Typography:
@@ -58,7 +57,8 @@ class ModernButton(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
 
         bg_color = Colors.ACCENT_BLUE if button_type == "primary" else Colors.ELEVATED_BG
-        hover_color = Colors.ACCENT_GREEN if button_type == "primary" else QColor("#30363d")
+        # Let's make the hover more subtle for the secondary button
+        hover_color = Colors.ACCENT_BLUE.lighter(110) if button_type == "primary" else QColor("#30363d")
 
         self.setStyleSheet(f"""
             QPushButton {{
@@ -70,10 +70,10 @@ class ModernButton(QPushButton):
             }}
             QPushButton:hover {{
                 background-color: {hover_color.name()};
-                border: 1px solid {Colors.ACCENT_BLUE.name()};
+                border-color: {Colors.ACCENT_BLUE.name()};
             }}
             QPushButton:pressed {{
-                background-color: {Colors.ACCENT_GREEN.name()};
+                background-color: {Colors.ACCENT_GREEN.darker(110).name()};
             }}
         """)
 
@@ -130,7 +130,7 @@ class TemperatureSlider(QWidget):
                 border-radius: 8px;
             }}
             QSlider::handle:horizontal:hover {{
-                background: {Colors.ACCENT_GREEN.name()};
+                background: {Colors.ACCENT_BLUE.lighter(120)};
             }}
             QSlider::sub-page:horizontal {{
                 background: {Colors.ACCENT_BLUE.name()};
@@ -181,8 +181,10 @@ class TemperatureSlider(QWidget):
         """
         return self.slider.value() / self.precision
 
+
 class StatusIndicatorDot(QWidget):
     """A simple colored dot to indicate status."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(10, 10)
@@ -197,10 +199,10 @@ class StatusIndicatorDot(QWidget):
         elif status == 'error':
             self._color = Colors.ACCENT_RED
             self.setToolTip("One or more enabled plugins are not running or in an error state.")
-        else: # 'off' or any other state
+        else:  # 'off' or any other state
             self._color = Colors.TEXT_SECONDARY
             self.setToolTip("No plugins are enabled.")
-        self.update() # Trigger a repaint
+        self.update()  # Trigger a repaint
 
     def paintEvent(self, event):
         painter = QPainter(self)
