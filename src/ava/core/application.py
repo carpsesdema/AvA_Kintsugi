@@ -4,16 +4,16 @@ import asyncio
 import sys
 from pathlib import Path
 
-from ava.core.event_bus import EventBus
-from ava.core.managers import (
+from .event_bus import EventBus
+from .managers import (
     ServiceManager,
     WindowManager,
     EventCoordinator,
     WorkflowManager,
     TaskManager
 )
-from ava.core.plugins.plugin_manager import PluginManager
-from ava.core.project_manager import ProjectManager
+from .plugins.plugin_manager import PluginManager
+from .project_manager import ProjectManager
 
 
 class Application:
@@ -36,7 +36,7 @@ class Application:
         self.project_manager = ProjectManager()
 
         # --- FIX: Create the single, authoritative PluginManager here ---
-        self.plugin_manager = PluginManager(self.event_bus, project_root)
+        self.plugin_manager = PluginManager(self.event_bus, self.project_root)
 
         # --- FIX: Pass the single ProjectManager to the WindowManager ---
         self.window_manager = WindowManager(self.event_bus, self.project_manager)

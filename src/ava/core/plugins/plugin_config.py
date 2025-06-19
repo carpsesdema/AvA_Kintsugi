@@ -17,13 +17,17 @@ class PluginConfig:
     """
 
     def __init__(self, project_root: Path):
-        # When running as frozen executable, config should be in the executable directory
+        # --- THIS IS THE FIX ---
+        # When running as a bundled executable, the config file is in a different
+        # location relative to the project root compared to running from source.
+        # This logic correctly handles both scenarios.
         if getattr(sys, 'frozen', False):
-            # For bundled executable, put config next to the exe
-            self.config_file = project_root / "config" / "plugins.json"
+            # For bundled executable, config is in `project_root/ava/config`
+            self.config_file = project_root / "ava" / "config" / "plugins.json"
         else:
             # For source, use the original location
             self.config_file = project_root / "src" / "ava" / "config" / "plugins.json"
+        # --- END OF FIX ---
 
         self.config_file.parent.mkdir(exist_ok=True, parents=True)
 
@@ -153,14 +157,30 @@ class PluginConfig:
         """
         current_settings = self.get_plugin_settings(plugin_name)
         validated_settings = {}
+        type_map = {'bool': bool, 'int': int, 'str': str, 'float': float}
 
         # Apply schema defaults and validate
         for key, schema_info in metadata.config_schema.items():
+            default_value = schema_info.get("default")
+
             if key in current_settings:
-                # TODO: Add type validation based on schema
-                validated_settings[key] = current_settings[key]
+                user_value = current_settings[key]
+                expected_type_str = schema_info.get("type")
+                expected_type = type_map.get(expected_type_str)
+
+                # If type is valid, use the user's value.
+                if expected_type and isinstance(user_value, expected_type):
+                    validated_settings[key] = user_value
+                else:
+                    # If type is invalid, log a warning and use the default.
+                    print(f"[PluginConfig] Warning: Invalid type for '{key}' in '{plugin_name}' settings. "
+                          f"Expected {expected_type_str}, got {type(user_value).__name__}. "
+                          f"Using default value: {default_value}")
+                    validated_settings[key] = default_value
+
             elif "default" in schema_info:
-                validated_settings[key] = schema_info["default"]
+                # If the user hasn't set a value, use the default.
+                validated_settings[key] = default_value
 
         return validated_settings
 

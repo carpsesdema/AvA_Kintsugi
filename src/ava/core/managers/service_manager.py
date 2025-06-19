@@ -1,29 +1,26 @@
 # src/ava/core/managers/service_manager.py
-# Final polish: Updated ValidationService instantiation.
+# FINAL: Standardized all imports to be relative to fix circular dependencies.
 
 from pathlib import Path
-from ava.core.event_bus import EventBus
-from ava.core.llm_client import LLMClient
-from ava.core.project_manager import ProjectManager
-from ava.core.execution_engine import ExecutionEngine
 
-# Services that actually exist in your project
-from ava.services.terminal_service import TerminalService
-from ava.services.rag_manager import RAGManager
-from ava.services.architect_service import ArchitectService
-from ava.services.reviewer_service import ReviewerService
-from ava.services.validation_service import ValidationService
-from ava.services.project_indexer_service import ProjectIndexerService
-from ava.services.import_fixer_service import ImportFixerService
+from ..event_bus import EventBus
+from ..llm_client import LLMClient
+from ..project_manager import ProjectManager
+from ..execution_engine import ExecutionEngine
+from ..plugins.plugin_manager import PluginManager
 
-# Coordination components that exist
-from ava.services.generation_coordinator import GenerationCoordinator
-from ava.services.context_manager import ContextManager
-from ava.services.dependency_planner import DependencyPlanner
-from ava.services.integration_validator import IntegrationValidator
-
-# Plugin manager
-from ava.core.plugins.plugin_manager import PluginManager
+# Services are now imported relative to the 'ava' package root
+from ...services.terminal_service import TerminalService
+from ...services.rag_manager import RAGManager
+from ...services.architect_service import ArchitectService
+from ...services.reviewer_service import ReviewerService
+from ...services.validation_service import ValidationService
+from ...services.project_indexer_service import ProjectIndexerService
+from ...services.import_fixer_service import ImportFixerService
+from ...services.generation_coordinator import GenerationCoordinator
+from ...services.context_manager import ContextManager
+from ...services.dependency_planner import DependencyPlanner
+from ...services.integration_validator import IntegrationValidator
 
 
 class ServiceManager:
@@ -104,9 +101,6 @@ class ServiceManager:
         )
 
         # Architect Service
-        # --- THIS IS THE FIX ---
-        # The ArchitectService needs the `rag_service` from *inside* the `rag_manager`,
-        # not a `rag_service` on the ServiceManager itself.
         self.architect_service = ArchitectService(
             self,
             self.event_bus,
@@ -116,7 +110,6 @@ class ServiceManager:
             self.project_indexer_service,
             self.import_fixer_service
         )
-        # --- END OF FIX ---
 
         # Reviewer Service
         self.reviewer_service = ReviewerService(

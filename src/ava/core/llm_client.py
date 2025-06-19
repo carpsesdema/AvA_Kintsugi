@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import sys
 from typing import Dict, Optional
 
 import aiohttp
@@ -29,8 +30,20 @@ except ImportError:
 class LLMClient:
     def __init__(self, project_root: Path):
         load_dotenv()
-        self.config_dir = project_root / "src" / "ava" / "config"
-        self.config_dir.mkdir(exist_ok=True)
+
+        # --- THIS IS THE DEFINITIVE FIX ---
+        # This logic correctly finds the config directory whether running from
+        # source or as a bundled executable.
+        if getattr(sys, 'frozen', False):
+            # When bundled, assets are in the temporary _MEIPASS folder.
+            base_path = Path(sys._MEIPASS)
+            self.config_dir = base_path / "ava" / "config"
+        else:
+            # When running from source, the path is relative to the project root.
+            self.config_dir = project_root / "src" / "ava" / "config"
+        # --- END OF FIX ---
+
+        self.config_dir.mkdir(exist_ok=True, parents=True)
         self.assignments_file = self.config_dir / "role_assignments.json"
         self.clients = {}
         self._configure_clients()
@@ -74,7 +87,7 @@ class LLMClient:
                 self.role_assignments = config_data if isinstance(config_data, dict) else {}
                 self.role_temperatures = {}
         else:
-            print("[LLMClient] No assignments file found, setting smart defaults.")
+            print(f"[LLMClient] No assignments file found, setting smart defaults.")
             self.role_assignments = {
                 "architect": "google/gemini-2.5-pro-preview-06-05",
                 "coder": "anthropic/claude-3-5-sonnet-20240620",
