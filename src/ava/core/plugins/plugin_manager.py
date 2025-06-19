@@ -3,7 +3,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 from collections import defaultdict
 
 from .plugin_system import PluginBase, PluginState, PluginError
@@ -17,10 +17,10 @@ class PluginManager:
     Single responsibility: Manage plugin lifecycle and dependencies.
     """
 
-    def __init__(self, event_bus, config_file_path: str = "config/plugins.json"):
+    def __init__(self, event_bus, project_root: Path):
         self.event_bus = event_bus
         self.registry = PluginRegistry()
-        self.config = PluginConfig(config_file_path)
+        self.config = PluginConfig(project_root)
 
         # Active plugin instances
         self._active_plugins: Dict[str, PluginBase] = {}
@@ -118,46 +118,35 @@ class PluginManager:
         Calculate the order to load plugins based on dependencies.
 
         Args:
-            plugin_names: Set of plugin names to order
+            plugin_names: Set of plugin names to load
 
         Returns:
-            List of plugin names in load order
+            Ordered list of plugin names to load
         """
-        # Topological sort implementation
+        # Topological sort
         visited = set()
-        temp_visited = set()
-        load_order = []
+        order = []
 
-        def visit(plugin_name: str):
-            if plugin_name in temp_visited:
-                # Circular dependency detected
-                print(f"[PluginManager] Warning: Circular dependency involving {plugin_name}")
+        def visit(name: str):
+            if name in visited:
                 return
-
-            if plugin_name in visited:
-                return
-
-            temp_visited.add(plugin_name)
+            visited.add(name)
 
             # Visit dependencies first
-            for dependency in self._dependency_graph.get(plugin_name, set()):
-                if dependency in plugin_names:  # Only consider enabled plugins
-                    visit(dependency)
+            for dep in self._dependency_graph.get(name, []):
+                if dep in plugin_names:  # Only visit if it's in our load set
+                    visit(dep)
 
-            temp_visited.remove(plugin_name)
-            visited.add(plugin_name)
-            load_order.append(plugin_name)
+            order.append(name)
 
-        # Visit all plugins
         for plugin_name in plugin_names:
-            if plugin_name not in visited:
-                visit(plugin_name)
+            visit(plugin_name)
 
-        return load_order
+        return order
 
     async def load_plugin(self, plugin_name: str) -> bool:
         """
-        Load a specific plugin.
+        Load a plugin (create instance, call load()).
 
         Args:
             plugin_name: Name of the plugin to load
@@ -219,10 +208,11 @@ class PluginManager:
         Returns:
             True if starting succeeded, False otherwise
         """
-        plugin = self._active_plugins.get(plugin_name)
-        if not plugin:
-            print(f"[PluginManager] Cannot start '{plugin_name}': not loaded")
+        if plugin_name not in self._active_plugins:
+            print(f"[PluginManager] Cannot start unloaded plugin: {plugin_name}")
             return False
+
+        plugin = self._active_plugins[plugin_name]
 
         if plugin.state == PluginState.STARTED:
             print(f"[PluginManager] Plugin '{plugin_name}' is already started")
@@ -231,6 +221,7 @@ class PluginManager:
         try:
             if await plugin.start():
                 self._plugin_states[plugin_name] = PluginState.STARTED
+                self.config.enable_plugin(plugin_name)
                 print(f"[PluginManager] Started plugin: {plugin_name}")
                 return True
             else:
@@ -252,28 +243,31 @@ class PluginManager:
         Returns:
             True if stopping succeeded, False otherwise
         """
-        plugin = self._active_plugins.get(plugin_name)
-        if not plugin:
-            print(f"[PluginManager] Cannot stop '{plugin_name}': not loaded")
+        if plugin_name not in self._active_plugins:
+            print(f"[PluginManager] Cannot stop unloaded plugin: {plugin_name}")
             return False
+
+        plugin = self._active_plugins[plugin_name]
 
         if plugin.state != PluginState.STARTED:
             print(f"[PluginManager] Plugin '{plugin_name}' is not running")
             return True
 
-        # Check if other plugins depend on this one
-        dependents = self._reverse_dependencies.get(plugin_name, set())
-        running_dependents = [dep for dep in dependents
-                              if dep in self._active_plugins and
-                              self._active_plugins[dep].state == PluginState.STARTED]
-
-        if running_dependents:
-            print(f"[PluginManager] Cannot stop '{plugin_name}': required by {running_dependents}")
-            return False
-
         try:
+            # Check if any active plugins depend on this one
+            active_dependents = [
+                dep for dep in self._reverse_dependencies.get(plugin_name, [])
+                if dep in self._active_plugins and
+                self._plugin_states.get(dep) == PluginState.STARTED
+            ]
+
+            if active_dependents:
+                print(f"[PluginManager] Cannot stop '{plugin_name}': active dependents {active_dependents}")
+                return False
+
             if await plugin.stop():
                 self._plugin_states[plugin_name] = PluginState.STOPPED
+                self.config.disable_plugin(plugin_name)
                 print(f"[PluginManager] Stopped plugin: {plugin_name}")
                 return True
             else:
@@ -282,12 +276,11 @@ class PluginManager:
 
         except Exception as e:
             print(f"[PluginManager] Error stopping plugin '{plugin_name}': {e}")
-            self._plugin_states[plugin_name] = PluginState.ERROR
             return False
 
     async def unload_plugin(self, plugin_name: str) -> bool:
         """
-        Unload a plugin.
+        Unload a plugin completely.
 
         Args:
             plugin_name: Name of the plugin to unload
@@ -295,20 +288,21 @@ class PluginManager:
         Returns:
             True if unloading succeeded, False otherwise
         """
-        plugin = self._active_plugins.get(plugin_name)
-        if not plugin:
+        if plugin_name not in self._active_plugins:
             print(f"[PluginManager] Plugin '{plugin_name}' is not loaded")
             return True
 
-        # Stop plugin first if it's running
-        if plugin.state == PluginState.STARTED:
+        # Stop first if running
+        if self._plugin_states.get(plugin_name) == PluginState.STARTED:
             if not await self.stop_plugin(plugin_name):
                 return False
+
+        plugin = self._active_plugins[plugin_name]
 
         try:
             if await plugin.unload():
                 del self._active_plugins[plugin_name]
-                self._plugin_states[plugin_name] = PluginState.UNLOADED
+                del self._plugin_states[plugin_name]
                 print(f"[PluginManager] Unloaded plugin: {plugin_name}")
                 return True
             else:
@@ -317,166 +311,93 @@ class PluginManager:
 
         except Exception as e:
             print(f"[PluginManager] Error unloading plugin '{plugin_name}': {e}")
-            self._plugin_states[plugin_name] = PluginState.ERROR
             return False
-
-    async def enable_plugin(self, plugin_name: str) -> bool:
-        """
-        Enable and start a plugin.
-
-        Args:
-            plugin_name: Name of the plugin to enable
-
-        Returns:
-            True if enabling succeeded, False otherwise
-        """
-        if not self.registry.is_plugin_registered(plugin_name):
-            print(f"[PluginManager] Cannot enable '{plugin_name}': not registered")
-            return False
-
-        # Enable in configuration
-        self.config.enable_plugin(plugin_name)
-
-        # Load and start if not already loaded
-        if plugin_name not in self._active_plugins:
-            if not await self.load_plugin(plugin_name):
-                self.config.disable_plugin(plugin_name)  # Rollback
-                return False
-
-        if self._active_plugins[plugin_name].state != PluginState.STARTED:
-            if not await self.start_plugin(plugin_name):
-                self.config.disable_plugin(plugin_name)  # Rollback
-                return False
-
-        self.config.save_config()
-        return True
-
-    async def disable_plugin(self, plugin_name: str) -> bool:
-        """
-        Disable and stop a plugin.
-
-        Args:
-            plugin_name: Name of the plugin to disable
-
-        Returns:
-            True if disabling succeeded, False otherwise
-        """
-        # Disable in configuration
-        self.config.disable_plugin(plugin_name)
-
-        # Stop plugin if it's running
-        if plugin_name in self._active_plugins:
-            await self.stop_plugin(plugin_name)
-
-        self.config.save_config()
-        return True
 
     async def reload_plugin(self, plugin_name: str) -> bool:
         """
-        Unloads and then reloads a plugin.
+        Reload a plugin (unload then load again).
 
         Args:
-            plugin_name: The name of the plugin to reload.
+            plugin_name: Name of the plugin to reload
 
         Returns:
-            True if reloading succeeded, False otherwise.
+            True if reloading succeeded, False otherwise
         """
-        print(f"[PluginManager] Reloading plugin: {plugin_name}")
+        was_started = self._plugin_states.get(plugin_name) == PluginState.STARTED
 
-        original_state = self.config.is_plugin_enabled(plugin_name)
-
+        # Unload first
         if not await self.unload_plugin(plugin_name):
-            print(f"[PluginManager] Reload failed: could not unload {plugin_name}")
             return False
 
+        # Then load again
         if not await self.load_plugin(plugin_name):
-            print(f"[PluginManager] Reload failed: could not load {plugin_name}")
             return False
 
-        if original_state:
-            if not await self.start_plugin(plugin_name):
-                print(f"[PluginManager] Reload warning: could not restart {plugin_name}")
-                return False
+        # Restart if it was running before
+        if was_started:
+            return await self.start_plugin(plugin_name)
 
-        print(f"[PluginManager] Plugin '{plugin_name}' reloaded successfully.")
         return True
 
+    async def shutdown(self):
+        """Shutdown all plugins in reverse dependency order."""
+        print("[PluginManager] Starting plugin system shutdown...")
 
-    def get_active_plugin_instance(self, plugin_name: str) -> Optional[PluginBase]:
+        # Get all active plugins in reverse load order
+        active_names = list(self._active_plugins.keys())
+        shutdown_order = list(reversed(self._calculate_load_order(set(active_names))))
+
+        # Stop and unload each plugin
+        for plugin_name in shutdown_order:
+            try:
+                await self.unload_plugin(plugin_name)
+            except Exception as e:
+                print(f"[PluginManager] Error shutting down plugin '{plugin_name}': {e}")
+
+        # Save configuration
+        self.config.save_config()
+
+        print("[PluginManager] Plugin system shutdown complete")
+
+    def get_plugin_info(self, plugin_name: str) -> Optional[Dict[str, Any]]:
         """
-        Retrieves an active plugin instance if it's loaded or started.
-
-        Args:
-            plugin_name: The name of the plugin.
-
-        Returns:
-            The plugin instance, or None if not active.
-        """
-        plugin = self._active_plugins.get(plugin_name)
-        if plugin and plugin.state in [PluginState.LOADED, PluginState.STARTED]:
-            return plugin
-        return None
-
-    def get_plugin_status(self, plugin_name: str) -> Dict[str, any]:
-        """
-        Get status information for a plugin.
+        Get information about a plugin.
 
         Args:
             plugin_name: Name of the plugin
 
         Returns:
-            Dictionary containing plugin status
+            Dictionary with plugin info or None if not found
         """
         metadata = self.registry.get_plugin_metadata(plugin_name)
-        plugin = self._active_plugins.get(plugin_name)
+        if not metadata:
+            return None
 
         return {
             "name": plugin_name,
-            "registered": metadata is not None,
+            "version": metadata.version,
+            "description": metadata.description,
+            "author": metadata.author,
+            "state": self._plugin_states.get(plugin_name, PluginState.UNLOADED).value,
             "enabled": self.config.is_plugin_enabled(plugin_name),
-            "loaded": plugin is not None,
-            "state": plugin.state.value if plugin else PluginState.UNLOADED.value,
-            "metadata": metadata,
-            "dependencies": metadata.dependencies if metadata else [],
-            "missing_dependencies": self.registry.check_dependencies(plugin_name) if metadata else []
+            "dependencies": metadata.dependencies,
+            "dependents": list(self._reverse_dependencies.get(plugin_name, [])),
         }
 
-    def get_all_plugin_status(self) -> Dict[str, Dict[str, any]]:
+    def get_all_plugins_info(self) -> List[Dict[str, Any]]:
         """
-        Get status for all registered plugins.
+        Get information about all registered plugins.
 
         Returns:
-            Dictionary mapping plugin names to their status
+            List of plugin info dictionaries
         """
-        all_status = {}
-        for plugin_name in self.registry.get_registered_plugins():
-            all_status[plugin_name] = self.get_plugin_status(plugin_name)
-        return all_status
+        all_metadata = self.registry.get_all_metadata()
+        return [
+            self.get_plugin_info(plugin_name)
+            for plugin_name in all_metadata.keys()
+        ]
 
-    async def shutdown(self):
-        """
-        Shutdown all plugins in reverse dependency order, with robust error handling.
-        """
-        print("[PluginManager] Shutting down plugins...")
-
-        # Get all active plugins in reverse dependency order
-        active_plugin_names = set(self._active_plugins.keys())
-        unload_order = list(reversed(self._calculate_load_order(active_plugin_names)))
-
-        # --- THIS IS THE FIX ---
-        # We now loop through and try to unload each plugin individually,
-        # so that one failing plugin doesn't stop others from unloading.
-        for plugin_name in unload_order:
-            try:
-                await self.unload_plugin(plugin_name)
-            except Exception as e:
-                # Log the error but continue to the next plugin
-                print(f"[PluginManager] Error unloading plugin '{plugin_name}' during shutdown: {e}")
-        # --- END OF FIX ---
-
-        print("[PluginManager] Plugin shutdown complete")
-
-    def _on_plugin_state_changed(self, plugin_name: str, old_state: PluginState, new_state: PluginState):
+    def _on_plugin_state_changed(self, plugin_name: str, new_state: PluginState):
         """Handle plugin state change events."""
+        print(f"[PluginManager] Plugin '{plugin_name}' state changed to: {new_state.value}")
         self._plugin_states[plugin_name] = new_state
-        print(f"[PluginManager] Plugin '{plugin_name}' state: {old_state.value} -> {new_state.value}")

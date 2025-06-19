@@ -1,62 +1,43 @@
 # src/ava/gui/main_window.py
-# The main window class. Its single responsibility is to hold and lay out
-# the primary UI components like the sidebar and the chat interface.
 
 import asyncio
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QApplication
-from PySide6.QtGui import QIcon, QCloseEvent
-from PySide6.QtCore import QTimer
-from importlib import resources
-
-from .enhanced_sidebar import EnhancedSidebar
-from .chat_interface import ChatInterface
-from ava.core.event_bus import EventBus
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QApplication
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QCloseEvent
+from ava.gui.enhanced_sidebar import EnhancedSidebar
+from ava.gui.chat_interface import ChatInterface
 
 
-class MainWindow(QMainWindow):
+class MainWindow(QWidget):
     """
-    The main application window. It acts as a container for the primary
-    UI components. It adheres to SRP by only managing the main window's
-    layout and existence. It knows nothing about AI or business logic.
+    Main window of the application.
     """
 
-    def __init__(self, event_bus: EventBus):
-        """
-        The __init__ method now accepts the event_bus, which it will pass
-        down to its child components that need to communicate.
-        """
+    def __init__(self, event_bus):
         super().__init__()
-
-        # Store event bus reference for cleanup
         self.event_bus = event_bus
+        self._closing = False
 
-        # --- Basic Window Configuration ---
-        self.setWindowTitle("Kintsugi AvA - The Unbreakable Foundation")
-        self.setGeometry(100, 100, 1200, 800)  # x, y, width, height
+        # --- Set Window Properties ---
+        # This changes the title of the main window
+        self.setWindowTitle("Kintsugi AvA")
 
-        # --- FIX #1: Set the Window Icon (robustly) ---
-        try:
-            # Correctly locate the icon within the 'ava' package's 'assets' sub-folder
-            # This method is robust and works even when the app is packaged.
-            icon_traversable = resources.files('ava.assets').joinpath('Ava_Icon.ico')
-            with resources.as_file(icon_traversable) as icon_path:
-                self.setWindowIcon(QIcon(str(icon_path)))
-        except Exception as e:
-            print(f"[MainWindow] Could not load window icon: {e}")
-        # --- END OF FIX #1 ---
+        # Set window size and minimum size
+        self.resize(1400, 900)
+        self.setMinimumSize(800, 600)
 
-        # --- Main Layout ---
-        # A central widget is required for a QMainWindow.
-        # We use a simple QWidget with a horizontal layout (QHBoxLayout).
-        central_widget = QWidget(self)
-        self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)  # No padding around the edges
+        # Apply the theme to the whole application (this includes this widget)
+
+        # --- Create Layout ---
+        # We use a horizontal layout (HBox) because we want the sidebar
+        # on the left and the chat interface on the right
+        main_layout = QHBoxLayout(self)
+        # These margins create some padding around the edges of the window
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)  # No space between sidebar and chat
 
-        # --- Instantiate UI Components ---
-        # We create instances of our sidebar and chat interface, passing the
-        # event bus to them so they can communicate with the rest of the app.
+        # --- Create Components ---
+        # Initialize the sidebar and chat interface with the event bus
         self.sidebar = EnhancedSidebar(event_bus)
         self.chat_interface = ChatInterface(event_bus)
 
@@ -73,8 +54,12 @@ class MainWindow(QMainWindow):
         Handle window close event with proper async cleanup.
         This prevents the annoying error popups when closing the app.
         """
-        print("[MainWindow] Close event triggered - starting graceful shutdown...")
+        if self._closing:
+            event.accept()
+            return
 
+        self._closing = True
+        print("[MainWindow] Close event triggered - starting graceful shutdown...")
 
         try:
             # Emit application shutdown event to trigger cleanup
@@ -83,5 +68,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[MainWindow] Error during shutdown event: {e}")
 
+        # Ignore the event initially to allow async cleanup
+        event.ignore()
 
-        event.accept()
+        # Use a timer to close the application after a short delay
+        # This gives the async cleanup time to execute
+        QTimer.singleShot(500, lambda: QApplication.instance().quit())

@@ -1,6 +1,7 @@
 # src/ava/core/application.py
 
 import asyncio
+import sys
 from pathlib import Path
 
 from ava.core.event_bus import EventBus
@@ -11,165 +12,112 @@ from ava.core.managers import (
     WorkflowManager,
     TaskManager
 )
-from ava.core.plugins.plugin_system import PluginState
+from ava.core.plugins.plugin_manager import PluginManager
+from ava.gui.project_context_manager import ProjectContextManager
+from ava.core.project_manager import ProjectManager
 
 
 class Application:
     """
-    The main application coordinator - now lean and focused.
-    Single responsibility: Initialize and coordinate managers.
+    Main application class that coordinates all components.
     """
 
     def __init__(self, project_root: Path):
-        print("[Application] Initializing with plugin-enabled manager architecture...")
+        """
+        Initialize the application with the project root path.
 
+        Args:
+            project_root: Root directory of the project/executable
+        """
         self.project_root = project_root
+        print(f"[Application] Initializing with project root: {project_root}")
 
-        # --- Central Communication ---
+        # Core components
         self.event_bus = EventBus()
+        self.project_manager = ProjectManager()  # Only takes workspace path parameter
 
-        # --- Create Managers (just instances, no initialization yet) ---
-        self.service_manager = ServiceManager(self.event_bus)
-        self.window_manager = WindowManager(self.event_bus)
-        self.event_coordinator = EventCoordinator(self.event_bus)
-        self.workflow_manager = WorkflowManager(self.event_bus)
-        self.task_manager = TaskManager(self.event_bus)
+        # Plugin system - pass the project root
+        self.plugin_manager = PluginManager(self.event_bus, project_root)
 
-        # Track initialization state
+        # Service and task management
+        self.service_manager = ServiceManager(self.event_bus, self.plugin_manager)
+        self.task_manager = TaskManager()
+
+        # GUI components
+        self.window_manager = WindowManager(self.event_bus, self.project_manager)
+
+        # State
         self._initialization_complete = False
 
-        print("[Application] Managers created, starting async initialization...")
+        # Connect event handlers
+        self._connect_events()
+
+    def _connect_events(self):
+        """Set up event connections between components."""
+        # Window events
+        self.event_bus.subscribe("open_code_viewer_requested",
+                                 lambda: self.window_manager.show_code_viewer())
+        self.event_bus.subscribe("project_root_selected",
+                                 lambda root: self.project_manager.set_project_root(Path(root)))
+
+        # Application lifecycle
+        self.event_bus.subscribe("application_shutdown",
+                                 lambda: asyncio.create_task(self.cancel_all_tasks()))
 
     async def initialize_async(self):
         """
-        Async initialization method that handles plugin system setup.
-        Must be called after creating the Application instance.
+        Perform async initialization of components.
         """
-        if self._initialization_complete:
-            print("[Application] Already initialized")
-            return
+        print("[Application] Starting async initialization...")
 
-        print("[Application] Starting async initialization sequence...")
+        try:
+            # Configure plugin discovery paths
+            self._configure_plugin_paths()
 
-        # --- Initialize in dependency order ---
-        await self._initialize_all_managers_async()
+            # Initialize service manager (includes plugin initialization)
+            await self.service_manager.initialize()
 
-        self._initialization_complete = True
-        print("[Application] Plugin-enabled manager architecture initialized successfully")
+            # Initialize any other async components
+            # ...
 
-    async def _initialize_all_managers_async(self):
-        """Initialize all managers in the correct dependency order with plugin support."""
-        print("[Application] Initializing managers in dependency order...")
+            self._initialization_complete = True
+            print("[Application] Async initialization complete")
 
-        # --- THIS IS THE FIX ---
-        # Pass the reliable project_root to the managers that need it.
-        # 1. Initialize core components first (no dependencies)
-        self.service_manager.initialize_core_components(self.project_root)
+        except Exception as e:
+            print(f"[Application] Error during initialization: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
-        # 2. Initialize plugin system (depends on core components)
-        self.service_manager.initialize_plugin_system(self.project_root)
-        # --- END OF FIX ---
+    def _configure_plugin_paths(self):
+        """Configure plugin discovery paths based on execution mode."""
+        if getattr(sys, 'frozen', False):
+            # Running as bundled executable
+            # PyInstaller extracts data files to sys._MEIPASS
+            meipass = Path(sys._MEIPASS)
 
-        # Add discovery paths using the reliable project_root
-        plugin_manager = self.service_manager.get_plugin_manager()
-        plugin_manager.add_discovery_path(self.project_root / "src" / "ava" / "core" / "plugins" / "examples")
-        plugin_manager.add_discovery_path(self.project_root / "plugins")
+            # Built-in plugins from the bundled application
+            builtin_plugins = meipass / "ava" / "core" / "plugins" / "examples"
+            if builtin_plugins.exists():
+                self.plugin_manager.add_discovery_path(builtin_plugins)
+                print(f"[Application] Added bundled plugin path: {builtin_plugins}")
 
-        # 3. Discover and load plugins (async operation)
-        plugin_success = await self.service_manager.initialize_plugins()
-        if plugin_success:
-            print("[Application] Plugin system ready")
+            # Custom plugins directory next to the executable
+            custom_plugins = self.project_root / "plugins"
+            if custom_plugins.exists():
+                self.plugin_manager.add_discovery_path(custom_plugins)
+                print(f"[Application] Added custom plugin path: {custom_plugins}")
         else:
-            print("[Application] Plugin system initialized with warnings")
+            # Running from source
+            # Built-in example plugins
+            builtin_plugins = self.project_root / "src" / "ava" / "core" / "plugins" / "examples"
+            if builtin_plugins.exists():
+                self.plugin_manager.add_discovery_path(builtin_plugins)
 
-        # 4. Initialize windows (depends on core components, may be used by plugins)
-        llm_client = self.service_manager.get_llm_client()
-        self.window_manager.initialize_windows(llm_client, self.service_manager)
-
-        # 5. Initialize services (some depend on windows being available)
-        code_viewer = self.window_manager.get_code_viewer()
-        self.service_manager.initialize_services(code_viewer)
-
-        # 6. Set manager cross-references for coordination
-        self._set_manager_references()
-
-        # 7. Wire all events (must happen after all components exist)
-        self.event_coordinator.wire_all_events()
-
-        # 8. Wire plugin-specific events
-        self._wire_plugin_events()
-
-        print("[Application] All managers initialized and wired with plugin support")
-
-    def _set_manager_references(self):
-        """Set cross-references between managers for coordination."""
-        # EventCoordinator needs all managers for event wiring
-        self.event_coordinator.set_managers(
-            self.service_manager,
-            self.window_manager,
-            self.task_manager,
-            self.workflow_manager
-        )
-
-        # WorkflowManager needs other managers for orchestration
-        self.workflow_manager.set_managers(
-            self.service_manager,
-            self.window_manager,
-            self.task_manager
-        )
-
-        # TaskManager needs managers for task coordination
-        self.task_manager.set_managers(
-            self.service_manager,
-            self.window_manager
-        )
-
-    def _wire_plugin_events(self):
-        """Wire plugin-specific events, including UI updates."""
-        plugin_manager = self.service_manager.get_plugin_manager()
-        if not plugin_manager:
-            return
-
-        self.event_bus.subscribe("application_shutdown",
-                                 lambda: asyncio.create_task(plugin_manager.shutdown()))
-
-        sidebar = self.window_manager.get_main_window().sidebar
-
-        # --- NEW: Handler for plugin state changes that updates the UI ---
-        def handle_plugin_state_change(name, old_state, new_state):
-            """This function is called by the event bus on any plugin state change."""
-            # Log the change to the console for debugging
-            print(f"[Application] Plugin '{name}': {old_state.value} -> {new_state.value}")
-
-            # Update the sidebar UI with the new total status
-            if plugin_manager and sidebar:
-                try:
-                    all_status = plugin_manager.get_all_plugin_status()
-                    # Filter for plugins that are 'STARTED'
-                    active_plugins = [
-                        s for s in all_status.values()
-                        if s.get('state') == PluginState.STARTED.value
-                    ]
-                    sidebar.update_plugin_status(len(active_plugins), len(all_status))
-                except Exception as e:
-                    print(f"[Application] Error updating plugin status on sidebar: {e}")
-
-        # Subscribe the unified handler to the event
-        self.event_bus.subscribe("plugin_state_changed", handle_plugin_state_change)
-
-        # Call once on startup to set the initial state correctly
-        if sidebar:
-            try:
-                all_status = plugin_manager.get_all_plugin_status()
-                active_plugins = [
-                    s for s in all_status.values()
-                    if s.get('state') == PluginState.STARTED.value
-                ]
-                sidebar.update_plugin_status(len(active_plugins), len(all_status))
-            except Exception as e:
-                print(f"[Application] Error setting initial plugin status on sidebar: {e}")
-
-        print("[Application] Plugin events wired")
+            # Custom plugins directory
+            custom_plugins = self.project_root / "plugins"
+            if custom_plugins.exists():
+                self.plugin_manager.add_discovery_path(custom_plugins)
 
     def show(self):
         """Show the main application window."""

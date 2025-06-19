@@ -1,5 +1,5 @@
 # src/ava/main.py
-# V8: Finalized startup and shutdown logic for robustness.
+# V9: Fixed window closing and plugin discovery in executable
 
 import sys
 import asyncio
@@ -20,8 +20,8 @@ else:
     if str(src_path) not in sys.path:
         sys.path.insert(0, str(src_path))
 
-
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
 
 # --- Import the main Application class that orchestrates everything ---
 from ava.core.application import Application
@@ -36,13 +36,20 @@ async def main_async_logic(root_path: Path):
     app = QApplication.instance()
     ava_app = None
     shutdown_future = asyncio.get_event_loop().create_future()
+    shutdown_in_progress = False
 
     async def on_about_to_quit():
         """
         This is the single, authoritative handler for shutting down the application.
         It's connected to the Qt 'aboutToQuit' signal for maximum reliability.
         """
+        nonlocal shutdown_in_progress
+        if shutdown_in_progress:
+            return
+
+        shutdown_in_progress = True
         print("[main] Application is about to quit. Starting graceful shutdown...")
+
         if ava_app:
             try:
                 # This one call handles shutting down plugins, services, and tasks.
@@ -59,10 +66,8 @@ async def main_async_logic(root_path: Path):
     app.aboutToQuit.connect(lambda: asyncio.create_task(on_about_to_quit()))
 
     try:
-        # --- THIS IS THE FIX ---
         # Pass the reliable project_root to the Application.
         ava_app = Application(project_root=root_path)
-        # --- END OF FIX ---
 
         await ava_app.initialize_async()
         ava_app.show()
@@ -84,11 +89,17 @@ async def main_async_logic(root_path: Path):
             pass
     finally:
         print("[main] Main async logic has finished. Exiting.")
+        # Force quit after a short delay to ensure everything closes
+        QTimer.singleShot(100, app.quit)
 
 
 if __name__ == "__main__":
     setup_exception_hook()
     app = QApplication(sys.argv)
+
+    # Set application metadata
+    app.setApplicationName("Kintsugi AvA")
+    app.setOrganizationName("Kintsugi")
 
     # Pass the calculated project_root into the main async logic.
     qasync.run(main_async_logic(project_root))

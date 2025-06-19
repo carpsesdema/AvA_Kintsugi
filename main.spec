@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import os
 
 block_cipher = None
 
@@ -8,21 +9,35 @@ block_cipher = None
 src_root = Path('./src').resolve()
 project_root = Path('.').resolve()
 
+# Collect all plugin directories
+plugin_data = []
+
+# Built-in example plugins
+builtin_plugins_src = src_root / "ava" / "core" / "plugins" / "examples"
+if builtin_plugins_src.exists():
+    for plugin_dir in builtin_plugins_src.iterdir():
+        if plugin_dir.is_dir() and (plugin_dir / "__init__.py").exists():
+            # Include each plugin directory
+            plugin_data.append((str(plugin_dir), f"ava/core/plugins/examples/{plugin_dir.name}"))
+
+# Custom plugins directory
+custom_plugins_src = project_root / "plugins"
+if custom_plugins_src.exists():
+    for plugin_dir in custom_plugins_src.iterdir():
+        if plugin_dir.is_dir() and (plugin_dir / "__init__.py").exists():
+            plugin_data.append((str(plugin_dir), f"plugins/{plugin_dir.name}"))
+
 a = Analysis(
     ['src/ava/main.py'],
-    pathex=[str(project_root)],  # Add project root to path for plugins discovery
+    pathex=[str(project_root), str(src_root)],  # Add both paths
     binaries=[],
     datas=[
-        # --- THIS IS THE FIX: Bundle all necessary non-code files ---
-        # We specify ('source_path', 'destination_in_bundle')
-        # This ensures that PyInstaller copies these folders into the final .exe package
-        # and places them where our code expects to find them.
+        # Core application data
         ('src/ava/assets', 'ava/assets'),
-        ('src/ava/config', 'src/ava/config'),
-        ('src/ava/core/plugins/examples', 'ava/core/plugins/examples'),
+        ('src/ava/config', 'ava/config'),
 
-        # Include the top-level 'plugins' directory if it exists, for custom plugins.
-        ('plugins', 'plugins')
+        # Include all discovered plugins
+        *plugin_data,
     ],
     hiddenimports=[
         # PySide6 and GUI libs
@@ -38,6 +53,7 @@ a = Analysis(
         'packaging',
         'packaging.version',
         'importlib.resources',
+        'importlib.metadata',
 
         # Async and RAG libs
         'aiohttp',
@@ -46,6 +62,13 @@ a = Analysis(
         'threading',
         'subprocess',
         'socket',
+
+        # Plugin system
+        'ava.core.plugins.plugin_system',
+        'ava.core.plugins.plugin_base',
+        'ava.core.plugins.plugin_registry',
+        'ava.core.plugins.plugin_manager',
+        'ava.core.plugins.plugin_config',
     ],
     hookspath=[],
     hooksconfig={},
@@ -63,12 +86,12 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='main', # Creates main.exe, as expected by the build script
+    name='main',  # Creates main.exe, as expected by the launcher
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,
+    console=False,  # Set to True if you want to see console output for debugging
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -84,5 +107,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='main' # The output folder will be 'dist/main'
+    name='main'  # The output folder will be 'dist/main'
 )
