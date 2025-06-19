@@ -1,7 +1,12 @@
 # src/ava/gui/chat_interface.py
-# UPDATED: Now uses AdvancedChatInput and displays images in bubbles.
+# UPDATED: Implemented session save/load functionality.
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QScrollArea, QHBoxLayout
+import json
+import base64
+import io
+from datetime import datetime
+
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QScrollArea, QHBoxLayout, QFileDialog, QMessageBox
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPalette, QPixmap, QImage
 import qtawesome as qta
@@ -16,10 +21,10 @@ from typing import Optional
 
 
 class ChatBubble(QFrame):
+    # (This class remains unchanged from the previous version)
     def __init__(self, text: str, sender: str, is_user: bool, image: Optional[QImage] = None):
         super().__init__()
         self.setObjectName("chat_bubble")
-
         bg_color = Colors.ACCENT_BLUE if is_user else Colors.ELEVATED_BG
         self.setStyleSheet(f"""
             #chat_bubble {{
@@ -28,31 +33,22 @@ class ChatBubble(QFrame):
                 padding: 10px;
             }}
         """)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-
-        # --- Image Display ---
         if image:
             self.image_label = QLabel()
-            # --- THIS IS THE FIX ---
-            # Explicitly convert QImage to QPixmap before scaling and setting.
             pixmap = QPixmap.fromImage(image)
             if pixmap.width() > 400:
                 pixmap = pixmap.scaledToWidth(400, Qt.TransformationMode.SmoothTransformation)
-            # --- END OF FIX ---
             self.image_label.setPixmap(pixmap)
             self.image_label.setStyleSheet("border-radius: 6px;")
             layout.addWidget(self.image_label)
-
-        # --- Sender and Message Display ---
         self.sender_label = QLabel(sender)
         self.sender_label.setFont(Typography.heading_small())
         self.sender_label.setStyleSheet(f"color: {Colors.TEXT_PRIMARY.name()};")
         layout.addWidget(self.sender_label)
-
-        if text: # Only add message label if there is text
+        if text:
             self.message_label = QLabel(text)
             self.message_label.setWordWrap(True)
             self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -60,12 +56,10 @@ class ChatBubble(QFrame):
             self.message_label.setStyleSheet(f"color: {Colors.TEXT_PRIMARY.name()};")
             layout.addWidget(self.message_label)
         else:
-            self.message_label = None # No text label to append to
+            self.message_label = None
 
     def append_text(self, chunk: str):
-        """Appends a chunk of text to the message label for streaming."""
-        if not self.message_label: # If no text was sent initially, create the label now
-            # Find the layout to add the widget
+        if not self.message_label:
             layout = self.layout()
             self.message_label = QLabel()
             self.message_label.setWordWrap(True)
@@ -73,21 +67,19 @@ class ChatBubble(QFrame):
             self.message_label.setFont(Typography.body())
             self.message_label.setStyleSheet(f"color: {Colors.TEXT_PRIMARY.name()};")
             layout.addWidget(self.message_label)
-
         self.message_label.setText(self.message_label.text() + chunk)
 
 
 class ChatMessageWidget(QWidget):
+    # (This class remains unchanged from the previous version)
     def __init__(self, text: str, sender: str, is_user: bool, image: Optional[QImage] = None):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(10, 5, 10, 5)
-
         self.bubble = ChatBubble(text, sender, is_user, image)
         bubble_width = self.parent().width() * 0.75 if self.parent() else 800
         self.bubble.setMaximumWidth(int(bubble_width))
-
         if is_user:
             layout.addStretch()
             layout.addWidget(self.bubble)
@@ -97,7 +89,6 @@ class ChatMessageWidget(QWidget):
             avatar.setPixmap(avatar_icon.pixmap(28, 28))
             avatar.setFixedSize(30, 30)
             avatar.setAlignment(Qt.AlignmentFlag.AlignTop)
-
             layout.addWidget(avatar)
             layout.addWidget(self.bubble)
             layout.addStretch()
@@ -110,6 +101,7 @@ class ChatInterface(QWidget):
     def __init__(self, event_bus: EventBus):
         super().__init__()
         self.event_bus = event_bus
+        # THIS IS THE FIX: The history now stores dictionaries matching our save format.
         self.conversation_history = []
         self.streaming_message_widget = None
         self.current_app_state = AppState.BOOTSTRAP
@@ -123,7 +115,6 @@ class ChatInterface(QWidget):
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(10)
 
-        # --- Chat History Area ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setStyleSheet("QScrollArea { border: none; }")
@@ -133,31 +124,25 @@ class ChatInterface(QWidget):
         self.bubble_layout.addStretch()
         self.scroll_area.setWidget(self.bubble_container)
 
-        # --- NEW Input Widget ---
         self.input_widget = self._create_input_widget()
-
         main_layout.addWidget(self.scroll_area, 1)
-        main_layout.addWidget(self._create_top_input_bar()) # Mode toggle
+        main_layout.addWidget(self._create_top_input_bar())
         main_layout.addWidget(self.input_widget)
 
-        # --- Connect Events ---
         self.event_bus.subscribe("app_state_changed", self.on_app_state_changed)
         self.event_bus.subscribe("chat_cleared", self.clear_chat)
         self.event_bus.subscribe("streaming_message_start", self.on_streaming_start)
         self.event_bus.subscribe("streaming_message_chunk", self.on_streaming_chunk)
         self.event_bus.subscribe("streaming_message_end", self.on_streaming_end)
         self.event_bus.subscribe("interaction_mode_changed", self.on_mode_changed)
-
         self.on_app_state_changed(AppState.BOOTSTRAP, None)
 
     def _create_top_input_bar(self) -> QWidget:
         container = QWidget()
         container_layout = QHBoxLayout(container)
-        container_layout.setContentsMargins(0,0,0,0)
+        container_layout.setContentsMargins(0, 0, 0, 0)
         self.mode_toggle = ModeToggle()
-        self.mode_toggle.modeChanged.connect(
-            lambda mode: self.event_bus.emit("interaction_mode_changed", mode)
-        )
+        self.mode_toggle.modeChanged.connect(lambda mode: self.event_bus.emit("interaction_mode_changed", mode))
         container_layout.addStretch()
         container_layout.addWidget(self.mode_toggle)
         container_layout.addStretch()
@@ -167,7 +152,6 @@ class ChatInterface(QWidget):
         self.current_app_state = state
         self.current_project_name = project_name
         self.on_mode_changed(self.mode_toggle._current_mode, is_state_change=True)
-
         if state == AppState.BOOTSTRAP:
             self.clear_chat("Hello! Let's build something amazing from scratch.")
         else:
@@ -177,13 +161,15 @@ class ChatInterface(QWidget):
         self.mode_toggle.setMode(new_mode)
         if new_mode == InteractionMode.CHAT:
             self.input_widget.setPlaceholderText("Ask a question, brainstorm ideas, or paste an image...")
-            if not is_state_change: self._add_message("Switched to Chat mode.", is_user=False, is_feedback=True)
+            if not is_state_change: self._add_message(text="Switched to Chat mode.", is_user=False, is_feedback=True)
         elif new_mode == InteractionMode.BUILD:
             if self.current_app_state == AppState.BOOTSTRAP:
                 self.input_widget.setPlaceholderText("Describe the new application you want to build...")
             else:
-                self.input_widget.setPlaceholderText(f"What changes for '{self.current_project_name}'? Paste an image of an error!")
-            if not is_state_change: self._add_message("Switched to Build mode. Ready to code.", is_user=False, is_feedback=True)
+                self.input_widget.setPlaceholderText(
+                    f"What changes for '{self.current_project_name}'? Paste an image of an error!")
+            if not is_state_change: self._add_message(text="Switched to Build mode. Ready to code.", is_user=False,
+                                                      is_feedback=True)
 
     def _create_input_widget(self) -> AdvancedChatInput:
         input_widget = AdvancedChatInput()
@@ -191,21 +177,33 @@ class ChatInterface(QWidget):
         return input_widget
 
     def _on_user_message_sent(self, text: str, image_bytes: Optional[bytes], image_media_type: Optional[str]):
-        """Handles the send action from the new input widget."""
+        q_image = QImage()
+        image_b64 = None
+        if image_bytes and q_image.loadFromData(image_bytes):
+            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+        else:
+            q_image = None
+
+        history_entry = {"role": "user", "text": text, "image_b64": image_b64, "media_type": image_media_type}
+        self._add_message(history_entry)
+        self.event_bus.emit("user_request_submitted", text, self.conversation_history, image_bytes, image_media_type)
+
+    def _add_message(self, message_data: dict, is_feedback: bool = False):
+        role = message_data.get("role", "assistant")
+        is_user = role == "user"
+        text = message_data.get("text", "")
+        image_b64 = message_data.get("image_b64")
+
         q_image = None
-        if image_bytes:
+        if image_b64:
+            image_bytes = base64.b64decode(image_b64)
             q_image = QImage()
             q_image.loadFromData(image_bytes)
 
-        self._add_message(text, is_user=True, image=q_image)
-        # Emit with raw bytes, let the backend handle encoding
-        self.event_bus.emit("user_request_submitted", text, self.conversation_history, image_bytes, image_media_type)
+        sender_name = "You" if is_user else message_data.get("sender", "Kintsugi AvA")
 
-    def _add_message(self, text: str, is_user: bool, sender: str = None,
-                     is_feedback: bool = False, image: Optional[QImage] = None) -> ChatMessageWidget:
         stretch_item = self.bubble_layout.takeAt(self.bubble_layout.count() - 1)
-        sender_name = sender if sender else ("You" if is_user else "Kintsugi AvA")
-        message_widget = ChatMessageWidget(text, sender_name, is_user, image=image)
+        message_widget = ChatMessageWidget(text, sender_name, is_user, image=q_image)
         self.bubble_layout.addWidget(message_widget)
         self.bubble_layout.addStretch()
 
@@ -213,14 +211,13 @@ class ChatInterface(QWidget):
             self.scroll_area.verticalScrollBar().maximum()))
 
         if not is_feedback:
-            # TODO: Handle multimodal history correctly
-            role = "user" if is_user else "assistant"
-            self.conversation_history.append({"role": role, "content": text})
+            self.conversation_history.append(message_data)
 
         return message_widget
 
     def on_streaming_start(self, sender: str):
-        self.streaming_message_widget = self._add_message("", is_user=False, sender=sender, is_feedback=True)
+        message_data = {"role": "assistant", "sender": sender, "text": ""}
+        self.streaming_message_widget = self._add_message(message_data, is_feedback=True)
 
     def on_streaming_chunk(self, chunk: str):
         if self.streaming_message_widget:
@@ -233,7 +230,10 @@ class ChatInterface(QWidget):
             full_text = ""
             if self.streaming_message_widget.bubble.message_label:
                 full_text = self.streaming_message_widget.bubble.message_label.text()
-            self.conversation_history.append({"role": "assistant", "content": full_text})
+
+            # Now finalize the entry in the conversation history
+            final_message_data = {"role": "assistant", "text": full_text, "image_b64": None, "media_type": None}
+            self.conversation_history.append(final_message_data)
             self.streaming_message_widget = None
 
     def clear_chat(self, initial_message: str = "New session started."):
@@ -241,6 +241,51 @@ class ChatInterface(QWidget):
             item = self.bubble_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
         self.conversation_history.clear()
-        self.on_streaming_start("Kintsugi AvA")
-        self.on_streaming_chunk(initial_message)
-        self.on_streaming_end()
+        self._add_message(message_data={"role": "assistant", "text": initial_message})
+
+    # --- NEW SESSION MANAGEMENT METHODS ---
+    def save_session(self):
+        """Saves the current chat history to a JSON file."""
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Chat Session", "", "JSON Files (*.json)")
+        if not file_path:
+            return
+
+        session_data = {
+            "schema_version": "1.0",
+            "saved_at": datetime.now().isoformat(),
+            "conversation_history": self.conversation_history
+        }
+
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(session_data, f, indent=2)
+            QMessageBox.information(self, "Success", "Chat session saved successfully.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save chat session: {e}")
+
+    def load_session(self):
+        """Loads a chat history from a JSON file."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Chat Session", "", "JSON Files (*.json)")
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                session_data = json.load(f)
+
+            if "conversation_history" not in session_data:
+                raise ValueError("Invalid session file: 'conversation_history' key not found.")
+
+            # Clear current session and rebuild UI
+            while self.bubble_layout.count() > 1:
+                item = self.bubble_layout.takeAt(0)
+                if item.widget(): item.widget().deleteLater()
+            self.conversation_history.clear()
+
+            for message_data in session_data["conversation_history"]:
+                self._add_message(message_data)
+
+            QMessageBox.information(self, "Success", "Chat session loaded successfully.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load chat session: {e}")

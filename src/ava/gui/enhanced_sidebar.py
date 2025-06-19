@@ -1,5 +1,5 @@
 # src/ava/gui/enhanced_sidebar.py
-# UPDATED: Re-laid out plugin panel and added a status dot.
+# UPDATED: Added Save/Load Chat buttons.
 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QPushButton
@@ -85,18 +85,14 @@ class EnhancedSidebar(QWidget):
         return panel
 
     def _create_plugin_panel(self) -> QFrame:
-        """New plugin management panel with a status dot."""
         panel, layout = self._create_styled_panel("Plugin System")
-
         plugin_main_layout = QHBoxLayout()
         plugin_main_layout.setContentsMargins(0, 0, 0, 0)
-        plugin_main_layout.setSpacing(8)  # Add a bit of space
-
+        plugin_main_layout.setSpacing(8)
         self.plugin_status_dot = StatusIndicatorDot()
-        status_label = QLabel("Plugins")  # Simple, static label
+        status_label = QLabel("Plugins")
         status_label.setFont(Typography.body())
         status_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
-
         manage_plugins_btn = QPushButton("Manage")
         manage_plugins_btn.setFont(Typography.body())
         manage_plugins_btn.setCursor(Qt.PointingHandCursor)
@@ -115,21 +111,34 @@ class EnhancedSidebar(QWidget):
             }}
         """)
         manage_plugins_btn.clicked.connect(lambda: self.event_bus.emit("plugin_management_requested"))
-
         plugin_main_layout.addWidget(self.plugin_status_dot)
         plugin_main_layout.addWidget(status_label)
         plugin_main_layout.addStretch()
         plugin_main_layout.addWidget(manage_plugins_btn)
-
         layout.addLayout(plugin_main_layout)
         return panel
 
     def _create_actions_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Actions & Tools")
         layout.addWidget(self._create_action_header("SESSION"))
+
         new_session_btn = ModernButton("New Session", "secondary")
+        new_session_btn.setIcon(qta.icon("fa5s.power-off", color=Colors.TEXT_PRIMARY.name()))
         new_session_btn.clicked.connect(lambda: self.event_bus.emit("new_session_requested"))
         layout.addWidget(new_session_btn)
+
+        # --- THIS IS THE FIX ---
+        save_chat_btn = ModernButton("Save Chat", "secondary")
+        save_chat_btn.setIcon(qta.icon("fa5s.save", color=Colors.TEXT_PRIMARY.name()))
+        save_chat_btn.clicked.connect(lambda: self.event_bus.emit("save_chat_requested"))
+        layout.addWidget(save_chat_btn)
+
+        load_chat_btn = ModernButton("Load Chat", "secondary")
+        load_chat_btn.setIcon(qta.icon("fa5s.folder-open", color=Colors.TEXT_PRIMARY.name()))
+        load_chat_btn.clicked.connect(lambda: self.event_bus.emit("load_chat_requested"))
+        layout.addWidget(load_chat_btn)
+        # --- END OF FIX ---
+
         layout.addWidget(self._create_action_header("TOOLS"))
 
         log_btn = ModernButton("View Logs", "secondary")
@@ -155,5 +164,4 @@ class EnhancedSidebar(QWidget):
         self.project_name_label.setText(f"Project: {project_name}")
 
     def update_plugin_status(self, status: str):
-        """Updates the plugin status dot in the sidebar."""
         self.plugin_status_dot.setStatus(status)
