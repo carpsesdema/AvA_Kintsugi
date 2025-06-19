@@ -1,37 +1,42 @@
 # src/ava/gui/loading_indicator.py
-# FINAL VERSION: A beautiful, smooth, pulsing animation using QPropertyAnimation.
+# FINAL ATTEMPT: A completely manual animation using QTimer for maximum stability.
 
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Property, QParallelAnimationGroup
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap, QPainter
 from PySide6.QtWidgets import QWidget
 
-
 class LoadingIndicator(QWidget):
     """
-    Creates a smooth, spinning and pulsing animation by rotating a 'base'
-    image and fading the opacity of a 'glow' image over it. This is achieved
-    using Qt's animation framework.
+    Creates a smooth, spinning and pulsing animation using a QTimer for manual
+    updates. This approach is highly robust and avoids potential framework
+    issues with QPropertyAnimation, ensuring it works for launch.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # --- Image Filenames (MUST be in src/ava/assets/) ---
+        # --- Image Filenames ---
         self.base_image_name = "loading_gear_base.png"
         self.glow_image_name = "loading_gear_glow.png"
 
         # --- Animation State ---
-        self._glow_opacity = 0.0
         self._rotation_angle = 0.0
+        self._glow_opacity = 0.0
+        self._pulse_direction = 1  # 1 for increasing, -1 for decreasing
+
         self.pixmap_base = None
         self.pixmap_glow = None
-        self.animation_group = None
 
         self._load_pixmaps()
-        self._setup_animation()
+
+        # --- Animation Timer ---
+        self.animation_timer = QTimer(self)
+        self.animation_timer.setInterval(16)  # ~60 FPS
+        self.animation_timer.timeout.connect(self._update_animation_frame)
+
         self.start()
 
     def _load_pixmaps(self):
@@ -55,84 +60,67 @@ class LoadingIndicator(QWidget):
         except Exception as e:
             print(f"Failed to load loading indicator images: {e}")
 
-    @Property(float)
-    def glow_opacity(self):
-        return self._glow_opacity
+    def _update_animation_frame(self):
+        """Calculates the state of the animation for the current frame."""
+        # --- Rotation ---
+        # Rotate by a small amount each frame. The modulo keeps it from growing infinitely.
+        self._rotation_angle = (self._rotation_angle + 1.5) % 360
 
-    @glow_opacity.setter
-    def set_glow_opacity(self, value):
-        self._glow_opacity = value
+        # --- Pulsing Glow ---
+        # The step determines how fast the pulse is.
+        pulse_step = 0.015
+        if self._pulse_direction == 1:
+            self._glow_opacity += pulse_step
+            if self._glow_opacity >= 1.0:
+                self._glow_opacity = 1.0
+                self._pulse_direction = -1  # Reverse direction
+        else:
+            self._glow_opacity -= pulse_step
+            if self._glow_opacity <= 0.0:
+                self._glow_opacity = 0.0
+                self._pulse_direction = 1  # Reverse direction
+
+        # Trigger a repaint of the widget
         self.update()
-
-    @Property(float)
-    def rotation_angle(self):
-        return self._rotation_angle
-
-    @rotation_angle.setter
-    def set_rotation_angle(self, value):
-        self._rotation_angle = value
-        self.update()
-
-    def _setup_animation(self):
-        """Sets up the infinitely looping fade-in/out and rotation animations."""
-        if not self.pixmap_base:
-            return
-
-        self.animation_group = QParallelAnimationGroup(self)
-
-        # Pulse animation (fading the glow)
-        pulse_animation = QPropertyAnimation(self, b"glow_opacity")
-        pulse_animation.setDuration(1800)
-        pulse_animation.setStartValue(0.0)
-        pulse_animation.setKeyValueAt(0.5, 1.0)
-        pulse_animation.setEndValue(0.0)
-        pulse_animation.setLoopCount(-1)
-        pulse_animation.setEasingCurve(QEasingCurve.InOutSine)
-
-        # Rotation animation
-        rotation_animation = QPropertyAnimation(self, b"rotation_angle")
-        rotation_animation.setDuration(2500)
-        rotation_animation.setStartValue(0)
-        rotation_animation.setEndValue(360)
-        rotation_animation.setLoopCount(-1)
-        rotation_animation.setEasingCurve(QEasingCurve.Type.Linear)
-
-        self.animation_group.addAnimation(pulse_animation)
-        self.animation_group.addAnimation(rotation_animation)
 
     def paintEvent(self, event):
-        """Draws the base and glow layers, applying rotation to the base."""
+        """Draws the base and glow layers, applying rotation and opacity."""
         if not self.pixmap_base or not self.pixmap_glow:
             return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
+        # Scale pixmaps to fit the widget's current size while keeping aspect ratio
         scaled_base = self.pixmap_base.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio,
                                               Qt.TransformationMode.SmoothTransformation)
         scaled_glow = self.pixmap_glow.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio,
                                               Qt.TransformationMode.SmoothTransformation)
 
-        # Apply rotation to the base gear
-        center = self.rect().center()
+        # --- Draw the spinning base gear ---
         painter.save()
+        center = self.rect().center()
         painter.translate(center)
         painter.rotate(self._rotation_angle)
         painter.translate(-center)
-        painter.drawPixmap(self.rect(), scaled_base)
+        # Center the pixmap within the widget rect before drawing
+        base_rect = scaled_base.rect()
+        base_rect.moveCenter(self.rect().center())
+        painter.drawPixmap(base_rect.topLeft(), scaled_base)
         painter.restore()
 
-        # Draw the glow layer on top, with opacity but no rotation
+        # --- Draw the pulsing glow layer on top ---
         painter.setOpacity(self._glow_opacity)
-        painter.drawPixmap(self.rect(), scaled_glow)
+        glow_rect = scaled_glow.rect()
+        glow_rect.moveCenter(self.rect().center())
+        painter.drawPixmap(glow_rect.topLeft(), scaled_glow)
 
     def start(self):
-        if self.animation_group and self.animation_group.state() != QPropertyAnimation.State.Running:
-            self.animation_group.start()
+        if not self.animation_timer.isActive():
+            self.animation_timer.start()
 
     def stop(self):
-        if self.animation_group:
-            self.animation_group.stop()
+        self.animation_timer.stop()
 
     def hideEvent(self, event):
         self.stop()

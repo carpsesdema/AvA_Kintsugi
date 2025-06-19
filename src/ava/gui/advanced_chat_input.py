@@ -1,5 +1,5 @@
 # src/ava/gui/advanced_chat_input.py
-# NEW FILE: A feature-rich, multi-line chat input with image attachment capabilities.
+# Corrected byte handling for image pasting.
 
 import io
 from typing import Optional
@@ -148,13 +148,11 @@ class AdvancedChatInput(QWidget):
         self._attached_image = image
         self._attached_media_type = "image/png" # Assume PNG for clipboard ops
 
-        # --- THIS IS THE FIX ---
         # Convert the QImage to a QPixmap before setting it on the label.
         thumbnail_pixmap = QPixmap.fromImage(image.scaled(
             60, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         ))
         self.thumbnail_label.setPixmap(thumbnail_pixmap)
-        # --- END OF FIX ---
 
         self.thumbnail_preview.show()
         self.text_input.setFocus()
@@ -174,7 +172,8 @@ class AdvancedChatInput(QWidget):
             buffer = QBuffer()
             buffer.open(QIODevice.OpenModeFlag.WriteOnly)
             self._attached_image.save(buffer, "PNG")
-            image_bytes = buffer.data().data()
+            # Explicitly convert QByteArray from buffer.data() to Python bytes
+            image_bytes = bytes(buffer.data())
 
         if text or image_bytes:
             self.message_sent.emit(text, image_bytes, self._attached_media_type)
