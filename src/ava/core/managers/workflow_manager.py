@@ -98,21 +98,21 @@ class WorkflowManager:
         provider, model = llm_client.get_model_for_role("chat")
 
         if not provider or not model:
-            self.event_bus.emit("streaming_message_chunk", "Sorry, no 'chat' model is configured.")
+            self.event_bus.emit("streaming_chunk", "Sorry, no 'chat' model is configured.")
             return
 
         # If there's an image but no text, create a default prompt.
         chat_prompt = prompt if prompt else "Describe this image in detail."
 
-        self.event_bus.emit("streaming_message_start", "Kintsugi AvA")
+        self.event_bus.emit("streaming_start", "Kintsugi AvA")
         try:
             stream = llm_client.stream_chat(provider, model, chat_prompt, "chat", image_bytes, image_media_type)
             async for chunk in stream:
-                self.event_bus.emit("streaming_message_chunk", chunk)
+                self.event_bus.emit("streaming_chunk", chunk)
         except Exception as e:
-            self.event_bus.emit("streaming_message_chunk", f"\n\nAn error occurred: {e}")
+            self.event_bus.emit("streaming_chunk", f"\n\nAn error occurred: {e}")
         finally:
-            self.event_bus.emit("streaming_message_end")
+            self.event_bus.emit("streaming_end")
 
     async def _run_bootstrap_workflow(self, prompt: str, image_bytes: Optional[bytes] = None):
         """Runs the workflow to create a new project from a prompt or an image description."""

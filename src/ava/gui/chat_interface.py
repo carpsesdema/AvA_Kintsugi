@@ -86,11 +86,10 @@ class ChatMessageWidget(QWidget):
             layout.addStretch()
             layout.addWidget(self.bubble)
         else:
-            # FIXED: Use gear image instead of atom icon
             if is_loading:
                 # For loading state, use the LoadingIndicator widget
                 self.avatar_widget = LoadingIndicator()
-                self.avatar_widget.setFixedSize(30, 30)
+                self.avatar_widget.setFixedSize(48, 48)
             else:
                 # For normal state, use the gear base image
                 self.avatar_widget = QLabel()
@@ -104,15 +103,15 @@ class ChatMessageWidget(QWidget):
                 gear_base_path = asset_dir / "loading_gear_base.png"
                 if gear_base_path.exists():
                     pixmap = QPixmap(str(gear_base_path))
-                    scaled_pixmap = pixmap.scaled(28, 28, Qt.AspectRatioMode.KeepAspectRatio,
+                    scaled_pixmap = pixmap.scaled(46, 46, Qt.AspectRatioMode.KeepAspectRatio,
                                                   Qt.TransformationMode.SmoothTransformation)
                     self.avatar_widget.setPixmap(scaled_pixmap)
                 else:
                     # Fallback to icon if image not found
                     avatar_icon = qta.icon("fa5s.cog", color=Colors.ACCENT_BLUE)
-                    self.avatar_widget.setPixmap(avatar_icon.pixmap(28, 28))
+                    self.avatar_widget.setPixmap(avatar_icon.pixmap(46, 46))
 
-                self.avatar_widget.setFixedSize(30, 30)
+                self.avatar_widget.setFixedSize(48, 48)
                 self.avatar_widget.setAlignment(Qt.AlignmentFlag.AlignTop)
 
             layout.addWidget(self.avatar_widget)
@@ -140,14 +139,14 @@ class ChatMessageWidget(QWidget):
             gear_base_path = asset_dir / "loading_gear_base.png"
             if gear_base_path.exists():
                 pixmap = QPixmap(str(gear_base_path))
-                scaled_pixmap = pixmap.scaled(28, 28, Qt.AspectRatioMode.KeepAspectRatio,
+                scaled_pixmap = pixmap.scaled(46, 46, Qt.AspectRatioMode.KeepAspectRatio,
                                               Qt.TransformationMode.SmoothTransformation)
                 self.avatar_widget.setPixmap(scaled_pixmap)
             else:
                 avatar_icon = qta.icon("fa5s.cog", color=Colors.ACCENT_BLUE)
-                self.avatar_widget.setPixmap(avatar_icon.pixmap(28, 28))
+                self.avatar_widget.setPixmap(avatar_icon.pixmap(46, 46))
 
-            self.avatar_widget.setFixedSize(30, 30)
+            self.avatar_widget.setFixedSize(48, 48)
             self.avatar_widget.setAlignment(Qt.AlignmentFlag.AlignTop)
 
             # Insert it back at position 0 (before the bubble)
@@ -212,7 +211,7 @@ class ChatInterface(QWidget):
         self.current_project_name = project_name
         if new_state == AppState.BOOTSTRAP:
             self.input_widget.setPlaceholderText("Describe the new application you want to build...")
-        elif new_state == AppState.PROJECT:
+        elif new_state == AppState.MODIFY:
             self.input_widget.setPlaceholderText(f"What changes for '{project_name}'? Paste an image of an error!")
         current_mode = self.mode_toggle._current_mode
         self._on_mode_changed(current_mode, is_state_change=True)
@@ -241,7 +240,6 @@ class ChatInterface(QWidget):
     def _create_input_widget(self) -> AdvancedChatInput:
         input_widget = AdvancedChatInput()
         input_widget.message_sent.connect(self._on_user_message_sent)
-        input_widget.setMaximumHeight(200)  # Prevent it from growing too large
         return input_widget
 
     def _on_user_message_sent(self, text: str, image_bytes: Optional[bytes], image_media_type: Optional[str]):
