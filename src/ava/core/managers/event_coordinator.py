@@ -129,4 +129,31 @@ class EventCoordinator:
             self.event_bus.subscribe("plugin_error",
                                      lambda name, err: self.event_bus.emit("log_message_received", "Plugin", "error",
                                                                            f"Error in {name}: {err}"))
+            # --- THIS IS THE FIX ---
+            # Subscribe to state changes to keep the sidebar UI in sync.
+            self.event_bus.subscribe("plugin_state_changed", self._on_plugin_state_changed_for_sidebar)
+            # --- END OF FIX ---
+
         print("[EventCoordinator] ✓ Plugin events wired")
+
+    def _on_plugin_state_changed_for_sidebar(self, plugin_name, old_state, new_state):
+        """When a plugin's state changes, trigger a sidebar UI update."""
+        self._update_sidebar_plugin_status()
+
+    def _update_sidebar_plugin_status(self):
+        """Helper method to calculate plugin counts and update the sidebar."""
+        if not self.service_manager or not self.window_manager:
+            return
+
+        plugin_manager = self.service_manager.get_plugin_manager()
+        if not plugin_manager:
+            return
+
+        all_plugins = plugin_manager.get_all_plugins_info()
+        total_count = len(all_plugins)
+        active_count = sum(1 for p in all_plugins if p.get('state') == 'started')
+
+        main_window = self.window_manager.get_main_window()
+        if main_window and hasattr(main_window, 'sidebar'):
+            main_window.sidebar.update_plugin_status(active_count, total_count)
+            print(f"[EventCoordinator] Sidebar plugin status updated: {active_count}/{total_count}")

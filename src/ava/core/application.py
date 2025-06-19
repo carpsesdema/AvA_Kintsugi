@@ -86,6 +86,11 @@ class Application:
             # Initialize plugins using the single manager
             await self.service_manager.initialize_plugins()
 
+            # --- THIS IS THE FIX ---
+            # After plugins are loaded, update the sidebar UI to reflect the status
+            self.update_sidebar_plugin_status()
+            # --- END OF FIX ---
+
             # Initialize services
             self.service_manager.initialize_services()
 
@@ -136,6 +141,29 @@ class Application:
             custom_plugins = self.project_root / "plugins"
             if custom_plugins.exists():
                 self.plugin_manager.add_discovery_path(custom_plugins)
+
+    def update_sidebar_plugin_status(self):
+        """Gets plugin status from the manager and tells the sidebar to update."""
+        if not self.plugin_manager or not self.window_manager:
+            print("[Application] Cannot update plugin status: managers not ready.")
+            return
+
+        try:
+            all_plugins = self.plugin_manager.get_all_plugins_info()
+            total_count = len(all_plugins)
+
+            # A plugin is "active" if its state is 'started'.
+            active_count = sum(1 for p in all_plugins if p.get('state') == 'started')
+
+            # Get the sidebar from the window manager and call its update method
+            main_window = self.window_manager.get_main_window()
+            if main_window and hasattr(main_window, 'sidebar'):
+                main_window.sidebar.update_plugin_status(active_count, total_count)
+                print(f"[Application] Updated sidebar plugin status: {active_count}/{total_count} active.")
+            else:
+                print("[Application] Could not find sidebar to update.")
+        except Exception as e:
+            print(f"[Application] Error updating sidebar plugin status: {e}")
 
     def show(self):
         """Show the main application window."""
