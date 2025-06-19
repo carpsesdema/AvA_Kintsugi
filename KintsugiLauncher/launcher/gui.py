@@ -98,16 +98,17 @@ class LauncherWindow(QMainWindow):
 
     def setup_window_style(self):
         """Set up the window's appearance."""
-        # --- FIX: We will need an icon for the launcher too ---
         try:
             if getattr(sys, 'frozen', False):
                 # In a PyInstaller bundle, the path is relative to the _MEIPASS dir
+                # This part is correct and expects the 'assets' folder at the top level.
                 icon_path = Path(sys._MEIPASS) / "assets" / "Launcher_Icon.ico"
             else:
-                # In source mode, it's relative to the project root
-                # This script is in KintsugiLauncher/launcher/gui.py
-                # The icon is in KintsugiLauncher/assets/Launcher_Icon.ico
-                icon_path = Path(__file__).resolve().parent.parent / "assets" / "Launcher_Icon.ico"
+                # --- CORRECTED PATH ---
+                # This script is in KintsugiLauncher/launcher/
+                # The assets are now in KintsugiLauncher/launcher/assets/
+                # This path correctly points to the assets directory next to this file.
+                icon_path = Path(__file__).resolve().parent / "assets" / "Launcher_Icon.ico"
 
             if icon_path.exists():
                 self.setWindowIcon(QIcon(str(icon_path)))

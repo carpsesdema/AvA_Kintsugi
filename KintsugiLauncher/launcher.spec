@@ -1,33 +1,33 @@
 # KintsugiLauncher/launcher.spec
 # -*- mode: python ; coding: utf-8 -*-
 
-# This spec file is optimized for the release of the Avakin Launcher.
-# It ensures all assets are bundled and the final executable is a clean, GUI-only application.
+# This spec file is built to match the project structure where the 'assets'
+# folder is located inside the 'launcher' sub-directory.
 
 from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
 a = Analysis(
-    ['main.py'],  # The launcher's main entry point
-    pathex=['.'], # The root is the KintsugiLauncher directory where this spec resides
+    ['main.py'],  # Entry point is main.py in the root. Correct.
+    pathex=['.'], # Search path is the root directory. Correct.
     binaries=[],
     datas=[
-        # This line ensures your launcher's icon is included in the build.
+        # Source: 'launcher/assets' (relative to this spec file).
+        # Destination: 'assets' (the top-level folder inside the build).
+        # This is what your gui.py code expects. This is correct.
         ('launcher/assets', 'assets'),
-        # This explicitly collects the qtawesome font files, guaranteeing icons will work.
+
+        # This ensures qtawesome icons are always included. Correct.
         *collect_data_files('qtawesome'),
     ],
     hiddenimports=[
-        # GUI libraries
         'PySide6.QtSvg',
         'PySide6.QtGui',
         'PySide6.QtCore',
         'PySide6.QtWidgets',
         'qasync',
         'qtawesome',
-
-        # Networking and utilities
         'requests',
         'packaging',
         'packaging.version'
@@ -48,25 +48,22 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Avakin Launcher',  # The name of the final .exe file
+    name='Avakin Launcher',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    # --- CRITICAL FIX for RELEASE ---
-    # This ensures no console window appears behind your GUI.
+    # This creates a windowed app with no console. Correct.
     console=False,
-    # --------------------------------
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # The icon for the executable itself.
+    # The path to the icon, relative to this spec file. Correct.
     icon='launcher/assets/Launcher_Icon.ico'
 )
 
-# This creates the final output folder in 'dist/'
 coll = COLLECT(
     exe,
     a.binaries,
@@ -75,6 +72,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    # The output folder name must match what build_launcher.py expects.
     name='AvakinLauncher'
 )
