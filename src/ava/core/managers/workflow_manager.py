@@ -259,11 +259,29 @@ class WorkflowManager:
             self.log("warning", "Received an empty error report to fix.")
 
     def handle_highlighted_error_fix_request(self, highlighted_text: str):
+        """
+        Handles a fix request originating from user-highlighted text in the terminal.
+        This is more robust, using the highlighted text as the primary error source.
+        """
+        if not highlighted_text.strip():
+            self.log("warning", "An empty string was provided for a fix request.")
+            return
+
+        # The highlighted text IS the error report. If a previous error report exists,
+        # we can provide it as additional context, but the highlighted text is primary.
         if self._last_error_report:
-            self._initiate_fix_workflow(
-                f"User highlighted: {highlighted_text}\n\nFull error:\n{self._last_error_report}")
+            # Combine them, making it clear which part the user focused on.
+            full_error_context = (
+                f"The user specifically highlighted this part of the error:\n"
+                f"--- HIGHLIGHT ---\n{highlighted_text}\n--- END HIGHLIGHT ---\n\n"
+                f"Here is the full traceback that was previously stored:\n{self._last_error_report}"
+            )
+            self._initiate_fix_workflow(full_error_context)
         else:
-            self.log("warning", "A fix was requested for highlighted text, but no previous error is stored.")
+            # If there's no previous error, the highlighted text is all we have.
+            # This is the key fix: we proceed with what the user gave us.
+            self.log("info", "No previous error stored. Using highlighted text as the full error report.")
+            self._initiate_fix_workflow(highlighted_text)
 
     def _initiate_fix_workflow(self, error_report: str):
         if not (self.service_manager and self.task_manager): return
