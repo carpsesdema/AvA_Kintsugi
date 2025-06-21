@@ -2,7 +2,7 @@
 # V2: All QMessageBox popups have been removed.
 
 from pathlib import Path
-from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter)
+from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter, QInputDialog)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent
 import qasync
@@ -76,6 +76,7 @@ class CodeViewerWindow(QMainWindow):
         tree_widget = QTreeWidget()
         self.file_tree_manager = FileTreeManager(tree_widget)
         self.file_tree_manager.set_file_selection_callback(self._on_file_selected)
+        self.file_tree_manager.file_rename_requested.connect(self._on_file_rename_requested)
         layout.addWidget(tree_widget)
         return panel
 
@@ -160,6 +161,48 @@ class CodeViewerWindow(QMainWindow):
         )
 
     # === File Operations ===
+
+    def _on_file_rename_requested(self, path_to_rename: Path):
+        if not self.project_context.is_valid or not self.project_manager.active_project_path:
+            self.status_bar.showMessage("Cannot rename: No active project.", 3000)
+            return
+
+        is_dir = path_to_rename.is_dir()
+        item_type = "directory" if is_dir else "file"
+        old_name = path_to_rename.name
+
+        new_name, ok = QInputDialog.getText(self, f"Rename {item_type}", f"Enter new name for {old_name}:",
+                                            text=old_name)
+
+        if not (ok and new_name and new_name != old_name):
+            return
+
+        if '/' in new_name or '\\' in new_name:
+            self.status_bar.showMessage("Error: New name cannot contain path separators.", 3000)
+            return
+
+        old_relative_path = path_to_rename.relative_to(self.project_manager.active_project_path)
+        new_relative_path = old_relative_path.parent / new_name
+
+        success = self.project_manager.rename_file(str(old_relative_path), str(new_relative_path))
+
+        if success:
+            new_absolute_path = self.project_manager.active_project_path / new_relative_path
+            old_absolute_path_str = str(path_to_rename.resolve())
+
+            if is_dir:
+                new_absolute_path_str = str(new_absolute_path.resolve())
+                for open_file_path_str in list(self.editor_manager.editors.keys()):
+                    if open_file_path_str.startswith(old_absolute_path_str):
+                        new_child_path_str = open_file_path_str.replace(old_absolute_path_str, new_absolute_path_str, 1)
+                        self.editor_manager.handle_file_rename(open_file_path_str, new_child_path_str)
+            else:
+                self.editor_manager.handle_file_rename(old_absolute_path_str, str(new_absolute_path.resolve()))
+
+            self.file_tree_manager.load_existing_project_tree(self.project_manager.active_project_path)
+            self.status_bar.showMessage(f"Renamed to {new_name}", 2000)
+        else:
+            self.status_bar.showMessage(f"Failed to rename {old_name}", 3000)
 
     def _save_current_file(self):
         if self.editor_manager:

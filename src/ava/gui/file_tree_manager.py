@@ -3,20 +3,22 @@
 
 from pathlib import Path
 from typing import Optional, Callable, Set
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QMenu
+from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QFont, QAction
 
 from .components import Colors
 
 
-class FileTreeManager:
+class FileTreeManager(QObject):
     """
     Manages the file tree widget and its operations.
     Single responsibility: Handle file tree display, population, and user interactions.
     """
+    file_rename_requested = Signal(Path)
 
     def __init__(self, tree_widget: QTreeWidget):
+        super().__init__()
         self.tree_widget = tree_widget
         self.on_file_selected: Optional[Callable[[Path], None]] = None
         self._ignore_dirs: Set[str] = {
@@ -30,6 +32,7 @@ class FileTreeManager:
 
     def _setup_tree_widget(self):
         self.tree_widget.setHeaderLabel("Project Files")
+        self.tree_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_widget.setStyleSheet(f"""
             QTreeWidget {{ 
                 border: none; 
@@ -50,6 +53,23 @@ class FileTreeManager:
             }}
         """)
         self.tree_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self.tree_widget.customContextMenuRequested.connect(self._show_context_menu)
+
+    def _show_context_menu(self, position):
+        item = self.tree_widget.itemAt(position)
+        if not item:
+            return
+
+        path_str = item.data(0, Qt.ItemDataRole.UserRole)
+        if not path_str:
+            return
+
+        path = Path(path_str)
+        menu = QMenu()
+        rename_action = QAction("Rename...", self.tree_widget)
+        rename_action.triggered.connect(lambda: self.file_rename_requested.emit(path))
+        menu.addAction(rename_action)
+        menu.exec(self.tree_widget.viewport().mapToGlobal(position))
 
     def set_file_selection_callback(self, callback: Callable[[Path], None]):
         self.on_file_selected = callback

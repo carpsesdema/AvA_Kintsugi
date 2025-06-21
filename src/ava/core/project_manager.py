@@ -209,6 +209,38 @@ class ProjectManager:
         self.write_and_stage_files(files)
         self.commit_staged_files(commit_message)
 
+    def rename_file(self, old_relative_path: str, new_relative_path: str) -> bool:
+        """Renames a file or directory both on the filesystem and in the Git index."""
+        if not self.repo or not self.active_project_path:
+            print("[ProjectManager] Error: No active project or repository.")
+            return False
+
+        old_abs_path = self.active_project_path / old_relative_path
+        new_abs_path = self.active_project_path / new_relative_path
+
+        if not old_abs_path.exists():
+            print(f"[ProjectManager] Error: Source path to rename does not exist: {old_abs_path}")
+            return False
+
+        if new_abs_path.exists():
+            print(f"[ProjectManager] Error: Destination path already exists: {new_abs_path}")
+            return False
+
+        new_abs_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self.repo.git.mv(str(old_abs_path), str(new_abs_path))
+            commit_message = f"refactor: rename {old_relative_path} to {new_relative_path}"
+            self.repo.index.commit(commit_message)
+            print(f"[ProjectManager] Renamed and committed: '{old_relative_path}' -> '{new_relative_path}'")
+            return True
+        except GitCommandError as e:
+            print(f"[ProjectManager] Git error during rename: {e}")
+            return False
+        except Exception as e:
+            print(f"[ProjectManager] Unexpected error during rename: {e}")
+            return False
+
     def read_file(self, relative_path: str) -> str | None:
         if not self.active_project_path:
             return None

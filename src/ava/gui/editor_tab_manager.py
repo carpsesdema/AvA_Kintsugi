@@ -449,6 +449,24 @@ class EditorTabManager:
         """Get list of files with unsaved changes."""
         return [path_key for path_key, editor in self.editors.items() if editor.is_dirty()]
 
+    def handle_file_rename(self, old_path_key: str, new_path_key: str):
+        """Updates the editor tabs when a file is renamed."""
+        if old_path_key not in self.editors:
+            return
+
+        print(f"[EditorTabManager] Handling rename from {old_path_key} to {new_path_key}")
+        editor = self.editors.pop(old_path_key)
+        self.editors[new_path_key] = editor
+
+        for i in range(self.tab_widget.count()):
+            if self.tab_widget.tabToolTip(i) == old_path_key:
+                self.tab_widget.setTabToolTip(i, new_path_key)
+                base_name = Path(new_path_key).name
+                title = f"{'*' if editor.is_dirty() else ''}{base_name}"
+                self.tab_widget.setTabText(i, title)
+                print(f"[EditorTabManager] Updated tab at index {i} for rename.")
+                break
+
     def _update_tab_title(self, path_key: str):
         """Update tab title to show dirty state."""
         if path_key not in self.editors:
