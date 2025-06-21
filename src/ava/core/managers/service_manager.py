@@ -1,6 +1,6 @@
-# src/ava/core/managers/service_manager.py
+# src/ava/services/service_manager.py
 # FINAL: Standardized all imports to be relative to fix circular dependencies.
-
+import asyncio
 from pathlib import Path
 
 from ..event_bus import EventBus
@@ -117,12 +117,15 @@ class ServiceManager:
             self.llm_client
         )
 
-        # Validation Service - now simplified
+        # --- THIS IS THE FIX ---
+        # Validation Service now gets the project_indexer passed in correctly.
         self.validation_service = ValidationService(
             self.event_bus,
             self.project_manager,
-            self.reviewer_service
+            self.reviewer_service,
+            self.project_indexer_service
         )
+        # --- END OF FIX ---
 
         # Terminal Service (now using the correct TerminalService)
         self.terminal_service = TerminalService(
@@ -256,7 +259,7 @@ class ServiceManager:
             self.reviewer_service,
             self.architect_service,
             self.generation_coordinator,
-            self.rag_manager,
+            self.rag_manager, # <-- ADDED RAG MANAGER TO SHUTDOWN
             self.integration_validator,
             self.dependency_planner,
             self.context_manager,
@@ -267,9 +270,13 @@ class ServiceManager:
         for service in services_to_shutdown:
             if service and hasattr(service, 'shutdown'):
                 try:
-                    service.shutdown()
+                    # RAG manager has an async shutdown, others are sync
+                    if asyncio.iscoroutinefunction(service.shutdown):
+                        await service.shutdown()
+                    else:
+                        service.shutdown()
                 except Exception as e:
-                    print(f"[ServiceManager] Error shutting down service: {e}")
+                    print(f"[ServiceManager] Error shutting down service {type(service).__name__}: {e}")
 
         print("[ServiceManager] Services shutdown complete")
 

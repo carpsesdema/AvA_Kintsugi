@@ -1,5 +1,5 @@
 # src/ava/services/validation_service.py
-# V18: Implemented a smarter, more focused context gathering for fixes.
+# V19: Correctly accepts ProjectIndexerService for robust context gathering.
 
 import re
 import json
@@ -7,17 +7,19 @@ from pathlib import Path
 from ava.core.event_bus import EventBus
 from ava.core.project_manager import ProjectManager
 from ava.services.reviewer_service import ReviewerService
-from ava.prompts.prompts import FOCUSED_FIXER_PROMPT # <-- Using our new, smarter prompt!
+from ava.services.project_indexer_service import ProjectIndexerService
+from ava.prompts.prompts import FOCUSED_FIXER_PROMPT
 
 
 class ValidationService:
     def __init__(self, event_bus: EventBus,
-                 project_manager: ProjectManager, reviewer_service: ReviewerService):
+                 project_manager: ProjectManager,
+                 reviewer_service: ReviewerService,
+                 project_indexer: ProjectIndexerService): # <-- Correctly accepts the indexer
         self.event_bus = event_bus
         self.project_manager = project_manager
         self.reviewer_service = reviewer_service
-        # --- NEW: Get the indexer service for context ---
-        self.project_indexer = self.project_manager.project_indexer_service if hasattr(self.project_manager, 'project_indexer_service') else None
+        self.project_indexer = project_indexer # <-- Stores the indexer
 
 
     async def review_and_fix_file(self, error_report: str) -> bool:
@@ -40,7 +42,7 @@ class ValidationService:
 
         # Get project index if the service is available
         project_index = {}
-        if self.project_indexer:
+        if self.project_indexer and self.project_manager.active_project_path:
              project_index = self.project_indexer.build_index(self.project_manager.active_project_path)
 
 
@@ -52,7 +54,7 @@ class ValidationService:
 
         self.update_status("reviewer", "working", f"Analyzing error in {crashing_file_path}...")
 
-        # 3. Use the new FOCUSED_FIXER_PROMPT
+        # 3. Use the FOCUSED_FIXER_PROMPT
         prompt = FOCUSED_FIXER_PROMPT.format(
             error_report=error_report,
             crashing_filename=crashing_file_path,

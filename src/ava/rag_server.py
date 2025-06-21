@@ -51,7 +51,7 @@ app_state = {}
 async def lifespan(app: FastAPI):
     """
     Handles application startup and shutdown events using the modern
-    FastAPI lifespan protocol.
+    FastAPI lifespan protocol. This is more robust than the old on_event.
     """
     # --- Startup Logic ---
     print("--- RAG Server Startup (Lifespan) ---")

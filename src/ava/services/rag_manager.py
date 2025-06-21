@@ -1,5 +1,5 @@
 # services/rag_manager.py
-# V10: Robust shutdown and event loop handling.
+# V11: Added a proper shutdown method for graceful termination.
 
 import asyncio
 import subprocess
@@ -47,11 +47,14 @@ class RAGManager(QObject):
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
         )
 
-        # --- THIS IS THE FIX: Connect shutdown signal ---
-        self.event_bus.subscribe("application_shutdown", self.terminate_rag_server)
-        # --- END OF FIX ---
-
         print("[RAGManager] Initialized with enhanced error capture.")
+
+    # --- THIS IS THE FIX ---
+    def shutdown(self):
+        """A clean shutdown method to be called by the ServiceManager."""
+        print("[RAGManager] Shutdown called.")
+        self.terminate_rag_server()
+    # --- END OF FIX ---
 
     def set_project_manager(self, project_manager):
         """Set the project manager reference after it's available."""
@@ -364,21 +367,14 @@ class RAGManager(QObject):
         """
         Check server status asynchronously, now safely.
         """
-        # --- THIS IS THE FIX ---
-        # Before creating a task, check if the event loop is actually running.
-        # This prevents the "no running event loop" error during shutdown.
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
                 asyncio.create_task(self._check_and_log_status())
             else:
-                # Don't log here, as we're likely in the process of shutting down
                 pass
         except RuntimeError:
-            # This happens if get_running_loop() is called when no loop is set.
-            # It's safe to ignore this during shutdown.
             pass
-        # --- END OF FIX ---
 
     async def _check_and_log_status(self):
         """Check and log server status changes."""
@@ -396,7 +392,6 @@ class RAGManager(QObject):
             if not process_is_running and self.rag_server_process:
                 if self._last_process_status is True:
                     self.log_message.emit("RAGManager", "error", "RAG server process has terminated unexpectedly.")
-                    # Try to get any remaining error output
                     self._process_server_output()
                 self.rag_server_process = None
             self._last_process_status = process_is_running
