@@ -28,8 +28,8 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 
 # Now that the path is correct, we can import the application
-from ava.core.application import Application
-from ava.utils.exception_handler import setup_exception_hook
+from src.ava.core.application import Application
+from src.ava.utils.exception_handler import setup_exception_hook
 
 
 async def main_async_logic(app_root_path: Path):
@@ -86,9 +86,17 @@ if __name__ == "__main__":
     app.setApplicationName("Avakin")
     app.setOrganizationName("Avakin")
 
-    # The asset path is now correctly determined based on the root path
-    # Nuitka will place the 'ava' data folder next to the executable.
-    icon_path = project_root / "ava" / "assets" / "Ava_Icon.ico"
+    # --- THIS IS THE FIX ---
+    # The asset path must be determined differently for frozen vs. source mode.
+    if getattr(sys, 'frozen', False):
+        # For a bundled app, the path is relative to the executable (project_root).
+        # Nuitka copies 'src/ava/assets' to 'ava/assets' in the dist folder.
+        icon_path = project_root / "ava" / "assets" / "Ava_Icon.ico"
+    else:
+        # When running from source, the path is relative to the 'src' directory.
+        icon_path = project_root / "src" / "ava" / "assets" / "Ava_Icon.ico"
+    # --- END OF FIX ---
+
 
     if icon_path.exists():
         app_icon = QIcon(str(icon_path))

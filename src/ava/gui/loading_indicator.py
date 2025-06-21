@@ -42,10 +42,14 @@ class LoadingIndicator(QWidget):
     def _load_pixmaps(self):
         """Finds and loads the two gear images into QPixmap objects."""
         try:
+            # --- THIS IS THE FIX ---
             if getattr(sys, 'frozen', False):
-                asset_dir = Path(sys._MEIPASS) / "ava" / "assets"
+                # For bundled apps (Nuitka), assets are relative to the executable
+                asset_dir = Path(sys.executable).parent / "ava" / "assets"
             else:
+                # For running from source
                 asset_dir = Path(__file__).resolve().parent.parent / "assets"
+            # --- END OF FIX ---
 
             base_image_path = asset_dir / self.base_image_name
             glow_image_path = asset_dir / self.glow_image_name

@@ -17,9 +17,9 @@ from .components import Colors, Typography, ModernButton
 from .mode_toggle import ModeToggle
 from .advanced_chat_input import AdvancedChatInput
 from .loading_indicator import LoadingIndicator
-from ava.core.event_bus import EventBus
-from ava.core.app_state import AppState
-from ava.core.interaction_mode import InteractionMode
+from src.ava.core.event_bus import EventBus
+from src.ava.core.app_state import AppState
+from src.ava.core.interaction_mode import InteractionMode
 from typing import Optional
 
 
@@ -94,11 +94,13 @@ class ChatMessageWidget(QWidget):
                 # For normal state, use the gear base image
                 self.avatar_widget = QLabel()
 
-                # Find the gear base image
+                # --- THIS IS THE FIX ---
+                # Find the gear base image using robust pathing
                 if getattr(sys, 'frozen', False):
-                    asset_dir = Path(sys._MEIPASS) / "ava" / "assets"
+                    asset_dir = Path(sys.executable).parent / "ava" / "assets"
                 else:
                     asset_dir = Path(__file__).resolve().parent.parent / "assets"
+                # --- END OF FIX ---
 
                 gear_base_path = asset_dir / "loading_gear_base.png"
                 if gear_base_path.exists():
@@ -131,10 +133,12 @@ class ChatMessageWidget(QWidget):
             # Create normal gear avatar
             self.avatar_widget = QLabel()
 
+            # --- THIS IS THE FIX ---
             if getattr(sys, 'frozen', False):
-                asset_dir = Path(sys._MEIPASS) / "ava" / "assets"
+                asset_dir = Path(sys.executable).parent / "ava" / "assets"
             else:
                 asset_dir = Path(__file__).resolve().parent.parent / "assets"
+            # --- END OF FIX ---
 
             gear_base_path = asset_dir / "loading_gear_base.png"
             if gear_base_path.exists():
