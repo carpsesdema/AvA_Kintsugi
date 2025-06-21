@@ -94,6 +94,9 @@ class ServiceManager:
         if self.project_manager:
             self.rag_manager.set_project_manager(self.project_manager)
 
+        # Auto-launch the RAG service now that it's initialized
+        self.rag_manager.launch_rag_server()
+
         # Generation coordinator (depends on coordination components)
         self.generation_coordinator = GenerationCoordinator(
             self, self.event_bus, self.context_manager,
@@ -259,7 +262,7 @@ class ServiceManager:
             self.reviewer_service,
             self.architect_service,
             self.generation_coordinator,
-            self.rag_manager, # <-- ADDED RAG MANAGER TO SHUTDOWN
+            self.rag_manager,  # <-- ADDED RAG MANAGER TO SHUTDOWN
             self.integration_validator,
             self.dependency_planner,
             self.context_manager,
