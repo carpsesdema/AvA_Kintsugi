@@ -1,5 +1,5 @@
 # kintsugi_ava/core/managers/workflow_manager.py
-# UPDATED: Standardized imports to fix class comparison bug.
+# UPDATED: Emits events to control the global AI status indicator.
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from typing import Optional
@@ -50,20 +50,23 @@ class WorkflowManager:
 
         workflow_coroutine = None
         if self.interaction_mode == InteractionMode.CHAT:
-            print("[WorkflowManager] Mode is CHAT. Starting general chat workflow...")
+            # Chat mode has its own streaming indicator, so we don't use the global one.
             workflow_coroutine = self._run_chat_workflow(prompt, image_bytes, image_media_type)
         elif self.interaction_mode == InteractionMode.BUILD:
             if self.app_state == AppState.BOOTSTRAP:
-                print("[WorkflowManager] Mode is BUILD, State is BOOTSTRAP. Starting new project workflow...")
                 workflow_coroutine = self._run_bootstrap_workflow(prompt, image_bytes)
             elif self.app_state == AppState.MODIFY:
-                print("[WorkflowManager] Mode is BUILD, State is MODIFY. Starting modification workflow...")
                 workflow_coroutine = self._run_modification_workflow(prompt, image_bytes)
         else:
             self.log("error", f"Unknown interaction mode: {self.interaction_mode}")
             return
 
         if workflow_coroutine:
+            # --- THIS IS THE FIX ---
+            # For any non-chat workflow, we trigger the global indicator.
+            if self.interaction_mode != InteractionMode.CHAT:
+                self.event_bus.emit("ai_task_started")
+            # --- END OF FIX ---
             self.task_manager.start_ai_workflow_task(workflow_coroutine)
 
     async def _get_description_from_image(self, image_bytes: bytes, media_type: str = "image/png") -> str:
@@ -267,10 +270,7 @@ class WorkflowManager:
             self.log("warning", "An empty string was provided for a fix request.")
             return
 
-        # The highlighted text IS the error report. If a previous error report exists,
-        # we can provide it as additional context, but the highlighted text is primary.
         if self._last_error_report:
-            # Combine them, making it clear which part the user focused on.
             full_error_context = (
                 f"The user specifically highlighted this part of the error:\n"
                 f"--- HIGHLIGHT ---\n{highlighted_text}\n--- END HIGHLIGHT ---\n\n"
@@ -278,13 +278,16 @@ class WorkflowManager:
             )
             self._initiate_fix_workflow(full_error_context)
         else:
-            # If there's no previous error, the highlighted text is all we have.
-            # This is the key fix: we proceed with what the user gave us.
             self.log("info", "No previous error stored. Using highlighted text as the full error report.")
             self._initiate_fix_workflow(highlighted_text)
 
     def _initiate_fix_workflow(self, error_report: str):
         if not (self.service_manager and self.task_manager): return
+
+        # --- THIS IS THE FIX ---
+        self.event_bus.emit("ai_task_started")
+        # --- END OF FIX ---
+
         if self.window_manager and self.window_manager.get_code_viewer():
             self.window_manager.get_code_viewer().terminal.show_fixing_in_progress()
         validation_service = self.service_manager.get_validation_service()

@@ -1,5 +1,5 @@
 # src/ava/services/generation_coordinator.py
-# FINAL FIX: Implements a "rolling context" to cure the Amnesiac Coordinator bug.
+# UPDATED: Emits status updates for the global indicator.
 
 import json
 import re
@@ -9,7 +9,6 @@ import textwrap
 from ava.core.event_bus import EventBus
 from ava.prompts.prompts import CODER_PROMPT, SURGICAL_MODIFICATION_PROMPT
 
-# FINAL FIX: Update the simple prompt to also accept the existing files context.
 SIMPLE_FILE_PROMPT = textwrap.dedent("""
     You are an expert file generator. Your task is to generate the content for a single file as part of a larger project.
     Your response MUST be ONLY the raw content for the file. Do not add any explanation, commentary, or markdown formatting.
@@ -63,22 +62,17 @@ class GenerationCoordinator:
             total_files = len(generation_order)
 
             for i, filename in enumerate(generation_order):
-                self.log("info", f"Generating file {i + 1}/{total_files}: {filename}")
+                self.event_bus.emit("ai_status_updated", "Coder", f"Writing file {i+1}/{total_files}: {filename}")
                 file_info = next((f for f in plan['files'] if f['filename'] == filename), None)
                 if not file_info:
                     self.log("error", f"Could not find file info for {filename} in plan. Skipping.")
                     continue
 
-                # Generate the file using the CURRENT state of the context
                 generated_content = await self._generate_single_file(file_info, context, generated_files)
 
                 if generated_content is not None:
                     generated_files[filename] = generated_content
-                    # --- THE CRITICAL FIX ---
-                    # Update the context with the file we just created.
-                    # This ensures the NEXT file knows about this one. This creates the "rolling context".
                     context = self.context_manager.update_session_context(context, {filename: generated_content})
-                    # --- END CRITICAL FIX ---
                 else:
                     self.log("error", f"Failed to generate content for {filename}.")
                     generated_files[filename] = f"# ERROR: Failed to generate content for {filename}"
@@ -146,12 +140,10 @@ class GenerationCoordinator:
             filename=file_info["filename"],
             purpose=file_info["purpose"],
             file_plan_json=json.dumps(context.plan, indent=2),
-            existing_files_json=json.dumps(generated_files, indent=2)  # Pass the rolling context
+            existing_files_json=json.dumps(generated_files, indent=2)
         )
 
     def _build_modification_prompt(self, file_info: Dict[str, str], original_code: str, context: Any) -> str:
-        """Builds the prompt for surgical modification."""
-        # Provide a summary of other files for context, not their full content
         other_files_summary = {
             "project_plan": context.plan,
             "symbol_index": context.project_index

@@ -1,5 +1,5 @@
 # src/ava/gui/enhanced_sidebar.py
-# UPDATED: Added Save/Load Chat buttons.
+# UPDATED: Added a global AI status panel.
 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QPushButton
@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 import qtawesome as qta
 
 from .components import Colors, Typography, ModernButton, StatusIndicatorDot
+from .loading_indicator import LoadingIndicator  # <-- Import the gear
 from ava.core.event_bus import EventBus
 
 
@@ -25,12 +26,24 @@ class EnhancedSidebar(QWidget):
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(12)
 
+        # --- THIS IS THE NEW PANEL ---
+        main_layout.addWidget(self._create_ai_status_panel())
+        # --- END OF NEW PANEL ---
+
         main_layout.addWidget(self._create_project_panel())
         main_layout.addWidget(self._create_model_panel())
         main_layout.addWidget(self._create_knowledge_panel())
         main_layout.addWidget(self._create_plugin_panel())
         main_layout.addWidget(self._create_actions_panel())
         main_layout.addStretch()
+
+        self._connect_events()
+
+    def _connect_events(self):
+        """Connect to events to update the sidebar UI."""
+        self.event_bus.subscribe("ai_task_started", self.on_ai_task_started)
+        self.event_bus.subscribe("ai_task_finished", self.on_ai_task_finished)
+        self.event_bus.subscribe("ai_status_updated", self.on_ai_status_updated)
 
     def _create_styled_panel(self, title: str) -> tuple[QFrame, QVBoxLayout]:
         panel = QFrame()
@@ -43,6 +56,30 @@ class EnhancedSidebar(QWidget):
         header.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()}; padding: 5px 0px;")
         panel_layout.addWidget(header)
         return panel, panel_layout
+
+    # --- THIS IS THE NEW METHOD FOR THE AI STATUS PANEL ---
+    def _create_ai_status_panel(self) -> QFrame:
+        panel, layout = self._create_styled_panel("AI Status")
+
+        status_layout = QHBoxLayout()
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(10)
+
+        self.ai_status_indicator = LoadingIndicator()
+        self.ai_status_indicator.setFixedSize(32, 32)
+        self.ai_status_indicator.hide()  # Hidden by default
+
+        self.ai_status_label = QLabel("Idle")
+        self.ai_status_label.setFont(Typography.body())
+        self.ai_status_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
+
+        status_layout.addWidget(self.ai_status_indicator)
+        status_layout.addWidget(self.ai_status_label, 1)  # Give label stretch
+
+        layout.addLayout(status_layout)
+        return panel
+
+    # --- END OF NEW METHOD ---
 
     def _create_project_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Project Management")
@@ -70,7 +107,7 @@ class EnhancedSidebar(QWidget):
 
     def _create_knowledge_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Knowledge Base (RAG)")
-        launch_rag_btn = ModernButton("Launch RAG Server", "primary")
+        launch_rag_btn = ModernButton("Launch RAG Service", "primary")  # Renamed for clarity
         launch_rag_btn.setIcon(qta.icon("fa5s.rocket", color=Colors.TEXT_PRIMARY.name()))
         launch_rag_btn.clicked.connect(lambda: self.event_bus.emit("launch_rag_server_requested"))
         scan_btn = ModernButton("Scan Directory", "secondary")
@@ -127,7 +164,6 @@ class EnhancedSidebar(QWidget):
         new_session_btn.clicked.connect(lambda: self.event_bus.emit("new_session_requested"))
         layout.addWidget(new_session_btn)
 
-        # --- THIS IS THE FIX ---
         save_chat_btn = ModernButton("Save Chat", "secondary")
         save_chat_btn.setIcon(qta.icon("fa5s.save", color=Colors.TEXT_PRIMARY.name()))
         save_chat_btn.clicked.connect(lambda: self.event_bus.emit("save_chat_requested"))
@@ -137,7 +173,6 @@ class EnhancedSidebar(QWidget):
         load_chat_btn.setIcon(qta.icon("fa5s.folder-open", color=Colors.TEXT_PRIMARY.name()))
         load_chat_btn.clicked.connect(lambda: self.event_bus.emit("load_chat_requested"))
         layout.addWidget(load_chat_btn)
-        # --- END OF FIX ---
 
         layout.addWidget(self._create_action_header("TOOLS"))
 
@@ -165,3 +200,15 @@ class EnhancedSidebar(QWidget):
 
     def update_plugin_status(self, status: str):
         self.plugin_status_dot.setStatus(status)
+
+    # --- SLOTS TO HANDLE THE NEW EVENTS ---
+    def on_ai_task_started(self):
+        self.ai_status_label.setText("Initializing...")
+        self.ai_status_indicator.show()
+
+    def on_ai_task_finished(self):
+        self.ai_status_label.setText("Idle")
+        self.ai_status_indicator.hide()
+
+    def on_ai_status_updated(self, agent: str, message: str):
+        self.ai_status_label.setText(f"{agent}: {message}")

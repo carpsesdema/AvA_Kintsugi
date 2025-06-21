@@ -34,17 +34,23 @@ MAIN_APP_BUILD_CONFIG = {
     "output_dir_name": "Avakin",
     "icon_path": SRC_DIR / "ava" / "assets" / "Ava_Icon.ico",
     "plugins": ["pyside6"],
+    # --- THIS IS THE FIX ---
+    # We are explicitly telling Nuitka which plugins to DISABLE.
+    # The 'transformers' plugin is bugged, so we're turning it off.
+    "disable_plugins": ["transformers"],
+    # --- END OF FIX ---
     "data_dirs": {
         SRC_DIR / "ava" / "assets": "ava/assets",
         SRC_DIR / "ava" / "config": "ava/config",
-        # --- THIS IS THE FIX ---
-        # The line that included the .../plugins/examples directory has been removed.
-        # --- END OF FIX ---
     },
     "packages": [
         "ava",
         "qtawesome",
         "pygments.styles",
+        # Because we disabled the smart plugin, we now have to explicitly
+        # tell Nuitka to include these packages. This is more reliable.
+        "transformers",
+        "sentence_transformers",
     ],
     "add_to_pythonpath": [
         SRC_DIR
@@ -65,7 +71,7 @@ def run_command(command, cwd, env=None):
             text=True,
             encoding='utf-8',
             errors='replace',
-            env=env  # Pass the custom environment here
+            env=env
         )
         while True:
             output = process.stdout.readline()
@@ -97,28 +103,30 @@ def build_with_nuitka(config: dict):
         str(config["script_path"]),
     ]
 
-    # --- THIS IS THE NEW LOGIC ---
-    # Prepare a custom environment if we need to modify the PYTHONPATH
     env = None
     if config.get("add_to_pythonpath"):
         env = os.environ.copy()
         paths_to_add = [str(p.resolve()) for p in config["add_to_pythonpath"]]
         current_pythonpath = env.get("PYTHONPATH", "")
 
-        # Prepend our new paths to the existing PYTHONPATH
         new_pythonpath_parts = paths_to_add
         if current_pythonpath:
             new_pythonpath_parts.append(current_pythonpath)
 
         env["PYTHONPATH"] = os.pathsep.join(new_pythonpath_parts)
         print(f"   Modified PYTHONPATH for build: {env['PYTHONPATH']}")
-    # --- END OF NEW LOGIC ---
 
     # Add plugins
     for plugin in config["plugins"]:
         command.append(f"--enable-plugin={plugin}")
 
-    # Add data directories (assets, configs, etc.)
+    # --- THIS IS THE FIX ---
+    # Add the command to disable the broken plugin.
+    for plugin in config.get("disable_plugins", []):
+        command.append(f"--disable-plugin={plugin}")
+    # --- END OF FIX ---
+
+    # Add data directories
     for src, dest in config["data_dirs"].items():
         if src.exists():
             command.append(f"--include-data-dir={src}={dest}")

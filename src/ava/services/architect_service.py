@@ -1,5 +1,5 @@
 # src/ava/services/architect_service.py
-# UPDATED: Implemented a brute-force sanitizer to programmatically fix duplicated paths from the AI plan.
+# UPDATED: Emits status updates for the global indicator.
 
 from __future__ import annotations
 import asyncio
@@ -54,10 +54,10 @@ class ArchitectService:
         rag_context = await self.rag_service.query(prompt)
 
         if not existing_files:
-            self.log("info", "No existing project detected. Generating new project plan...")
+            self.event_bus.emit("ai_status_updated", "Architect", "Planning new project...")
             plan = await self._generate_hierarchical_plan(prompt, rag_context)
         else:
-            self.log("info", "Existing project detected. Generating modification plan...")
+            self.event_bus.emit("ai_status_updated", "Architect", "Planning modifications...")
             plan = await self._generate_modification_plan(prompt, existing_files)
 
         if plan:
@@ -75,13 +75,10 @@ class ArchitectService:
     def _determine_source_root(self, file_paths: List[str]) -> Optional[str]:
         if not file_paths:
             return None
-        # Exclude common top-level files from the calculation
         top_level_files = {'main.py', 'config.py', 'setup.py', 'requirements.txt', '.gitignore', 'README.md', 'pyproject.toml'}
-        # Consider paths that are likely part of a source directory
         potential_src_paths = [p for p in file_paths if p not in top_level_files and ('/' in p or '\\' in p)]
         if not potential_src_paths:
-            return None # No nested files found, so no distinct source root
-        # Now find the common path among these nested files
+            return None
         common_path_str = os.path.commonpath(potential_src_paths)
         if not common_path_str or common_path_str == '.':
             return None
@@ -105,36 +102,23 @@ class ArchitectService:
         return "\n\n".join(output), source_root
 
     def _sanitize_plan_paths(self, plan: dict) -> dict:
-        """
-        Programmatically and directly sanitizes file paths in an AI-generated
-        plan to fix the directory duplication bug. This is a brute-force
-        safeguard, not a suggestion to the AI.
-        """
         if not plan or 'files' not in plan:
             return plan
-
         sanitized_files = []
         for file_entry in plan.get('files', []):
             original_filename_str = file_entry.get('filename')
             if not original_filename_str:
                 continue
-
-            p = Path(original_filename_str.replace('\\', '/')) # Normalize to posix style for parsing
+            p = Path(original_filename_str.replace('\\', '/'))
             parts = p.parts
-
-            # THE FIX: Directly check for the duplication pattern (e.g., app/app/... or src/src/...)
             if len(parts) > 1 and parts[0] == parts[1]:
-                # Reconstruct the path from the second element onwards.
                 corrected_path = Path(*parts[1:])
                 corrected_path_str = corrected_path.as_posix()
                 self.log("warning", f"FIXED DUPLICATE PATH: Corrected '{original_filename_str}' to '{corrected_path_str}'")
                 file_entry['filename'] = corrected_path_str
-
             sanitized_files.append(file_entry)
-
         plan['files'] = sanitized_files
         return plan
-
 
     async def _generate_modification_plan(self, prompt: str, existing_files: dict) -> dict | None:
         self.log("info", "Analyzing existing files to create a modification plan...")
@@ -146,21 +130,11 @@ class ArchitectService:
                 source_root_info=f"The primary Python package for this project seems to be in the '{source_root}' directory. All new Python files should respect this structure." if source_root else "This project appears to have its source files in the root directory."
             )
             plan = await self._get_plan_from_llm(plan_prompt)
-
             if plan:
                 plan = self._sanitize_plan_paths(plan)
-
             if not plan or not isinstance(plan.get("files"), list):
                 self.log("error", "The AI's modification plan was invalid or missing the 'files' list.")
                 return None
-
-            # --- THIS IS THE FIX ---
-            # The safety check that prevented the creation of 'main.py' or 'config.py'
-            # has been completely removed. This trusts the prompt instructions given to the
-            # AI and gives you the freedom to perform complex refactors without being
-            # blocked by rigid, hardcoded rules. You are now in full control.
-            # --- END OF FIX ---
-
             return plan
         except Exception as e:
             self.handle_error("architect", f"An unexpected error during modification planning: {e}")
@@ -205,8 +179,7 @@ class ArchitectService:
             self.log("info", "Handing off to unified Generation Coordinator...")
             generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
             if not generated_files or len(generated_files) < len(all_filenames):
-                self.log("error",
-                         f"Generation failed. Expected {len(all_filenames)} files, but got {len(generated_files)}.")
+                self.log("error", f"Generation failed. Expected {len(all_filenames)} files, but got {len(generated_files)}.")
                 return False
             commit_message = f"feat: AI-driven changes for '{plan['files'][0]['purpose'][:50]}...'"
             self.project_manager.save_and_commit_files(generated_files, commit_message)

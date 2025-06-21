@@ -1,5 +1,5 @@
 # kintsugi_ava/core/managers/task_manager.py
-# UPDATED: Standardized imports to fix class comparison bug.
+# UPDATED: Emits an event when the AI task is fully complete.
 
 import asyncio
 from typing import Optional, Dict
@@ -118,6 +118,10 @@ class TaskManager:
             QMessageBox.critical(main_window, "Workflow Error",
                                  f"The AI workflow failed unexpectedly.\n\nError: {e}")
         finally:
+            # --- THIS IS THE FIX ---
+            # This runs whether the task succeeded, failed, or was cancelled.
+            self.event_bus.emit("ai_task_finished")
+            # --- END OF FIX ---
             self.event_bus.emit("ai_fix_workflow_complete")
 
     def _on_terminal_task_done(self, task: asyncio.Task, session_id: int):
