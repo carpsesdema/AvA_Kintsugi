@@ -19,10 +19,11 @@ if getattr(sys, 'frozen', False):
 else:
     # We are running from source.
     # The project root is two levels up from this file (src/ava/main.py -> src -> project_root)
-    project_root = Path(__file__).resolve().parent.parent
+    project_root = Path(__file__).resolve().parent.parent.parent
     # We add the 'src' directory to the path so we can do `from ava...` imports
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QTimer
@@ -80,6 +81,17 @@ async def main_async_logic(root_path: Path):
 
 
 if __name__ == "__main__":
+    # The new root is the AvA_Kintsugi directory
+    # For source runs, we assume this script is at AvA_Kintsugi/src/ava/main.py
+    # So the root is 3 levels up.
+    if getattr(sys, 'frozen', False):
+         # If bundled, the executable is the root
+        app_root_dir = Path(sys.executable).parent
+    else:
+        # If running from source, it's 3 levels up from this file's location
+        app_root_dir = Path(__file__).resolve().parent.parent.parent
+
+
     setup_exception_hook()
     app = QApplication(sys.argv)
 
@@ -88,9 +100,11 @@ if __name__ == "__main__":
 
     # The asset path is now correctly determined based on run mode
     if getattr(sys, 'frozen', False):
+        # In a bundle, assets are relative to the temp _MEIPASS dir
         icon_path = Path(sys._MEIPASS) / "ava" / "assets" / "Ava_Icon.ico"
     else:
-        icon_path = project_root / "src" / "ava" / "assets" / "Ava_Icon.ico"
+        # From source, relative to the project root
+        icon_path = app_root_dir / "src" / "ava" / "assets" / "Ava_Icon.ico"
 
     if icon_path.exists():
         app_icon = QIcon(str(icon_path))
@@ -99,5 +113,5 @@ if __name__ == "__main__":
     else:
         print(f"[main] WARNING: Application icon not found at {icon_path}")
 
-    qasync.run(main_async_logic(project_root))
+    qasync.run(main_async_logic(app_root_dir))
     print("[main] Application has exited cleanly.")

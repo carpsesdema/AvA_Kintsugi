@@ -1,5 +1,5 @@
 # prompts/prompts.py
-# UPDATED: Infused with "Observability-First" logging requirements.
+# UPDATED: Added a new, more efficient prompt for focused fixes.
 
 import textwrap
 
@@ -104,7 +104,6 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     **Generate the JSON modification plan now. Ensure your output matches the example format exactly.**
     """)
 
-
 CODER_PROMPT = textwrap.dedent("""
     You are an expert Python developer tasked with writing a single, complete file for a larger application. Your code must be robust, correct, and integrate perfectly with the rest of the project.
 
@@ -142,15 +141,8 @@ CODER_PROMPT = textwrap.dedent("""
        - Your code must work seamlessly with all existing files in the project.
        - Use exact class names and method signatures from the context.
 
-    ---
-    **📋 IMPLEMENTATION CHECKLIST:**
-
-    ✅ **Professional Logging**: Followed all logging requirements.
-    ✅ **Import Statements**: Used EXACT paths from symbol index.
-    ✅ **Class Names**: Matched EXACT names from existing files.
-    ✅ **Method Signatures**: Followed patterns in existing code.
-    ✅ **Error Handling**: Included proper exception handling (`try...except`).
-    ✅ **Documentation**: Added docstrings for all classes and complex methods.
+    **3. Error Handling**: Included proper exception handling (`try...except`).
+    **4. Documentation**: Added docstrings for all classes and complex methods.
 
     ---
     **🎯 OUTPUT REQUIREMENTS:**
@@ -163,40 +155,46 @@ CODER_PROMPT = textwrap.dedent("""
     Write the complete, integration-ready code for `{filename}` now:
     """)
 
-# This is the new "One-Shot Surgical Fix" prompt. It replaces the old refinement prompt.
-INTELLIGENT_FIXER_PROMPT = textwrap.dedent("""
-    You are an expert debugging system. Your task is to analyze the provided diagnostic bundle and return a JSON object containing the full, corrected code for only the file(s) that need to be fixed.
+# --- NEW PROMPT ---
+FOCUSED_FIXER_PROMPT = textwrap.dedent("""
+    You are an expert debugging system. Your task is to analyze the provided diagnostic bundle for a single crashing file and return a JSON object containing the full, corrected code for ONLY that file.
 
     --- DIAGNOSTIC BUNDLE ---
 
-    1. GIT DIFF (Recent changes that likely caused the error):
-    ```diff
-    {git_diff}
-    ```
-
-    2. FULL PROJECT SOURCE:
-    ```json
-    {project_source_json}
-    ```
-
-    3. ERROR REPORT:
+    1. ERROR REPORT:
     ```
     {error_report}
     ```
 
+    2. GIT DIFF (Recent changes that likely caused the error):
+    ```diff
+    {git_diff}
+    ```
+
+    3. CRASHING FILE (`{crashing_filename}`):
+    ```python
+    {crashing_file_content}
+    ```
+
+    4. PROJECT SYMBOL INDEX (For fixing imports):
+    ```json
+    {project_index_json}
+    ```
+
     --- YOUR TASK ---
-    1.  **Analyze:** Internally, determine the root cause by examining the git diff and the error report. This is your most important step.
-    2.  **Identify:** Pinpoint the specific file(s) that need to be changed to fix the bug.
-    3.  **Correct:** Generate the complete, corrected source code for those files.
+    1.  **Analyze:** Determine the root cause by examining the error, the recent changes (diff), and the crashing file's code.
+    2.  **Correct:** Rewrite the complete, corrected source code for `{crashing_filename}`.
+    3.  **Validate Imports:** Use the project symbol index to ensure all imports are correct.
 
     --- OUTPUT REQUIREMENTS ---
     - Your response MUST be ONLY a valid JSON object.
-    - The keys must be the file paths, and the values must be the complete corrected source code.
+    - The key must be the file path (`{crashing_filename}`), and the value must be the complete corrected source code.
     - Do NOT add any explanations, apologies, or conversational text.
-    - Do NOT output your internal analysis. Just the final JSON.
 
     Begin.
     """)
+# --- END NEW PROMPT ---
+
 
 # This is the prompt for the recursive loop, to be used when the first fix fails.
 RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
@@ -237,10 +235,8 @@ RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
     Begin analysis.
     """)
 
-
-# REFINEMENT_PROMPT is now an alias for the new intelligent fixer for backward compatibility
-REFINEMENT_PROMPT = INTELLIGENT_FIXER_PROMPT
-
+# The old prompt is now an alias for the new one for any code that might still call it.
+REFINEMENT_PROMPT = FOCUSED_FIXER_PROMPT
 
 SURGICAL_MODIFICATION_PROMPT = textwrap.dedent("""
     You are an expert developer specializing in precise, surgical code modifications. You are given the original source code for a file and a clear instruction on what to change.
@@ -276,14 +272,13 @@ SURGICAL_MODIFICATION_PROMPT = textwrap.dedent("""
     **BEGIN MODIFICATION:**
     """)
 
-
 __all__ = [
     'PLANNER_PROMPT',
     'HIERARCHICAL_PLANNER_PROMPT',
     'MODIFICATION_PLANNER_PROMPT',
     'CODER_PROMPT',
     'REFINEMENT_PROMPT',
-    'INTELLIGENT_FIXER_PROMPT',
+    'FOCUSED_FIXER_PROMPT',
     'RECURSIVE_FIXER_PROMPT',
     'SURGICAL_MODIFICATION_PROMPT'
 ]

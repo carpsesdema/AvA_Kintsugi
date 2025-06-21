@@ -18,14 +18,13 @@ class PluginConfig:
 
     def __init__(self, project_root: Path):
         # --- THIS IS THE FIX ---
-        # When running as a bundled executable, the config file is in a different
-        # location relative to the project root compared to running from source.
-        # This logic correctly handles both scenarios.
+        # This logic correctly handles both scenarios for finding the config file.
         if getattr(sys, 'frozen', False):
-            # For bundled executable, config is in `project_root/ava/config`
-            self.config_file = project_root / "ava" / "config" / "plugins.json"
+            # For bundled executable, config is in the temporary _MEIPASS folder
+            base_path = Path(sys._MEIPASS)
+            self.config_file = base_path / "src" / "ava" / "config" / "plugins.json"
         else:
-            # For source, use the original location
+            # For source, use the path relative to the project root
             self.config_file = project_root / "src" / "ava" / "config" / "plugins.json"
         # --- END OF FIX ---
 

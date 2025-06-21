@@ -60,27 +60,6 @@ class IntegrationValidator:
             confidence=max(0.0, confidence)
         )
 
-    async def fix_integration_issues(self, filename: str, code: str,
-                                     validation_result: ValidationResult,
-                                     context: GenerationContext) -> Optional[str]:
-        """Attempt to fix integration issues using LLM."""
-        if validation_result.is_valid:
-            return code
-
-        llm_client = self.service_manager.get_llm_client()
-        provider, model = llm_client.get_model_for_role("coder")
-
-        if not provider or not model:
-            return None
-
-        fix_prompt = self._build_fix_prompt(filename, code, validation_result, context)
-
-        fixed_code = ""
-        async for chunk in llm_client.stream_chat(provider, model, fix_prompt, "coder"):
-            fixed_code += chunk
-
-        return self._clean_code_output(fixed_code)
-
     def _validate_imports(self, code: str, previously_generated: Dict[str, str],
                           context: GenerationContext) -> List[str]:
         """Validate that all imports can be resolved."""
@@ -137,33 +116,6 @@ class IntegrationValidator:
             return True
 
         return False
-
-    def _build_fix_prompt(self, filename: str, code: str,
-                          validation_result: ValidationResult,
-                          context: GenerationContext) -> str:
-        """Build prompt for fixing integration issues."""
-        return textwrap.dedent(f"""\
-            You are fixing integration issues in generated code.
-
-            **FILE:** {filename}
-
-            **CURRENT CODE:**
-            ```python
-            {code}
-            ```
-
-            **INTEGRATION ISSUES FOUND:**
-            {chr(10).join(f"- {issue}" for issue in validation_result.issues)}
-
-            **CONTEXT:**
-            - Project structure: {json.dumps(context.project_index, indent=2)}
-            - Generation session: {json.dumps(context.generation_session, indent=2)}
-
-            **INSTRUCTIONS:**
-            Fix the integration issues in the code. Return ONLY the corrected complete code for the file.
-            Do not include explanations or markdown formatting.
-
-            Fixed code:""")
 
     def _clean_code_output(self, code: str) -> str:
         """Clean code output."""

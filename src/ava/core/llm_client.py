@@ -36,8 +36,9 @@ class LLMClient:
         # source or as a bundled executable.
         if getattr(sys, 'frozen', False):
             # When bundled, assets are in the temporary _MEIPASS folder.
+            # We look for the config in `_MEIPASS/src/ava/config`
             base_path = Path(sys._MEIPASS)
-            self.config_dir = base_path / "ava" / "config"
+            self.config_dir = base_path / "src" / "ava" / "config"
         else:
             # When running from source, the path is relative to the project root.
             self.config_dir = project_root / "src" / "ava" / "config"

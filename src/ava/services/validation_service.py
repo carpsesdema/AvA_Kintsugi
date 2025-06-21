@@ -1,5 +1,5 @@
 # src/ava/services/validation_service.py
-# V17: Final simplification. Removed ExecutionEngine dependency.
+# V18: Implemented a smarter, more focused context gathering for fixes.
 
 import re
 import json
@@ -7,6 +7,7 @@ from pathlib import Path
 from ava.core.event_bus import EventBus
 from ava.core.project_manager import ProjectManager
 from ava.services.reviewer_service import ReviewerService
+from ava.prompts.prompts import FOCUSED_FIXER_PROMPT # <-- Using our new, smarter prompt!
 
 
 class ValidationService:
@@ -15,45 +16,58 @@ class ValidationService:
         self.event_bus = event_bus
         self.project_manager = project_manager
         self.reviewer_service = reviewer_service
+        # --- NEW: Get the indexer service for context ---
+        self.project_indexer = self.project_manager.project_indexer_service if hasattr(self.project_manager, 'project_indexer_service') else None
+
 
     async def review_and_fix_file(self, error_report: str) -> bool:
         """
-        Performs a one-shot intelligent fix without automated re-validation.
-        The user remains in control of the execution loop.
+        Performs a focused, intelligent fix by sending only the necessary context to the LLM.
         """
-        self.log("info", "Starting one-shot surgical fix...")
+        self.log("info", "Starting focused fix workflow...")
 
-        # 1. Get current project state and context
-        all_project_files = self.project_manager.get_project_files()
-        if not all_project_files:
-            self.handle_error("executor", "Cannot initiate fix: No project files found.")
+        # 1. Identify the crashing file from the error report
+        crashing_file_path, line_number = self._parse_error_traceback(error_report)
+        if not crashing_file_path:
+            self.handle_error("executor", "Could not identify the source file of the error from the traceback.")
             return False
+
+        # 2. Gather focused context instead of the whole project
+        crashing_file_content = self.project_manager.read_file(crashing_file_path)
+        if crashing_file_content is None:
+            self.handle_error("executor", f"Could not read the content of the crashing file: {crashing_file_path}")
+            return False
+
+        # Get project index if the service is available
+        project_index = {}
+        if self.project_indexer:
+             project_index = self.project_indexer.build_index(self.project_manager.active_project_path)
+
 
         git_diff = self.project_manager.get_git_diff()
 
-        crashing_file, line_number = self._parse_error_traceback(error_report)
-        if not crashing_file:
-            self.handle_error("executor", "Could not identify the source file of the error.")
-            return False
-
         if self.project_manager.active_project_path and line_number > 0:
-            full_path = self.project_manager.active_project_path / crashing_file
+            full_path = self.project_manager.active_project_path / crashing_file_path
             self.event_bus.emit("error_highlight_requested", full_path, line_number)
 
-        self.update_status("reviewer", "working", f"Analyzing error in {crashing_file}...")
+        self.update_status("reviewer", "working", f"Analyzing error in {crashing_file_path}...")
 
-        # 2. Ask the reviewer for the fix
-        changes_json_str = await self.reviewer_service.review_and_correct_code(
-            project_source=all_project_files,
+        # 3. Use the new FOCUSED_FIXER_PROMPT
+        prompt = FOCUSED_FIXER_PROMPT.format(
             error_report=error_report,
+            crashing_filename=crashing_file_path,
+            crashing_file_content=crashing_file_content,
+            project_index_json=json.dumps(project_index, indent=2),
             git_diff=git_diff
         )
+
+        changes_json_str = await self.reviewer_service._get_fix_from_llm(prompt) # Using the internal helper
 
         if not changes_json_str:
             self.handle_error("reviewer", "Did not generate a response for the error fix.")
             return False
 
-        # 3. Process and apply the fix
+        # 4. Process and apply the fix
         try:
             files_to_commit = self._robustly_parse_json_from_llm_response(changes_json_str)
             if not isinstance(files_to_commit, dict) or not files_to_commit:
@@ -63,10 +77,10 @@ class ValidationService:
             return False
 
         filenames_changed = ", ".join(files_to_commit.keys())
-        fix_commit_message = f"fix: AI rewrite for error in {crashing_file}\n\nChanged files: {filenames_changed}"
+        fix_commit_message = f"fix: AI rewrite for error in {crashing_file_path}\n\nChanged files: {filenames_changed}"
         self.project_manager.save_and_commit_files(files_to_commit, fix_commit_message)
 
-        # 4. Notify the system that the fix is applied and finish.
+        # 5. Notify the system that the fix is applied and finish.
         self.event_bus.emit("code_generation_complete", files_to_commit)
         self.update_status("reviewer", "success", f"Fix applied to {len(files_to_commit)} file(s).")
         self.log("success", "Successfully applied fix. Please try running the code again.")
