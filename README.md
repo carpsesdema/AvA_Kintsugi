@@ -2,7 +2,7 @@
 
 ### Build, Modify, and Debug at the Speed of Thought.
 
-![Avakin In Action](https://github.com/carpsesdema/Avakin/raw/master/Kapture%202024-06-19%20at%2018.06.15.gif)
+![Avakin In Action](avagif2.gif)
 
 <div align="center">
   <img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version">
@@ -92,6 +92,39 @@
     
     Run `Avakin_Launcher.exe`. It will check for updates and then launch the main application. You're ready to go!
     
+    ## Building from Source (using Nuitka)
+
+    If you want to compile the application yourself, follow these steps.
+
+    **1. Prerequisites:**
+    - A C compiler (Nuitka will prompt you to install one if you don't have it, typically MSVC on Windows).
+    - Python installed.
+
+    **2. Install Dependencies:**
+    Install all Python dependencies for both the main application and the Nuitka compiler.
+    ```bash
+    pip install -r src/ava/requirements.txt
+    pip install nuitka
+    ```
+
+    **3. Run the Build Script:**
+    The `build.py` script in the root directory is the command center for compilation.
+
+    - To build everything (recommended):
+      ```bash
+      python build.py --all --clean
+      ```
+    - To build only the main application:
+      ```bash
+      python build.py --main
+      ```
+    - To build only the launcher:
+      ```bash
+      python build.py --launcher
+      ```
+
+    The compiled output will be placed in the `dist/` directory, ready to be zipped and distributed.
+
     ## Quick Usage
     
     -   **To Create a New Project:** Simply describe what you want to build in the chat prompt and hit send.
@@ -100,6 +133,8 @@
     ## Support Avakin's Mission
     
     Avakin is a labor of love from a solo developer. If this tool helps you build something amazing, saves you time, or just makes your coding life a little easier, please consider supporting its development. Every little bit helps me keep the lights on and continue making Avakin more powerful for everyone.
+
+    [![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/snowballkori)
     
     ## Contributing
     
