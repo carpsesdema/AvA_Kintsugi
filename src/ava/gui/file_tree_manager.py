@@ -3,7 +3,7 @@
 
 from pathlib import Path
 from typing import Optional, Callable, Set
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QMenu
+from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QMenu, QAbstractItemView
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QFont, QAction
 
@@ -16,6 +16,7 @@ class FileTreeManager(QObject):
     Single responsibility: Handle file tree display, population, and user interactions.
     """
     file_rename_requested = Signal(Path)
+    file_delete_requested = Signal(Path)
 
     def __init__(self, tree_widget: QTreeWidget):
         super().__init__()
@@ -33,6 +34,7 @@ class FileTreeManager(QObject):
     def _setup_tree_widget(self):
         self.tree_widget.setHeaderLabel("Project Files")
         self.tree_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree_widget.setStyleSheet(f"""
             QTreeWidget {{ 
                 border: none; 
@@ -66,9 +68,15 @@ class FileTreeManager(QObject):
 
         path = Path(path_str)
         menu = QMenu()
+
         rename_action = QAction("Rename...", self.tree_widget)
         rename_action.triggered.connect(lambda: self.file_rename_requested.emit(path))
         menu.addAction(rename_action)
+
+        delete_action = QAction("Delete", self.tree_widget)
+        delete_action.triggered.connect(lambda: self.file_delete_requested.emit(path))
+        menu.addAction(delete_action)
+
         menu.exec(self.tree_widget.viewport().mapToGlobal(position))
 
     def set_file_selection_callback(self, callback: Callable[[Path], None]):

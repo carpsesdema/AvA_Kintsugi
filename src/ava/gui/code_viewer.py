@@ -2,7 +2,7 @@
 # V2: All QMessageBox popups have been removed.
 
 from pathlib import Path
-from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter, QInputDialog)
+from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter, QInputDialog, QMessageBox)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent
 import qasync
@@ -77,6 +77,7 @@ class CodeViewerWindow(QMainWindow):
         self.file_tree_manager = FileTreeManager(tree_widget)
         self.file_tree_manager.set_file_selection_callback(self._on_file_selected)
         self.file_tree_manager.file_rename_requested.connect(self._on_file_rename_requested)
+        self.file_tree_manager.file_delete_requested.connect(self._on_file_delete_requested)
         layout.addWidget(tree_widget)
         return panel
 
@@ -203,6 +204,34 @@ class CodeViewerWindow(QMainWindow):
             self.status_bar.showMessage(f"Renamed to {new_name}", 2000)
         else:
             self.status_bar.showMessage(f"Failed to rename {old_name}", 3000)
+
+    def _on_file_delete_requested(self, path_to_delete: Path):
+        if not self.project_context.is_valid or not self.project_manager.active_project_path:
+            self.status_bar.showMessage("Cannot delete: No active project.", 3000)
+            return
+
+        item_type = "directory" if path_to_delete.is_dir() else "file"
+
+        reply = QMessageBox.question(
+            self,
+            f"Confirm Deletion",
+            f"Are you sure you want to permanently delete this {item_type}?\n\n'{path_to_delete.name}'",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        relative_path = path_to_delete.relative_to(self.project_manager.active_project_path)
+        success = self.project_manager.delete_path(str(relative_path))
+
+        if success:
+            self.editor_manager.handle_file_delete(str(path_to_delete.resolve()))
+            self.file_tree_manager.load_existing_project_tree(self.project_manager.active_project_path)
+            self.status_bar.showMessage(f"Deleted {path_to_delete.name}", 2000)
+        else:
+            self.status_bar.showMessage(f"Failed to delete {path_to_delete.name}", 3000)
 
     def _save_current_file(self):
         if self.editor_manager:

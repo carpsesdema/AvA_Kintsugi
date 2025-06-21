@@ -2,6 +2,7 @@
 # V5: All QMessageBox popups have been removed.
 
 from pathlib import Path
+import os
 from typing import Dict, Optional
 from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget
 from PySide6.QtCore import Qt, QRect, QSize, Signal
@@ -466,6 +467,20 @@ class EditorTabManager:
                 self.tab_widget.setTabText(i, title)
                 print(f"[EditorTabManager] Updated tab at index {i} for rename.")
                 break
+
+    def handle_file_delete(self, deleted_path_key: str):
+        """Closes any open tabs for a deleted file or files within a deleted directory."""
+        for path_key in list(self.editors.keys()):
+            if path_key == deleted_path_key or path_key.startswith(deleted_path_key + os.sep):
+                print(f"[EditorTabManager] Closing tab for deleted file: {path_key}")
+                for i in range(self.tab_widget.count()):
+                    if self.tab_widget.tabToolTip(i) == path_key:
+                        self.tab_widget.removeTab(i)
+                        del self.editors[path_key]
+                        break
+
+        if self.tab_widget.count() == 0:
+            self._add_welcome_tab("All tabs closed. Open a file or generate code.")
 
     def _update_tab_title(self, path_key: str):
         """Update tab title to show dirty state."""

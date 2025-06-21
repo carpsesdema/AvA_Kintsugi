@@ -156,23 +156,17 @@ class ProjectManager:
             self.repo = None
             return None
 
-        # --- THIS IS THE FIX ---
-        # After loading or initializing, ensure there's at least one commit.
-        # This prevents errors when `HEAD` doesn't exist in an empty repo.
         try:
             _ = self.repo.head.commit
         except (ValueError, GitCommandError):
             print("[ProjectManager] Loaded repo has no commits. Creating initial baseline commit.")
             self._create_gitignore_if_needed()
-            # Stage all existing files, including untracked ones.
             self.repo.git.add(A=True)
-            # Check if there are any staged entries. An empty index check is safe.
             if self.repo.index.entries:
                 self.repo.index.commit("Baseline commit by Kintsugi AvA")
                 print("[ProjectManager] Created baseline commit for existing files.")
             else:
                 print("[ProjectManager] Repo is empty, no baseline commit needed.")
-        # --- END OF FIX ---
 
         return str(self.active_project_path)
 
@@ -252,20 +246,54 @@ class ProjectManager:
         except Exception:
             return None
 
-    def delete_file(self, relative_path: str) -> str:
-        if not self.active_project_path or not self.repo:
-            return "Error: No active project."
-        full_path = self.active_project_path / relative_path
-        if not full_path.exists():
-            return f"Error: File not found: {relative_path}"
+    def delete_path(self, relative_path_to_delete: str) -> bool:
+        """Deletes a file or directory and handles both tracked and untracked files."""
+        if not self.repo or not self.active_project_path:
+            print("[ProjectManager] Error: No active project or repository.")
+            return False
+
+        abs_path = self.active_project_path / relative_path_to_delete
+        if not abs_path.exists():
+            print(f"[ProjectManager] Error: Path to delete does not exist: {abs_path}")
+            return False
+
         try:
-            full_path.unlink()
-            self.repo.index.remove([str(relative_path)])
-            return f"Deleted and staged removal: {relative_path}"
-        except GitCommandError as e:
-            return f"Error removing file from Git: {e}"
-        except Exception as e:
-            return f"Error deleting file: {e}"
+            # Check if the file is tracked by Git.
+            is_tracked = False
+            try:
+                # This command returns the path if tracked, or empty if not.
+                if self.repo.git.ls_files(str(abs_path)):
+                    is_tracked = True
+            except GitCommandError:
+                # A GitCommandError can occur if the path is not in the repo,
+                # which we can treat as not tracked.
+                is_tracked = False
+
+            # Delete the path.
+            if is_tracked:
+                # Use git rm for tracked files/dirs.
+                if abs_path.is_dir():
+                    self.repo.git.rm('-r', str(abs_path))
+                else:
+                    self.repo.git.rm(str(abs_path))
+            else:
+                # Use standard filesystem calls for untracked files/dirs.
+                if abs_path.is_dir():
+                    shutil.rmtree(abs_path)
+                else:
+                    abs_path.unlink()
+
+            # Commit the change if it was a tracked file.
+            if is_tracked:
+                commit_message = f"refactor: delete {relative_path_to_delete}"
+                self.repo.index.commit(commit_message)
+
+            print(f"[ProjectManager] Deleted path: '{relative_path_to_delete}' (Was Tracked: {is_tracked})")
+            return True
+
+        except (GitCommandError, OSError) as e:
+            print(f"[ProjectManager] Error during deletion: {e}")
+            return False
 
     def stage_file(self, relative_path: str) -> str:
         if not self.repo:
