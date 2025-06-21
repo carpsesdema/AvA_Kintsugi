@@ -31,17 +31,10 @@ class LLMClient:
     def __init__(self, project_root: Path):
         load_dotenv()
 
-        # --- THIS IS THE DEFINITIVE FIX ---
-        # This logic correctly finds the config directory whether running from
-        # source or as a bundled executable.
-        if getattr(sys, 'frozen', False):
-            # When bundled, assets are in the temporary _MEIPASS folder.
-            # We look for the config in `_MEIPASS/src/ava/config`
-            base_path = Path(sys._MEIPASS)
-            self.config_dir = base_path / "src" / "ava" / "config"
-        else:
-            # When running from source, the path is relative to the project root.
-            self.config_dir = project_root / "src" / "ava" / "config"
+        # --- THIS IS THE ROBUST FIX ---
+        # The config directory is now always relative to the project root,
+        # which is correctly determined by main.py for both source and compiled runs.
+        self.config_dir = project_root / "ava" / "config"
         # --- END OF FIX ---
 
         self.config_dir.mkdir(exist_ok=True, parents=True)

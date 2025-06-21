@@ -17,15 +17,10 @@ class PluginConfig:
     """
 
     def __init__(self, project_root: Path):
-        # --- THIS IS THE FIX ---
-        # This logic correctly handles both scenarios for finding the config file.
-        if getattr(sys, 'frozen', False):
-            # For bundled executable, config is in the temporary _MEIPASS folder
-            base_path = Path(sys._MEIPASS)
-            self.config_file = base_path / "src" / "ava" / "config" / "plugins.json"
-        else:
-            # For source, use the path relative to the project root
-            self.config_file = project_root / "src" / "ava" / "config" / "plugins.json"
+        # --- THIS IS THE ROBUST FIX ---
+        # The config directory is now always relative to the project root,
+        # which is correctly determined by main.py for both source and compiled runs.
+        self.config_file = project_root / "ava" / "config" / "plugins.json"
         # --- END OF FIX ---
 
         self.config_file.parent.mkdir(exist_ok=True, parents=True)

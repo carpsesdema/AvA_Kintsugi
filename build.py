@@ -34,21 +34,20 @@ MAIN_APP_BUILD_CONFIG = {
     "output_dir_name": "Avakin",
     "icon_path": SRC_DIR / "ava" / "assets" / "Ava_Icon.ico",
     "plugins": ["pyside6"],
-    # --- THIS IS THE FIX ---
-    # We are explicitly telling Nuitka which plugins to DISABLE.
-    # The 'transformers' plugin is bugged, so we're turning it off.
     "disable_plugins": ["transformers"],
-    # --- END OF FIX ---
     "data_dirs": {
         SRC_DIR / "ava" / "assets": "ava/assets",
         SRC_DIR / "ava" / "config": "ava/config",
+        # --- THIS IS THE FIX ---
+        # We must explicitly tell Nuitka to include the plugins directory
+        # so they can be discovered in the compiled application.
+        SRC_DIR / "ava" / "core" / "plugins" / "examples": "ava/core/plugins/examples",
+        # --- END OF FIX ---
     },
     "packages": [
         "ava",
         "qtawesome",
         "pygments.styles",
-        # Because we disabled the smart plugin, we now have to explicitly
-        # tell Nuitka to include these packages. This is more reliable.
         "transformers",
         "sentence_transformers",
     ],
@@ -120,11 +119,8 @@ def build_with_nuitka(config: dict):
     for plugin in config["plugins"]:
         command.append(f"--enable-plugin={plugin}")
 
-    # --- THIS IS THE FIX ---
-    # Add the command to disable the broken plugin.
     for plugin in config.get("disable_plugins", []):
         command.append(f"--disable-plugin={plugin}")
-    # --- END OF FIX ---
 
     # Add data directories
     for src, dest in config["data_dirs"].items():

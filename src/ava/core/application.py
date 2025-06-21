@@ -120,27 +120,21 @@ class Application:
 
     def _configure_plugin_paths(self):
         """Configure plugin discovery paths based on execution mode."""
-        if getattr(sys, 'frozen', False):
-            # Running as bundled executable
-            meipass = Path(getattr(sys, '_MEIPASS', ''))
-            builtin_plugins = meipass / "ava" / "core" / "plugins" / "examples"
-            if builtin_plugins.exists():
-                self.plugin_manager.add_discovery_path(builtin_plugins)
-                print(f"[Application] Added bundled plugin path: {builtin_plugins}")
+        # Nuitka places the included 'ava' data folder right next to the executable.
+        # The project root is the directory containing the executable.
+        builtin_plugins_path = self.project_root / "ava" / "core" / "plugins" / "examples"
 
-            custom_plugins = self.project_root / "plugins"
-            if custom_plugins.exists():
-                self.plugin_manager.add_discovery_path(custom_plugins)
-                print(f"[Application] Added custom plugin path: {custom_plugins}")
+        if builtin_plugins_path.exists():
+            self.plugin_manager.add_discovery_path(builtin_plugins_path)
+            print(f"[Application] Added plugin discovery path: {builtin_plugins_path}")
         else:
-            # Running from source
-            builtin_plugins = self.project_root / "src" / "ava" / "core" / "plugins" / "examples"
-            if builtin_plugins.exists():
-                self.plugin_manager.add_discovery_path(builtin_plugins)
+            print(f"[Application] Warning: Built-in plugin path not found at {builtin_plugins_path}")
 
-            custom_plugins = self.project_root / "plugins"
-            if custom_plugins.exists():
-                self.plugin_manager.add_discovery_path(custom_plugins)
+        # Also look for a 'plugins' directory next to the executable for custom user plugins
+        custom_plugins_path = self.project_root / "plugins"
+        if custom_plugins_path.exists():
+            self.plugin_manager.add_discovery_path(custom_plugins_path)
+            print(f"[Application] Added custom plugin path: {custom_plugins_path}")
 
     def update_sidebar_plugin_status(self):
         """Gets plugin status from the manager and tells the sidebar to update."""

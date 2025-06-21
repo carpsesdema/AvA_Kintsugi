@@ -11,11 +11,9 @@ from pathlib import Path
 # This ensures all imports and asset lookups work correctly in both
 # source-mode and bundled-mode (PyInstaller).
 if getattr(sys, 'frozen', False):
-    # We are running in a bundle (e.g., from PyInstaller)
+    # We are running in a bundle (e.g., from Nuitka)
+    # The project root is where the executable is located.
     project_root = Path(sys.executable).parent
-    # The _MEIPASS directory is where bundled assets are unpacked.
-    # We add it to the path so modules like `ava` can be found.
-    sys.path.insert(0, str(Path(sys._MEIPASS)))
 else:
     # We are running from source.
     # The project root is two levels up from this file (src/ava/main.py -> src -> project_root)
@@ -34,7 +32,7 @@ from ava.core.application import Application
 from ava.utils.exception_handler import setup_exception_hook
 
 
-async def main_async_logic(root_path: Path):
+async def main_async_logic(app_root_path: Path):
     """
     The main asynchronous coroutine for the application.
     """
@@ -61,7 +59,8 @@ async def main_async_logic(root_path: Path):
     app.aboutToQuit.connect(lambda: asyncio.create_task(on_about_to_quit()))
 
     try:
-        ava_app = Application(project_root=root_path)
+        # Pass the correctly determined root path to the application
+        ava_app = Application(project_root=app_root_path)
         await ava_app.initialize_async()
         ava_app.show()
         print("[main] Application ready and displayed.")
@@ -81,30 +80,15 @@ async def main_async_logic(root_path: Path):
 
 
 if __name__ == "__main__":
-    # The new root is the AvA_Kintsugi directory
-    # For source runs, we assume this script is at AvA_Kintsugi/src/ava/main.py
-    # So the root is 3 levels up.
-    if getattr(sys, 'frozen', False):
-         # If bundled, the executable is the root
-        app_root_dir = Path(sys.executable).parent
-    else:
-        # If running from source, it's 3 levels up from this file's location
-        app_root_dir = Path(__file__).resolve().parent.parent.parent
-
-
     setup_exception_hook()
     app = QApplication(sys.argv)
 
     app.setApplicationName("Avakin")
     app.setOrganizationName("Avakin")
 
-    # The asset path is now correctly determined based on run mode
-    if getattr(sys, 'frozen', False):
-        # In a bundle, assets are relative to the temp _MEIPASS dir
-        icon_path = Path(sys._MEIPASS) / "ava" / "assets" / "Ava_Icon.ico"
-    else:
-        # From source, relative to the project root
-        icon_path = app_root_dir / "src" / "ava" / "assets" / "Ava_Icon.ico"
+    # The asset path is now correctly determined based on the root path
+    # Nuitka will place the 'ava' data folder next to the executable.
+    icon_path = project_root / "ava" / "assets" / "Ava_Icon.ico"
 
     if icon_path.exists():
         app_icon = QIcon(str(icon_path))
@@ -113,5 +97,6 @@ if __name__ == "__main__":
     else:
         print(f"[main] WARNING: Application icon not found at {icon_path}")
 
-    qasync.run(main_async_logic(app_root_dir))
+    # Pass the single, authoritative project_root to the async logic
+    qasync.run(main_async_logic(project_root))
     print("[main] Application has exited cleanly.")
