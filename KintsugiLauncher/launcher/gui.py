@@ -99,16 +99,17 @@ class LauncherWindow(QMainWindow):
     def setup_window_style(self):
         """Set up the window's appearance."""
         try:
+            # --- THIS IS THE FIX ---
+            # This logic now correctly finds the assets folder for both
+            # running from source and for compiled apps (Nuitka/PyInstaller).
             if getattr(sys, 'frozen', False):
-                # In a PyInstaller bundle, the path is relative to the _MEIPASS dir
-                # This part is correct and expects the 'assets' folder at the top level.
-                icon_path = Path(sys._MEIPASS) / "assets" / "Launcher_Icon.ico"
+                # For a bundled app, the assets are relative to the executable.
+                base_path = Path(sys.executable).parent
+                icon_path = base_path / "assets" / "Launcher_Icon.ico"
             else:
-                # --- CORRECTED PATH ---
-                # This script is in KintsugiLauncher/launcher/
-                # The assets are now in KintsugiLauncher/launcher/assets/
-                # This path correctly points to the assets directory next to this file.
+                # When running from source, the path is relative to this script.
                 icon_path = Path(__file__).resolve().parent / "assets" / "Launcher_Icon.ico"
+            # --- END OF FIX ---
 
             if icon_path.exists():
                 self.setWindowIcon(QIcon(str(icon_path)))

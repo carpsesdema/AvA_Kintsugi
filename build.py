@@ -26,7 +26,13 @@ LAUNCHER_BUILD_CONFIG = {
         LAUNCHER_DIR / "launcher" / "assets": "assets"
     },
     "packages": [],
-    "add_to_pythonpath": [],
+    # --- THIS IS THE FIX ---
+    # We need to tell Nuitka where to find the 'launcher' package during
+    # the build, just like you did for the 'ava' package in the main app!
+    "add_to_pythonpath": [
+        LAUNCHER_DIR
+    ],
+    # --- END OF FIX ---
 }
 
 MAIN_APP_BUILD_CONFIG = {
@@ -38,11 +44,7 @@ MAIN_APP_BUILD_CONFIG = {
     "data_dirs": {
         SRC_DIR / "ava" / "assets": "ava/assets",
         SRC_DIR / "ava" / "config": "ava/config",
-        # --- THIS IS THE FIX ---
-        # We must explicitly tell Nuitka to include the plugins directory
-        # so they can be discovered in the compiled application.
         SRC_DIR / "ava" / "core" / "plugins" / "examples": "ava/core/plugins/examples",
-        # --- END OF FIX ---
     },
     "packages": [
         "ava",
@@ -50,10 +52,19 @@ MAIN_APP_BUILD_CONFIG = {
         "pygments.styles",
         "transformers",
         "sentence_transformers",
+        "torch", # Explicitly include torch
     ],
     "add_to_pythonpath": [
         SRC_DIR
     ],
+    # --- THIS IS THE ROBUST FIX ---
+    # We are telling Nuitka to avoid looking inside these specific,
+    # problematic modules within the transformers library. This prevents
+    # the relative import assertion error.
+    "nofollow_imports": [
+        "transformers.models"
+    ],
+    # --- END OF FIX ---
 }
 
 
@@ -116,27 +127,33 @@ def build_with_nuitka(config: dict):
         print(f"   Modified PYTHONPATH for build: {env['PYTHONPATH']}")
 
     # Add plugins
-    for plugin in config["plugins"]:
+    for plugin in config.get("plugins", []):
         command.append(f"--enable-plugin={plugin}")
 
     for plugin in config.get("disable_plugins", []):
         command.append(f"--disable-plugin={plugin}")
 
     # Add data directories
-    for src, dest in config["data_dirs"].items():
+    for src, dest in config.get("data_dirs", {}).items():
         if src.exists():
             command.append(f"--include-data-dir={src}={dest}")
         else:
             print(f"   Skipping non-existent data directory: {src}")
 
     # Add packages
-    for package in config["packages"]:
+    for package in config.get("packages", []):
         command.append(f"--include-package={package}")
+
+    # --- THIS IS THE FIX ---
+    # Add the command to not follow imports into problematic modules.
+    for module_to_skip in config.get("nofollow_imports", []):
+        command.append(f"--nofollow-import-to={module_to_skip}")
+    # --- END OF FIX ---
 
     # Add Windows-specific options
     if platform.system() == "Windows":
         command.append("--windows-console-mode=disable")
-        if config["icon_path"] and config["icon_path"].exists():
+        if config.get("icon_path") and config["icon_path"].exists():
             command.append(f'--windows-icon-from-ico={config["icon_path"]}')
 
     return run_command(command, cwd=PROJECT_ROOT, env=env)
