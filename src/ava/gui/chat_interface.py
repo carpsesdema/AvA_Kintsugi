@@ -71,7 +71,7 @@ class ChatBubble(QFrame):
 
 
 class ChatMessageWidget(QWidget):
-    def __init__(self, text: str, sender: str, is_user: bool, image: Optional[QImage] = None, is_loading: bool = False):
+    def __init__(self, text: str, sender: str, is_user: bool, image: Optional[QImage] = None):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setSpacing(10)
@@ -80,75 +80,19 @@ class ChatMessageWidget(QWidget):
         bubble_width = self.parent().width() * 0.75 if self.parent() else 800
         self.bubble.setMaximumWidth(int(bubble_width))
 
+        # --- THIS IS THE FIX ---
+        # We simplify the layout logic. The alignment is now purely controlled
+        # by where we add the stretch, removing the avatar widget entirely.
         if is_user:
             layout.addStretch()
             layout.addWidget(self.bubble)
         else:
-            if is_loading:
-                # For loading state, use the LoadingIndicator widget
-                self.avatar_widget = LoadingIndicator()
-                self.avatar_widget.setFixedSize(48, 48)
-            else:
-                # For normal state, use the gear base image
-                self.avatar_widget = QLabel()
-
-                # Find the gear base image
-                if getattr(sys, 'frozen', False):
-                    asset_dir = Path(sys._MEIPASS) / "ava" / "assets"
-                else:
-                    asset_dir = Path(__file__).resolve().parent.parent / "assets"
-
-                gear_base_path = asset_dir / "loading_gear_base.png"
-                if gear_base_path.exists():
-                    pixmap = QPixmap(str(gear_base_path))
-                    scaled_pixmap = pixmap.scaled(46, 46, Qt.AspectRatioMode.KeepAspectRatio,
-                                                  Qt.TransformationMode.SmoothTransformation)
-                    self.avatar_widget.setPixmap(scaled_pixmap)
-                else:
-                    # Fallback to icon if image not found
-                    avatar_icon = qta.icon("fa5s.cog", color=Colors.ACCENT_BLUE)
-                    self.avatar_widget.setPixmap(avatar_icon.pixmap(46, 46))
-
-                self.avatar_widget.setFixedSize(48, 48)
-                self.avatar_widget.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-            layout.addWidget(self.avatar_widget)
             layout.addWidget(self.bubble)
             layout.addStretch()
+        # --- END OF FIX ---
 
     def append_text(self, chunk: str):
         self.bubble.append_text(chunk)
-
-    def switch_to_normal_avatar(self):
-        """Switch from loading indicator to normal gear avatar"""
-        if hasattr(self, 'avatar_widget') and isinstance(self.avatar_widget, LoadingIndicator):
-            # Remove the loading indicator
-            self.layout().removeWidget(self.avatar_widget)
-            self.avatar_widget.deleteLater()
-
-            # Create normal gear avatar
-            self.avatar_widget = QLabel()
-
-            if getattr(sys, 'frozen', False):
-                asset_dir = Path(sys._MEIPASS) / "ava" / "assets"
-            else:
-                asset_dir = Path(__file__).resolve().parent.parent / "assets"
-
-            gear_base_path = asset_dir / "loading_gear_base.png"
-            if gear_base_path.exists():
-                pixmap = QPixmap(str(gear_base_path))
-                scaled_pixmap = pixmap.scaled(46, 46, Qt.AspectRatioMode.KeepAspectRatio,
-                                              Qt.TransformationMode.SmoothTransformation)
-                self.avatar_widget.setPixmap(scaled_pixmap)
-            else:
-                avatar_icon = qta.icon("fa5s.cog", color=Colors.ACCENT_BLUE)
-                self.avatar_widget.setPixmap(avatar_icon.pixmap(46, 46))
-
-            self.avatar_widget.setFixedSize(48, 48)
-            self.avatar_widget.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-            # Insert it back at position 0 (before the bubble)
-            self.layout().insertWidget(0, self.avatar_widget)
 
 
 class ChatInterface(QWidget):
@@ -157,6 +101,7 @@ class ChatInterface(QWidget):
         self.event_bus = event_bus
         self.conversation_history = []
         self.streaming_message_widget = None
+        self.streaming_sender = "Kintsugi AvA"  # Default sender
         self.current_app_state = AppState.BOOTSTRAP
         self.current_project_name = None
 
@@ -204,11 +149,7 @@ class ChatInterface(QWidget):
         self.event_bus.subscribe("streaming_chunk", self.on_streaming_chunk)
         self.event_bus.subscribe("streaming_end", self.on_streaming_end)
 
-        # --- THIS IS THE FIX ---
-        # Connect the scroll bar's rangeChanged signal to a handler that
-        # will always scroll to the bottom. This is more reliable than a timer.
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
-        # --- END OF FIX ---
 
     def _scroll_to_bottom(self, min_val, max_val):
         """A robust slot to scroll to the bottom of the chat."""
@@ -256,7 +197,7 @@ class ChatInterface(QWidget):
         self._add_message(history_entry)
         self.event_bus.emit("user_request_submitted", text, self.conversation_history, image_bytes, image_media_type)
 
-    def _add_message(self, message_data: dict, is_feedback: bool = False, is_loading: bool = False):
+    def _add_message(self, message_data: dict, is_feedback: bool = False):
         role = message_data.get("role", "assistant")
         is_user = role == "user"
         text = message_data.get("text", "")
@@ -269,7 +210,7 @@ class ChatInterface(QWidget):
         sender_name = "You" if is_user else message_data.get("sender", "Kintsugi AvA")
 
         stretch_item = self.bubble_layout.takeAt(self.bubble_layout.count() - 1)
-        message_widget = ChatMessageWidget(text, sender_name, is_user, image=q_image, is_loading=is_loading)
+        message_widget = ChatMessageWidget(text, sender_name, is_user, image=q_image)
         self.bubble_layout.addWidget(message_widget)
         self.bubble_layout.addStretch()
 
@@ -277,37 +218,35 @@ class ChatInterface(QWidget):
         return message_widget
 
     def on_streaming_start(self, sender: str):
-        self._remove_loading_indicator()
-
-        # Create a message widget with loading indicator as avatar
-        self.streaming_message_widget = self._add_message(
-            {"role": "assistant", "sender": sender, "text": None},
-            is_feedback=True,
-            is_loading=True  # This flag makes it use LoadingIndicator as avatar
-        )
+        # --- THIS IS THE FIX ---
+        # We no longer create a widget here. We just prepare for the first chunk.
+        self.streaming_message_widget = None
+        self.streaming_sender = sender
+        # --- END OF FIX ---
 
     def on_streaming_chunk(self, chunk: str):
-        if self.streaming_message_widget:
-            # When first text arrives, switch from loading indicator to normal gear avatar
-            if not self.streaming_message_widget.bubble.message_label:
-                self.streaming_message_widget.switch_to_normal_avatar()
+        # --- THIS IS THE FIX ---
+        # If this is the first chunk, create the message widget now.
+        if self.streaming_message_widget is None:
+            self.streaming_message_widget = self._add_message(
+                {"role": "assistant", "sender": self.streaming_sender, "text": ""},
+                is_feedback=True
+            )
 
+        if self.streaming_message_widget:
             self.streaming_message_widget.append_text(chunk)
+        # --- END OF FIX ---
 
-    def _remove_loading_indicator(self):
-        if self.streaming_message_widget:
-            self.streaming_message_widget.deleteLater()
-            self.streaming_message_widget = None
 
     def on_streaming_end(self):
         if self.streaming_message_widget:
-            # If the widget still exists, it's a completed text stream.
-            # We need to add its content to the history.
+            # Add the completed message to history
             if self.streaming_message_widget.bubble.message_label:
                 full_text = self.streaming_message_widget.bubble.message_label.text()
                 final_message_data = {"role": "assistant", "text": full_text, "image_b64": None, "media_type": None}
                 self.conversation_history.append(final_message_data)
 
+            # Reset for the next message
             self.streaming_message_widget = None
 
     def clear_chat(self, initial_message: str = "New session started."):
