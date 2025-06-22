@@ -80,16 +80,12 @@ class ChatMessageWidget(QWidget):
         bubble_width = self.parent().width() * 0.75 if self.parent() else 800
         self.bubble.setMaximumWidth(int(bubble_width))
 
-        # --- THIS IS THE FIX ---
-        # We simplify the layout logic. The alignment is now purely controlled
-        # by where we add the stretch, removing the avatar widget entirely.
         if is_user:
             layout.addStretch()
             layout.addWidget(self.bubble)
         else:
             layout.addWidget(self.bubble)
             layout.addStretch()
-        # --- END OF FIX ---
 
     def append_text(self, chunk: str):
         self.bubble.append_text(chunk)
@@ -113,6 +109,11 @@ class ChatInterface(QWidget):
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(10)
 
+        # --- NEW: AI Thinking Indicator Panel ---
+        self.thinking_panel = self._create_thinking_panel()
+        main_layout.addWidget(self.thinking_panel)
+        # --- END NEW ---
+
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setStyleSheet("QScrollArea { border: none; }")
@@ -121,16 +122,47 @@ class ChatInterface(QWidget):
         self.bubble_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.bubble_layout.addStretch()
         self.scroll_area.setWidget(self.bubble_container)
-        main_layout.addWidget(self.scroll_area, 1)  # Give scroll area the stretch
+        main_layout.addWidget(self.scroll_area, 1)
 
         self._create_header_controls(main_layout)
 
         self.input_widget = self._create_input_widget()
-        main_layout.addWidget(self.input_widget)  # No stretch for input
+        main_layout.addWidget(self.input_widget)
 
         self._setup_event_subscriptions()
         self._add_message({"role": "assistant", "text": "Hello! Let's build something amazing from scratch."},
                           is_feedback=True)
+
+    # --- NEW: Method to create the thinking indicator panel ---
+    def _create_thinking_panel(self) -> QFrame:
+        """Creates the panel that shows when the AI is working."""
+        panel = QFrame()
+        panel.setObjectName("thinking_panel")
+        panel.setFixedHeight(50)
+        panel.setStyleSheet(f"""
+            #thinking_panel {{
+                background-color: {Colors.SECONDARY_BG.name()};
+                border-radius: 8px;
+                padding: 5px 15px;
+            }}
+        """)
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(15)
+
+        loading_indicator = LoadingIndicator()
+        loading_indicator.setFixedSize(38, 38)
+        layout.addWidget(loading_indicator)
+
+        label = QLabel("AI is working on your request...")
+        label.setFont(Typography.body())
+        label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
+        layout.addWidget(label)
+        layout.addStretch()
+
+        panel.hide()  # Hide it by default
+        return panel
+    # --- END NEW ---
 
     def _create_header_controls(self, layout: QVBoxLayout):
         controls_layout = QHBoxLayout()
@@ -151,8 +183,23 @@ class ChatInterface(QWidget):
 
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
 
+        # --- NEW: Connect events to show/hide the thinking indicator ---
+        self.event_bus.subscribe("user_request_submitted", self.show_thinking_indicator)
+        self.event_bus.subscribe("streaming_end", self.hide_thinking_indicator)
+        self.event_bus.subscribe("ai_fix_workflow_complete", self.hide_thinking_indicator)
+        # --- END NEW ---
+
+    # --- NEW: Slots to control the thinking indicator's visibility ---
+    def show_thinking_indicator(self, *args):
+        """Shows the AI thinking panel."""
+        self.thinking_panel.show()
+
+    def hide_thinking_indicator(self, *args):
+        """Hides the AI thinking panel."""
+        self.thinking_panel.hide()
+    # --- END NEW ---
+
     def _scroll_to_bottom(self, min_val, max_val):
-        """A robust slot to scroll to the bottom of the chat."""
         self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
 
     def _on_app_state_changed(self, new_state: AppState, project_name: str = None):
@@ -218,15 +265,10 @@ class ChatInterface(QWidget):
         return message_widget
 
     def on_streaming_start(self, sender: str):
-        # --- THIS IS THE FIX ---
-        # We no longer create a widget here. We just prepare for the first chunk.
         self.streaming_message_widget = None
         self.streaming_sender = sender
-        # --- END OF FIX ---
 
     def on_streaming_chunk(self, chunk: str):
-        # --- THIS IS THE FIX ---
-        # If this is the first chunk, create the message widget now.
         if self.streaming_message_widget is None:
             self.streaming_message_widget = self._add_message(
                 {"role": "assistant", "sender": self.streaming_sender, "text": ""},
@@ -235,18 +277,13 @@ class ChatInterface(QWidget):
 
         if self.streaming_message_widget:
             self.streaming_message_widget.append_text(chunk)
-        # --- END OF FIX ---
-
 
     def on_streaming_end(self):
         if self.streaming_message_widget:
-            # Add the completed message to history
             if self.streaming_message_widget.bubble.message_label:
                 full_text = self.streaming_message_widget.bubble.message_label.text()
                 final_message_data = {"role": "assistant", "text": full_text, "image_b64": None, "media_type": None}
                 self.conversation_history.append(final_message_data)
-
-            # Reset for the next message
             self.streaming_message_widget = None
 
     def clear_chat(self, initial_message: str = "New session started."):
@@ -279,7 +316,7 @@ class ChatInterface(QWidget):
                 session_data = json.load(f)
             if "conversation_history" not in session_data:
                 raise ValueError("Invalid session file: 'conversation_history' key not found.")
-            self.clear_chat(None)  # Don't show initial message
+            self.clear_chat(None)
             for message_data in session_data["conversation_history"]:
                 self._add_message(message_data, is_feedback=True)
             QMessageBox.information(self, "Success", "Chat session loaded successfully.")
