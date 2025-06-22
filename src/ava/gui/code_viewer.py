@@ -1,10 +1,8 @@
-# src/ava/gui/code_viewer.py
 from pathlib import Path
 from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent
 import qasync
-
 from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
 from src.ava.gui.project_context_manager import ProjectContextManager
@@ -232,20 +230,26 @@ class CodeViewerWindow(QMainWindow):
             print(f"[CodeViewer] Loaded project: {project_path.name}")
             self.status_bar.showMessage(f"Loaded project: {project_path.name}", 3000)
 
-    def prepare_for_generation(self, filenames: list, project_path: str = None):
-        is_new_project = project_path and self.project_context.set_new_project_context(project_path)
+    def prepare_for_generation(self, filenames: list, project_path: str = None, is_modification: bool = False):
+        if not is_modification:
+            # This is a NEW project. Set context and reset the UI.
+            is_new_project = project_path and self.project_context.set_new_project_context(project_path)
+            if is_new_project:
+                self.file_tree_manager.setup_new_project_tree(
+                    self.project_context.project_root, filenames
+                )
+                print(f"[CodeViewer] Prepared for new project generation: {len(filenames)} files")
+                self.show_window()
+        else:
+            # This is a MODIFICATION. Validate existing context and add placeholders.
+            if self.project_context.validate_existing_context():
+                self.file_tree_manager.add_placeholders_for_new_files(filenames)
+                self._prepare_tabs_for_modification(filenames)
+                print(f"[CodeViewer] Prepared for modification: {len(filenames)} files")
+                self.show_window()
+            else:
+                print("[CodeViewer] ERROR: Modification requested, but existing project context is invalid.")
 
-        if is_new_project:
-            self.file_tree_manager.setup_new_project_tree(
-                self.project_context.project_root, filenames
-            )
-            print(f"[CodeViewer] Prepared for new project generation: {len(filenames)} files")
-            self.show_window()
-        elif self.project_context.validate_existing_context():
-            self.file_tree_manager.add_placeholders_for_new_files(filenames)
-            self._prepare_tabs_for_modification(filenames)
-            print(f"[CodeViewer] Prepared for modification: {len(filenames)} files")
-            self.show_window()
 
     def _prepare_tabs_for_modification(self, filenames: list):
         if self.project_context.is_valid:

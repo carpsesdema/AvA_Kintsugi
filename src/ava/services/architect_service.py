@@ -203,10 +203,11 @@ class ArchitectService:
 
     async def _execute_coordinated_generation(self, plan: dict, rag_context: str, existing_files: Optional[Dict[str, str]]) -> bool:
         try:
+            is_modification = existing_files is not None
             files_to_generate = plan.get("files", [])
             project_root = self.project_manager.active_project_path
             all_filenames = [f['filename'] for f in files_to_generate]
-            self.event_bus.emit("prepare_for_generation", all_filenames, str(project_root))
+            self.event_bus.emit("prepare_for_generation", all_filenames, str(project_root), is_modification)
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
