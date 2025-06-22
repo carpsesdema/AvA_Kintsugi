@@ -57,6 +57,14 @@ class Application:
             self.service_manager.initialize_core_components(self.project_root, self.project_manager)
             await self.service_manager.initialize_plugins()
             self.service_manager.initialize_services()
+
+            # --- Automatically launch the RAG server ---
+            rag_manager = self.service_manager.get_rag_manager()
+            if rag_manager:
+                print("[Application] Triggering automatic RAG server launch...")
+                asyncio.create_task(rag_manager.launch_rag_server())
+            # --- End automatic launch ---
+
             self.window_manager.initialize_windows(self.service_manager.get_llm_client(), self.service_manager)
             self.update_sidebar_plugin_status()
             self.task_manager.set_managers(self.service_manager, self.window_manager)

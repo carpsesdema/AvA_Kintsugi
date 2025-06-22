@@ -6,7 +6,7 @@ import threading
 import queue
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal, QTimer
-from PySide6.QtWidgets import QMessageBox, QFileDialog
+from PySide6.QtWidgets import QFileDialog
 
 from src.ava.services.rag_service import RAGService
 from src.ava.services.directory_scanner_service import DirectoryScannerService
@@ -48,48 +48,43 @@ class RAGManager(QObject):
     def set_project_manager(self, project_manager):
         self.project_manager = project_manager
 
-    def launch_rag_server(self, parent_widget=None):
+    async def launch_rag_server(self):
         if self.rag_server_process and self.rag_server_process.poll() is None:
-            QMessageBox.information(parent_widget, "Already Running", "The RAG server process is already running.")
+            self.log_message.emit("RAGManager", "info", "RAG server process is already running.")
             return
 
-        self.log_message.emit("RAGManager", "info", "Starting RAG server...")
+        self.log_message.emit("RAGManager", "info", "Starting RAG server automatically...")
         try:
-            if not self._perform_preflight_checks(parent_widget):
+            if not self._perform_preflight_checks():
                 return
 
             python_executable = sys.executable
-            # --- THIS IS THE FIX ---
-            # Use the provided project_root (e.g., C:\Projects\AvA_Kintsugi)
-            # to build the correct path to the files inside the 'src' directory.
-            server_script_path = self.project_root / "src" / "rag_server.py"
-            requirements_path = self.project_root / "src" / "requirements_rag.txt"
+            # --- THIS IS THE PATH FIX ---
+            server_script_path = self.project_root / "src" / "ava" / "rag_server.py"
+            requirements_path = self.project_root / "src" / "ava" / "requirements_rag.txt"
             # --- END OF FIX ---
 
-            if not self._install_dependencies(python_executable, requirements_path, parent_widget):
+            if not await self._install_dependencies(python_executable, requirements_path):
                 return
             self._launch_server_process(python_executable, server_script_path)
             self._start_output_monitoring()
         except Exception as e:
-            self.log_message.emit("RAGManager", "error", f"Failed to launch RAG server: {e}")
-            QMessageBox.critical(parent_widget, "Launch Error", f"Could not launch the RAG server:\n{e}")
+            self.log_message.emit("RAGManager", "error", f"Failed to launch RAG server automatically: {e}")
 
-    def _perform_preflight_checks(self, parent_widget=None) -> bool:
-        # --- THIS IS THE FIX ---
-        server_script_path = self.project_root / "src" / "rag_server.py"
-        requirements_path = self.project_root / "src" / "requirements_rag.txt"
+    def _perform_preflight_checks(self) -> bool:
+        # --- THIS IS THE PATH FIX ---
+        server_script_path = self.project_root / "src" / "ava" / "rag_server.py"
+        requirements_path = self.project_root / "src" / "ava" / "requirements_rag.txt"
         # --- END OF FIX ---
 
         if not server_script_path.exists():
             msg = f"Could not find rag_server.py at {server_script_path}"
             self.log_message.emit("RAGManager", "error", msg)
-            QMessageBox.critical(parent_widget, "Error", msg)
             return False
 
         if not requirements_path.exists():
             msg = f"Could not find requirements_rag.txt at {requirements_path}"
             self.log_message.emit("RAGManager", "error", msg)
-            QMessageBox.critical(parent_widget, "Error", msg)
             return False
 
         if not self._check_port_availability():
@@ -119,24 +114,23 @@ class RAGManager(QObject):
             self.log_message.emit("RAGManager", "error", f"Cannot write to rag_db directory: {e}")
             return False
 
-    def _install_dependencies(self, python_executable: str, requirements_path: Path, parent_widget=None) -> bool:
+    async def _install_dependencies(self, python_executable: str, requirements_path: Path) -> bool:
         self.log_message.emit("RAGManager", "info", f"Installing RAG dependencies from {requirements_path}...")
         try:
-            pip_install = subprocess.Popen(
-                [python_executable, "-m", "pip", "install", "-r", str(requirements_path)],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            process = await asyncio.create_subprocess_exec(
+                python_executable, "-m", "pip", "install", "-r", str(requirements_path),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = pip_install.communicate(timeout=300)
-            if pip_install.returncode != 0:
-                error_msg = f"Failed to install RAG dependencies: {stderr}"
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+
+            if process.returncode != 0:
+                error_msg = f"Failed to install RAG dependencies: {stderr.decode()}"
                 self.log_message.emit("RAGManager", "error", error_msg)
-                QMessageBox.critical(parent_widget, "Dependency Error", f"Failed to install RAG dependencies:\n{stderr}")
                 return False
             self.log_message.emit("RAGManager", "success", "RAG dependencies installed successfully.")
             return True
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             self.log_message.emit("RAGManager", "error", "Dependency installation timed out")
-            QMessageBox.critical(parent_widget, "Timeout Error", "Dependency installation timed out after 5 minutes")
             return False
         except Exception as e:
             self.log_message.emit("RAGManager", "error", f"Dependency installation failed: {e}")

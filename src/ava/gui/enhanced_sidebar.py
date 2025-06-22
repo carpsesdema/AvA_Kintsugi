@@ -68,16 +68,12 @@ class EnhancedSidebar(QWidget):
 
     def _create_knowledge_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Knowledge Base (RAG)")
-        launch_rag_btn = ModernButton("Launch RAG Server", "primary")
-        launch_rag_btn.setIcon(qta.icon("fa5s.rocket", color=Colors.TEXT_PRIMARY.name()))
-        launch_rag_btn.clicked.connect(lambda: self.event_bus.emit("launch_rag_server_requested"))
         scan_btn = ModernButton("Scan Directory", "secondary")
         scan_btn.setIcon(qta.icon("fa5s.search", color=Colors.TEXT_PRIMARY.name()))
         scan_btn.clicked.connect(lambda: self.event_bus.emit("scan_directory_requested"))
         add_files_btn = ModernButton("Add Project Files", "secondary")
         add_files_btn.setIcon(qta.icon("fa5s.file-medical", color=Colors.TEXT_PRIMARY.name()))
         add_files_btn.clicked.connect(lambda: self.event_bus.emit("add_active_project_to_rag_requested"))
-        layout.addWidget(launch_rag_btn)
         layout.addWidget(scan_btn)
         layout.addWidget(add_files_btn)
         return panel

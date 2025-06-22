@@ -59,7 +59,6 @@ class EventCoordinator:
         )
         rag_manager = self.service_manager.get_rag_manager()
         if rag_manager:
-            self.event_bus.subscribe("launch_rag_server_requested", rag_manager.launch_rag_server)
             self.event_bus.subscribe("scan_directory_requested", rag_manager.open_scan_directory_dialog)
             self.event_bus.subscribe("add_active_project_to_rag_requested", rag_manager.ingest_active_project)
         self.event_bus.subscribe("plugin_management_requested", self.window_manager.show_plugin_management_dialog)
