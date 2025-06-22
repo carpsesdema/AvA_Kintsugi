@@ -2,9 +2,9 @@
 # UPDATED: Now uses the centralized ExecutionEngine to run commands.
 
 import asyncio
-from ava.core.event_bus import EventBus
-from ava.core.project_manager import ProjectManager
-from ava.core.execution_engine import ExecutionEngine
+from src.ava.core.event_bus import EventBus
+from src.ava.core.project_manager import ProjectManager
+from src.ava.core.execution_engine import ExecutionEngine
 
 
 class TerminalService:

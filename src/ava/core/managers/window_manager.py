@@ -1,15 +1,14 @@
-# kintsugi_ava/core/managers/window_manager.py
-# UPDATED: Standardized imports to fix class comparison bug.
+# src/ava/core/managers/window_manager.py
+from src.ava.gui.main_window import MainWindow
+from src.ava.gui.code_viewer import CodeViewerWindow
+from src.ava.gui.model_config_dialog import ModelConfigurationDialog
+from src.ava.gui.plugin_management_dialog import PluginManagementDialog
+from src.ava.gui.log_viewer import LogViewerWindow
 
-from ava.gui.main_window import MainWindow
-from ava.gui.code_viewer import CodeViewerWindow
-from ava.gui.model_config_dialog import ModelConfigurationDialog
-from ava.gui.plugin_management_dialog import PluginManagementDialog
-from ava.gui.log_viewer import LogViewerWindow
-
-from ava.core.event_bus import EventBus
-from ava.core.llm_client import LLMClient
-from ava.core.project_manager import ProjectManager
+from src.ava.core.event_bus import EventBus
+from src.ava.core.llm_client import LLMClient
+from src.ava.core.project_manager import ProjectManager
+from src.ava.core.managers.service_manager import ServiceManager
 
 
 class WindowManager:
@@ -33,7 +32,7 @@ class WindowManager:
 
         print("[WindowManager] Initialized")
 
-    def initialize_windows(self, llm_client: LLMClient, service_manager):
+    def initialize_windows(self, llm_client: LLMClient, service_manager: ServiceManager):
         """Initialize all GUI windows."""
         print("[WindowManager] Initializing windows...")
 

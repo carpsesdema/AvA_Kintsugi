@@ -1,15 +1,13 @@
 # src/ava/gui/plugin_management_dialog.py
-# A new dialog for viewing, enabling, and disabling plugins. (Corrected)
-
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QAbstractItemView, QHeaderView, QTableWidgetItem
 )
 from PySide6.QtGui import QFont
 
-from ava.core.plugins.plugin_manager import PluginManager
-from ava.core.event_bus import EventBus
-from .components import Colors, Typography, ModernButton
+from src.ava.core.plugins.plugin_manager import PluginManager
+from src.ava.core.event_bus import EventBus
+from src.ava.gui.components import Colors, Typography, ModernButton
 
 
 class PluginManagementDialog(QDialog):
@@ -87,8 +85,6 @@ class PluginManagementDialog(QDialog):
         if not self.plugin_manager:
             return
 
-        # --- THIS IS THE FIX ---
-        # The method is get_all_plugins_info() and it returns a list of dicts.
         all_plugins_info = self.plugin_manager.get_all_plugins_info()
         self.table.setRowCount(len(all_plugins_info))
 
@@ -113,7 +109,6 @@ class PluginManagementDialog(QDialog):
             # Description
             description = status_info.get("description", "No description available.")
             self.table.setItem(row, 3, self._create_table_item(description))
-        # --- END OF FIX ---
 
     def get_selected_plugin_name(self) -> str | None:
         """Gets the name of the currently selected plugin in the table."""

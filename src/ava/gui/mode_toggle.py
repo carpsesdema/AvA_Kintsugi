@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, Propert
 from PySide6.QtGui import QPainter, QFont, QPen
 
 from .components import Colors, Typography
-from ava.core.interaction_mode import InteractionMode
+from src.ava.core.interaction_mode import InteractionMode
 
 class ModeToggle(QWidget):
     """

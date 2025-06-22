@@ -1,7 +1,3 @@
-# kintsugi_ava/services/chunking_service.py
-# A smart chunking service for breaking documents into optimal pieces for RAG.
-# Adapted from the original AvA project's robust implementation.
-
 import re
 from pathlib import Path
 from typing import List, Dict, Any

@@ -1,6 +1,3 @@
-# kintsugi_ava/gui/project_context_manager.py
-# Handles project state validation and path resolution for the Code Viewer.
-
 from pathlib import Path
 from typing import Optional
 

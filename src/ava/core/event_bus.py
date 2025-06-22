@@ -1,6 +1,3 @@
-# kintsugi_ava/core/event_bus.py
-# The central messaging system for the entire application.
-
 from collections import defaultdict
 
 class EventBus:

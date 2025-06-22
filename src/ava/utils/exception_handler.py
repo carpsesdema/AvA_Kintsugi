@@ -1,6 +1,3 @@
-# kintsugi_ava/utils/exception_handler.py
-# A robust, global exception handler for our application.
-
 import sys
 import traceback
 import asyncio

@@ -1,7 +1,3 @@
-# src/ava/services/context_manager.py
-# Manages and distributes context across file generation
-# Single Responsibility: Context coordination and distribution
-
 import ast
 import json
 from pathlib import Path

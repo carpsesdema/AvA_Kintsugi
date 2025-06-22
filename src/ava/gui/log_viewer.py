@@ -2,7 +2,7 @@
 import qasync
 from PySide6.QtWidgets import QMainWindow, QTextEdit, QWidget, QVBoxLayout
 from PySide6.QtGui import QColor, QTextCharFormat, QFont
-from ava.core.event_bus import EventBus
+from src.ava.core.event_bus import EventBus
 from .components import Colors, Typography
 from datetime import datetime
 

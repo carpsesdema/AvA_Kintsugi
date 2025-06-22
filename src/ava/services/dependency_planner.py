@@ -1,11 +1,7 @@
-# src/ava/services/dependency_planner.py
-# Plans generation order based on dependencies
-# Single Responsibility: Dependency analysis and generation ordering
-
 from pathlib import Path
 from typing import Dict, List, Any, Set
 from dataclasses import dataclass
-from ava.services.context_manager import GenerationContext
+from src.ava.services.context_manager import GenerationContext
 
 
 @dataclass

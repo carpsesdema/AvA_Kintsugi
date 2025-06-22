@@ -12,11 +12,10 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 # --- Configuration ---
-project_root = Path(__file__).parent
-sys.path.append(str(project_root))
-
-MODEL_NAME = 'all-miniLM-L6-v2'
+# The server runs from the main project directory (one level above src)
+# This ensures the database is created in a consistent, user-accessible location.
 PERSIST_DIRECTORY = "rag_db"
+MODEL_NAME = 'all-miniLM-L6-v2'
 COLLECTION_NAME = "kintsugi_kb"
 HOST = "127.0.0.1"
 PORT = 8001
@@ -46,7 +45,7 @@ class AddRequest(BaseModel):
 app_state = {}
 
 
-# --- THIS IS THE FIX: Lifespan Event Handler ---
+# --- Lifespan Event Handler ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -80,9 +79,6 @@ async def lifespan(app: FastAPI):
     print("--- RAG Server Shutdown (Lifespan) ---")
     app_state.clear()
     print("Cleaned up resources.")
-
-
-# --- END OF FIX ---
 
 
 # --- FastAPI App Initialization (with the new lifespan handler) ---

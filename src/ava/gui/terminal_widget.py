@@ -1,13 +1,11 @@
 # src/ava/gui/terminal_widget.py
-# Represents a single, venv-aware terminal session tab.
-
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QLabel, QMenu
 from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor, QKeyEvent, QAction
 from PySide6.QtCore import Signal, Qt
 
-from .components import Colors, Typography
-from ava.core.project_manager import ProjectManager
-from ava.core.event_bus import EventBus
+from src.ava.gui.components import Colors, Typography
+from src.ava.core.project_manager import ProjectManager
+from src.ava.core.event_bus import EventBus
 
 
 class TerminalWidget(QWidget):
@@ -119,12 +117,12 @@ class TerminalWidget(QWidget):
         self.history_index += direction
         if self.history_index < 0:
             self.history_index = 0
-        if self.history_index >= len(self.command_history):
-            self.history_index = len(self.command_history) -1
-            self.command_input.setText(self.command_history[self.history_index])
-            return
+        elif self.history_index >= len(self.command_history):
+            self.history_index = len(self.command_history) - 1
 
-        self.command_input.setText(self.command_history[self.history_index])
+        if self.command_history:
+            self.command_input.setText(self.command_history[self.history_index])
+
 
     def append_output(self, text: str):
         self.output_view.moveCursor(QTextCursor.MoveOperation.End)

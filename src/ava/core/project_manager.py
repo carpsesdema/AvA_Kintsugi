@@ -166,10 +166,7 @@ class ProjectManager:
             self._create_gitignore_if_needed()
             # Stage all existing files, including untracked ones.
             self.repo.git.add(A=True)
-            # The NEW FIX:
-            # Check if there are any staged entries. This is safe for a new repo as it does not rely on HEAD.
-            # Using index.diff(None) checks for staged changes against the working directory.
-            # An empty index.entries check is the safest for this initial commit scenario.
+            # Check if there are any staged entries.
             if self.repo.index.entries:
                 self.repo.index.commit("Baseline commit by Kintsugi AvA")
                 print("[ProjectManager] Created baseline commit for existing files.")

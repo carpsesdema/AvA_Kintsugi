@@ -1,6 +1,3 @@
-# kintsugi_ava/services/project_indexer_service.py
-# A service to scan a project and map all class/function definitions.
-
 import ast
 from pathlib import Path
 from typing import Dict

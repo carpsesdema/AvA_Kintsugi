@@ -1,6 +1,3 @@
-# kintsugi_ava/gui/status_bar.py
-# A dedicated, event-driven status bar for the Code Viewer IDE.
-
 from PySide6.QtWidgets import QStatusBar, QLabel
 from PySide6.QtCore import Qt
 import qtawesome as qta

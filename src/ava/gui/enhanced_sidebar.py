@@ -1,13 +1,11 @@
 # src/ava/gui/enhanced_sidebar.py
-# UPDATED: Added Save/Load Chat buttons.
-
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QPushButton
 from PySide6.QtCore import Qt
 import qtawesome as qta
 
-from .components import Colors, Typography, ModernButton, StatusIndicatorDot
-from ava.core.event_bus import EventBus
+from src.ava.gui.components import Colors, Typography, ModernButton, StatusIndicatorDot
+from src.ava.core.event_bus import EventBus
 
 
 class EnhancedSidebar(QWidget):
@@ -95,7 +93,7 @@ class EnhancedSidebar(QWidget):
         status_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
         manage_plugins_btn = QPushButton("Manage")
         manage_plugins_btn.setFont(Typography.body())
-        manage_plugins_btn.setCursor(Qt.PointingHandCursor)
+        manage_plugins_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         manage_plugins_btn.setMaximumHeight(28)
         manage_plugins_btn.setStyleSheet(f"""
             QPushButton {{ 
@@ -127,7 +125,6 @@ class EnhancedSidebar(QWidget):
         new_session_btn.clicked.connect(lambda: self.event_bus.emit("new_session_requested"))
         layout.addWidget(new_session_btn)
 
-        # --- THIS IS THE FIX ---
         save_chat_btn = ModernButton("Save Chat", "secondary")
         save_chat_btn.setIcon(qta.icon("fa5s.save", color=Colors.TEXT_PRIMARY.name()))
         save_chat_btn.clicked.connect(lambda: self.event_bus.emit("save_chat_requested"))
@@ -137,7 +134,6 @@ class EnhancedSidebar(QWidget):
         load_chat_btn.setIcon(qta.icon("fa5s.folder-open", color=Colors.TEXT_PRIMARY.name()))
         load_chat_btn.clicked.connect(lambda: self.event_bus.emit("load_chat_requested"))
         layout.addWidget(load_chat_btn)
-        # --- END OF FIX ---
 
         layout.addWidget(self._create_action_header("TOOLS"))
 

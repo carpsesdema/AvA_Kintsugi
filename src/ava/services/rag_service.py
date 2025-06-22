@@ -1,6 +1,3 @@
-# kintsugi_ava/services/rag_service.py
-# V5: Added the 'add' method to send documents to the RAG server for ingestion.
-
 import aiohttp
 import asyncio
 from pathlib import Path

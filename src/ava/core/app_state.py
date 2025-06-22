@@ -1,7 +1,3 @@
-# kintsugi_ava/core/app_state.py
-# NEW FILE: Defines the possible states of the application workflow.
-# Single Responsibility: To provide a clear, type-safe enumeration of application states.
-
 from enum import Enum, auto
 
 

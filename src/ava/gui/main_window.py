@@ -1,51 +1,39 @@
 # src/ava/gui/main_window.py
-
-import asyncio
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QApplication
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
-from ava.gui.enhanced_sidebar import EnhancedSidebar
-from ava.gui.chat_interface import ChatInterface
+
+from src.ava.core.event_bus import EventBus
+from src.ava.gui.enhanced_sidebar import EnhancedSidebar
+from src.ava.gui.chat_interface import ChatInterface
 
 
 class MainWindow(QWidget):
     """
-    Main window of the application.
+    Main window of the application, holding the sidebar and chat interface.
     """
 
-    def __init__(self, event_bus):
+    def __init__(self, event_bus: EventBus):
         super().__init__()
         self.event_bus = event_bus
         self._closing = False
 
-        # --- Set Window Properties ---
-        # This changes the title of the main window
-        self.setWindowTitle("Avakin")
-
-        # Set window size and minimum size
+        # --- Window Properties ---
+        self.setWindowTitle("AvaKin")
         self.resize(1400, 900)
         self.setMinimumSize(800, 600)
 
-        # Apply the theme to the whole application (this includes this widget)
-
-        # --- Create Layout ---
-        # We use a horizontal layout (HBox) because we want the sidebar
-        # on the left and the chat interface on the right
+        # --- Layout ---
         main_layout = QHBoxLayout(self)
-        # These margins create some padding around the edges of the window
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)  # No space between sidebar and chat
+        main_layout.setSpacing(0)
 
-        # --- Create Components ---
-        # Initialize the sidebar and chat interface with the event bus
+        # --- Components ---
         self.sidebar = EnhancedSidebar(event_bus)
         self.chat_interface = ChatInterface(event_bus)
 
-        # --- Add Components to the Layout ---
-        # We add the sidebar and the chat interface to our horizontal layout.
-        # The numbers (1, 3) are stretch factors. This tells the layout
-        # to give the chat interface 3 times as much horizontal space
-        # as the sidebar.
+        # --- Add Components to Layout ---
+        # The numbers (1, 3) are stretch factors.
         main_layout.addWidget(self.sidebar, 1)
         main_layout.addWidget(self.chat_interface, 3)
 
@@ -62,7 +50,6 @@ class MainWindow(QWidget):
         print("[MainWindow] Close event triggered - starting graceful shutdown...")
 
         try:
-            # Emit application shutdown event to trigger cleanup
             if self.event_bus:
                 self.event_bus.emit("application_shutdown")
         except Exception as e:
@@ -73,4 +60,4 @@ class MainWindow(QWidget):
 
         # Use a timer to close the application after a short delay
         # This gives the async cleanup time to execute
-        QTimer.singleShot(500, lambda: QApplication.instance().quit())
+        QTimer.singleShot(500, QApplication.instance().quit)

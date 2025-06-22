@@ -1,12 +1,13 @@
-# kintsugi_ava/core/managers/workflow_manager.py
-# UPDATED: Standardized imports to fix class comparison bug.
-
+# src/ava/core/managers/workflow_manager.py
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from typing import Optional
 
-from ava.core.event_bus import EventBus
-from ava.core.app_state import AppState
-from ava.core.interaction_mode import InteractionMode
+from src.ava.core.event_bus import EventBus
+from src.ava.core.app_state import AppState
+from src.ava.core.interaction_mode import InteractionMode
+from src.ava.core.managers.service_manager import ServiceManager
+from src.ava.core.managers.window_manager import WindowManager
+from src.ava.core.managers.task_manager import TaskManager
 
 
 class WorkflowManager:
@@ -16,15 +17,15 @@ class WorkflowManager:
 
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
-        self.service_manager = None
-        self.window_manager = None
-        self.task_manager = None
+        self.service_manager: ServiceManager = None
+        self.window_manager: WindowManager = None
+        self.task_manager: TaskManager = None
         self.app_state: AppState = AppState.BOOTSTRAP
         self.interaction_mode: InteractionMode = InteractionMode.BUILD
         self._last_error_report = None
         print("[WorkflowManager] Initialized in BOOTSTRAP state, BUILD mode")
 
-    def set_managers(self, service_manager, window_manager, task_manager):
+    def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager, task_manager: TaskManager):
         """Set references to other managers and subscribe to state-changing events."""
         self.service_manager = service_manager
         self.window_manager = window_manager
@@ -66,7 +67,7 @@ class WorkflowManager:
         if workflow_coroutine:
             self.task_manager.start_ai_workflow_task(workflow_coroutine)
 
-    async def _get_description_from_image(self, image_bytes: bytes, media_type: str = "image/png") -> str:
+    async def _get_description_from_image(self, image_bytes: bytes, media_type: str) -> str:
         """Asks a chat model to describe an image and returns the description."""
         self.log("info", "Image provided without text. Asking AI to describe the image for context...")
         if not self.service_manager: return ""
@@ -120,7 +121,7 @@ class WorkflowManager:
 
         final_prompt = prompt
         if not prompt and image_bytes:
-            description = await self._get_description_from_image(image_bytes)
+            description = await self._get_description_from_image(image_bytes, "image/png")
             if not description:
                 self.log("error", "Could not generate a description from the image. Aborting.")
                 return
@@ -150,7 +151,7 @@ class WorkflowManager:
 
         final_prompt = prompt
         if not prompt and image_bytes:
-            description = await self._get_description_from_image(image_bytes)
+            description = await self._get_description_from_image(image_bytes, "image/png")
             if not description:
                 self.log("error", "Could not generate a description from the image. Aborting.")
                 return

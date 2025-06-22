@@ -1,20 +1,19 @@
 # src/ava/gui/code_viewer.py
-# V2: All QMessageBox popups have been removed.
-
 from pathlib import Path
 from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter)
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent
 import qasync
 
-from ava.gui.project_context_manager import ProjectContextManager
-from ava.gui.file_tree_manager import FileTreeManager
-from ava.gui.editor_tab_manager import EditorTabManager
-from ava.gui.integrated_terminal import IntegratedTerminal
-from ava.gui.find_replace_dialog import FindReplaceDialog
-from ava.gui.quick_file_finder import QuickFileFinder
-from ava.core.project_manager import ProjectManager
-from .status_bar import StatusBar
+from src.ava.core.event_bus import EventBus
+from src.ava.core.project_manager import ProjectManager
+from src.ava.gui.project_context_manager import ProjectContextManager
+from src.ava.gui.file_tree_manager import FileTreeManager
+from src.ava.gui.editor_tab_manager import EditorTabManager
+from src.ava.gui.integrated_terminal import IntegratedTerminal
+from src.ava.gui.find_replace_dialog import FindReplaceDialog
+from src.ava.gui.quick_file_finder import QuickFileFinder
+from src.ava.gui.status_bar import StatusBar
 
 
 class CodeViewerWindow(QMainWindow):
@@ -22,27 +21,25 @@ class CodeViewerWindow(QMainWindow):
     The main code viewing and interaction window with enhanced IDE features.
     """
 
-    def __init__(self, event_bus, project_manager: ProjectManager):
+    def __init__(self, event_bus: EventBus, project_manager: ProjectManager):
         super().__init__()
         self.event_bus = event_bus
         self.project_manager = project_manager
         self.project_context = ProjectContextManager()
-        self.editor_manager = None
-        self.file_tree_manager = None
-        self.terminal = None
+        self.editor_manager: EditorTabManager = None
+        self.file_tree_manager: FileTreeManager = None
+        self.terminal: IntegratedTerminal = None
 
         # Enhanced IDE features
-        self.find_replace_dialog = None
-        self.quick_file_finder = None
-        self.auto_save_timer = QTimer()
+        self.find_replace_dialog: FindReplaceDialog = None
+        self.quick_file_finder: QuickFileFinder = None
 
-        self.setWindowTitle("Avakin - Code Viewer")
+        self.setWindowTitle("Kintsugi AvA - Code Viewer")
         self.setGeometry(100, 100, 1400, 900)
         self._init_ui()
         self._create_menus()
         self._setup_shortcuts()
         self._connect_events()
-        self._setup_auto_save()
 
     def _init_ui(self):
         """Initialize the main UI components."""
@@ -63,7 +60,6 @@ class CodeViewerWindow(QMainWindow):
         main_splitter.setSizes([300, 1100])
         main_layout.addWidget(main_splitter)
 
-        # Use our event-driven status bar
         self.status_bar = StatusBar(self.event_bus)
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
@@ -148,11 +144,6 @@ class CodeViewerWindow(QMainWindow):
         quick_open_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
         quick_open_shortcut.activated.connect(self._show_quick_file_finder)
 
-    def _setup_auto_save(self):
-        """Set up auto-save functionality."""
-        self.auto_save_timer.timeout.connect(self._auto_save)
-        self.auto_save_timer.start(30000)
-
     def _connect_events(self):
         """Connects signals to the event bus."""
         self.terminal.command_entered.connect(
@@ -170,11 +161,6 @@ class CodeViewerWindow(QMainWindow):
         if self.editor_manager:
             if self.editor_manager.save_all_files():
                 self.status_bar.showMessage("All files saved", 2000)
-
-    def _auto_save(self):
-        if self.editor_manager and self.editor_manager.has_unsaved_changes():
-            self._save_all_files()
-            self.status_bar.showMessage("Auto-saved all changes", 1500)
 
     def _close_current_tab(self):
         if self.editor_manager:
@@ -228,7 +214,6 @@ class CodeViewerWindow(QMainWindow):
         return self.editor_manager.get_active_file_path() if self.editor_manager else None
 
     def prepare_for_new_project_session(self):
-        # --- FIX: No longer prompt, just save everything ---
         if self.editor_manager and self.editor_manager.has_unsaved_changes():
             self.editor_manager.save_all_files()
 
@@ -329,7 +314,6 @@ class CodeViewerWindow(QMainWindow):
     # === Window Management ===
 
     def closeEvent(self, event: QCloseEvent):
-        """Handle window close event - save all changes silently."""
         if self.editor_manager and self.editor_manager.has_unsaved_changes():
             self.editor_manager.save_all_files()
         event.accept()

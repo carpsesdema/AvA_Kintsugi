@@ -1,6 +1,3 @@
-# kintsugi_ava/services/import_fixer_service.py
-# V3: Re-architected with ast.NodeVisitor and proper scope tracking for robust import fixing.
-
 import ast
 from collections import defaultdict
 from typing import Dict, Set, List, Tuple

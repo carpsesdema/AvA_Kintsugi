@@ -1,14 +1,12 @@
-# kintsugi_ava/gui/editor_tab_manager.py
-# V5: All QMessageBox popups have been removed.
-
+# src/ava/gui/editor_tab_manager.py
 from pathlib import Path
 from typing import Dict, Optional
 from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget
 from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QKeySequence, QShortcut
 
-from .components import Colors, Typography
-from .code_viewer_helpers import PythonHighlighter
+from src.ava.gui.components import Colors, Typography
+from src.ava.gui.code_viewer_helpers import PythonHighlighter
 
 
 class LineNumberArea(QWidget):
@@ -386,7 +384,6 @@ class EditorTabManager:
         tooltip = self.tab_widget.tabToolTip(index)
         if tooltip in self.editors:
             editor = self.editors[tooltip]
-            # --- FIX: Silently save the file before closing if it has changes ---
             if editor.is_dirty():
                 self.save_file(tooltip)
 

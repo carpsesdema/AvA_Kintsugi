@@ -1,13 +1,10 @@
-# src/ava/services/generation_coordinator.py
-# FINAL FIX: Implements a "rolling context" to cure the Amnesiac Coordinator bug.
-
 import json
 import re
 from typing import Dict, Any, Optional
 import textwrap
 
-from ava.core.event_bus import EventBus
-from ava.prompts.prompts import CODER_PROMPT, SURGICAL_MODIFICATION_PROMPT
+from src.ava.core.event_bus import EventBus
+from src.ava.prompts.prompts import CODER_PROMPT, SURGICAL_MODIFICATION_PROMPT
 
 # FINAL FIX: Update the simple prompt to also accept the existing files context.
 SIMPLE_FILE_PROMPT = textwrap.dedent("""

@@ -1,6 +1,4 @@
 # src/ava/services/architect_service.py
-# UPDATED: Implemented a brute-force sanitizer to programmatically fix duplicated paths from the AI plan.
-
 from __future__ import annotations
 import asyncio
 import json
@@ -9,23 +7,23 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from ava.core.event_bus import EventBus
-from ava.core.llm_client import LLMClient
-from ava.core.project_manager import ProjectManager
-from ava.prompts.prompts import (
+from src.ava.core.event_bus import EventBus
+from src.ava.core.llm_client import LLMClient
+from src.ava.core.project_manager import ProjectManager
+from src.ava.prompts.prompts import (
     HIERARCHICAL_PLANNER_PROMPT,
     MODIFICATION_PLANNER_PROMPT
 )
-from ava.services.rag_service import RAGService
-from ava.services.project_indexer_service import ProjectIndexerService
-from ava.services.import_fixer_service import ImportFixerService
-from ava.services.generation_coordinator import GenerationCoordinator
-from ava.services.context_manager import ContextManager
-from ava.services.dependency_planner import DependencyPlanner
-from ava.services.integration_validator import IntegrationValidator
+from src.ava.services.rag_service import RAGService
+from src.ava.services.project_indexer_service import ProjectIndexerService
+from src.ava.services.import_fixer_service import ImportFixerService
+from src.ava.services.generation_coordinator import GenerationCoordinator
+from src.ava.services.context_manager import ContextManager
+from src.ava.services.dependency_planner import DependencyPlanner
+from src.ava.services.integration_validator import IntegrationValidator
 
 if TYPE_CHECKING:
-    from ava.core import ServiceManager
+    from src.ava.core.managers import ServiceManager
 
 
 class ArchitectService:

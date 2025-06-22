@@ -1,6 +1,3 @@
-# kintsugi_ava/core/plugins/plugin_system.py
-# Base plugin system interfaces and contracts
-
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Dict, List, Any, Optional

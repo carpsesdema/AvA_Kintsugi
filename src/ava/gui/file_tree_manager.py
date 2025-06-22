@@ -1,6 +1,3 @@
-# kintsugi_ava/gui/file_tree_manager.py
-# Enhanced to handle placeholder addition for modifications.
-
 from pathlib import Path
 from typing import Optional, Callable, Set
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem

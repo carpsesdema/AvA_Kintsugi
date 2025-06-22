@@ -1,6 +1,4 @@
 # src/ava/gui/loading_indicator.py
-# FINAL ATTEMPT: A completely manual animation using QTimer for maximum stability.
-
 from pathlib import Path
 import sys
 
@@ -43,8 +41,10 @@ class LoadingIndicator(QWidget):
         """Finds and loads the two gear images into QPixmap objects."""
         try:
             if getattr(sys, 'frozen', False):
+                # We are running in a bundle, assets are in _MEIPASS
                 asset_dir = Path(sys._MEIPASS) / "ava" / "assets"
             else:
+                # We are running from source
                 asset_dir = Path(__file__).resolve().parent.parent / "assets"
 
             base_image_path = asset_dir / self.base_image_name

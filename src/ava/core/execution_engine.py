@@ -1,6 +1,3 @@
-# kintsugi_ava/core/execution_engine.py
-# V5: Centralized command execution with venv awareness.
-
 import asyncio
 import os
 import subprocess

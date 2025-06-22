@@ -1,11 +1,11 @@
-# kintsugi_ava/core/managers/task_manager.py
-# UPDATED: Standardized imports to fix class comparison bug.
-
+# src/ava/core/managers/task_manager.py
 import asyncio
 from typing import Optional, Dict
 from PySide6.QtWidgets import QMessageBox
 
-from ava.core.event_bus import EventBus
+from src.ava.core.event_bus import EventBus
+from src.ava.core.managers.service_manager import ServiceManager
+from src.ava.core.managers.window_manager import WindowManager
 
 
 class TaskManager:
@@ -23,12 +23,12 @@ class TaskManager:
         self.terminal_tasks: Dict[int, asyncio.Task] = {}  # session_id -> task
 
         # Manager references (set by Application)
-        self.service_manager = None
-        self.window_manager = None
+        self.service_manager: ServiceManager = None
+        self.window_manager: WindowManager = None
 
         print("[TaskManager] Initialized")
 
-    def set_managers(self, service_manager, window_manager):
+    def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager):
         """Set references to other managers."""
         self.service_manager = service_manager
         self.window_manager = window_manager

@@ -1,4 +1,4 @@
-# kintsugi_ava/core/plugins/plugin_manager.py
+# src/ava/core/plugins/plugin_manager.py
 # Plugin lifecycle management and coordination
 
 import asyncio
@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Any
 from collections import defaultdict
 
-from .plugin_system import PluginBase, PluginState, PluginError
-from .plugin_registry import PluginRegistry
-from .plugin_config import PluginConfig
+from src.ava.core.plugins.plugin_system import PluginBase, PluginState, PluginError
+from src.ava.core.plugins.plugin_registry import PluginRegistry
+from src.ava.core.plugins.plugin_config import PluginConfig
 
 
 class PluginManager:
@@ -40,10 +40,6 @@ class PluginManager:
     def _connect_events(self):
         """Connect to event bus for plugin-related events."""
         self.event_bus.subscribe("plugin_state_changed", self._on_plugin_state_changed)
-
-        # This is now handled by the Application class wiring
-        # self.event_bus.subscribe("application_shutdown",
-        #                          lambda: asyncio.create_task(self.shutdown()))
 
     def add_discovery_path(self, path: Path):
         """

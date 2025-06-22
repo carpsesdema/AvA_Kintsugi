@@ -1,6 +1,6 @@
-from ava.core.event_bus import EventBus
-from ava.core.llm_client import LLMClient
-from ava.prompts.prompts import REFINEMENT_PROMPT
+from src.ava.core.event_bus import EventBus
+from src.ava.core.llm_client import LLMClient
+from src.ava.prompts.prompts import REFINEMENT_PROMPT
 import json
 
 

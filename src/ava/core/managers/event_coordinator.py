@@ -1,8 +1,10 @@
 # src/ava/core/managers/event_coordinator.py
-# UPDATED: Wired up save/load chat events.
-
 import asyncio
-from ava.core.event_bus import EventBus
+from src.ava.core.event_bus import EventBus
+from src.ava.core.managers.service_manager import ServiceManager
+from src.ava.core.managers.window_manager import WindowManager
+from src.ava.core.managers.task_manager import TaskManager
+from src.ava.core.managers.workflow_manager import WorkflowManager
 
 
 class EventCoordinator:
@@ -13,13 +15,13 @@ class EventCoordinator:
 
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
-        self.service_manager = None
-        self.window_manager = None
-        self.task_manager = None
-        self.workflow_manager = None
+        self.service_manager: ServiceManager = None
+        self.window_manager: WindowManager = None
+        self.task_manager: TaskManager = None
+        self.workflow_manager: WorkflowManager = None
         print("[EventCoordinator] Initialized")
 
-    def set_managers(self, service_manager, window_manager, task_manager, workflow_manager):
+    def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager, task_manager: TaskManager, workflow_manager: WorkflowManager):
         """Set references to other managers."""
         self.service_manager = service_manager
         self.window_manager = window_manager
@@ -34,10 +36,9 @@ class EventCoordinator:
         self._wire_execution_events()
         self._wire_terminal_events()
         self._wire_plugin_events()
-        self._wire_chat_session_events() # <-- FIX: Wire up the new events
+        self._wire_chat_session_events()
         print("[EventCoordinator] ✓ All events wired successfully")
 
-    # --- THIS IS THE NEW METHOD ---
     def _wire_chat_session_events(self):
         """Wire events for saving and loading chat sessions."""
         if not self.window_manager: return
@@ -46,7 +47,6 @@ class EventCoordinator:
             self.event_bus.subscribe("save_chat_requested", chat_interface.save_session)
             self.event_bus.subscribe("load_chat_requested", chat_interface.load_session)
             print("[EventCoordinator] ✓ Chat session events wired")
-    # --- END OF NEW METHOD ---
 
     def _wire_ui_events(self):
         if not all([self.workflow_manager, self.window_manager, self.service_manager]):

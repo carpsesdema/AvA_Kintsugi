@@ -1,14 +1,10 @@
-# src/ava/services/integration_validator.py
-# Real-time integration validation during generation
-# Single Responsibility: Validate integration as files are generated
-
 import ast
 import json
 import textwrap
 from pathlib import Path
 from typing import Dict, List, Optional
 from dataclasses import dataclass
-from ava.services.context_manager import GenerationContext
+from src.ava.services.context_manager import GenerationContext
 
 
 @dataclass

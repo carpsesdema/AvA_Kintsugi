@@ -1,13 +1,13 @@
 # src/ava/gui/integrated_terminal.py
-# The new home for the multi-tab terminal, embedded in the Code Viewer.
 from PySide6.QtGui import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QHBoxLayout, QPushButton, QLabel, QFrame
 from PySide6.QtCore import Signal
 import qtawesome as qta
 
-from .components import Colors, Typography, ModernButton
-from .terminal_widget import TerminalWidget
-from ava.core.project_manager import ProjectManager
+from src.ava.gui.components import Colors, Typography, ModernButton
+from src.ava.gui.terminal_widget import TerminalWidget
+from src.ava.core.project_manager import ProjectManager
+from src.ava.core.event_bus import EventBus
 
 
 class IntegratedTerminal(QWidget):
@@ -16,7 +16,7 @@ class IntegratedTerminal(QWidget):
     """
     command_entered = Signal(str, int)  # command, session_id
 
-    def __init__(self, event_bus, project_manager: ProjectManager):
+    def __init__(self, event_bus: EventBus, project_manager: ProjectManager):
         super().__init__()
         self.event_bus = event_bus
         self.project_manager = project_manager
@@ -24,9 +24,9 @@ class IntegratedTerminal(QWidget):
         self.next_session_id = 0
 
         # Initialize UI attributes in __init__
-        self.tab_widget = None
-        self.fix_button = None
-        self.fixing_label = None
+        self.tab_widget: QTabWidget = None
+        self.fix_button: ModernButton = None
+        self.fixing_label: QLabel = None
 
         self.setObjectName("integrated_terminal")
         self.setup_ui()
@@ -184,7 +184,7 @@ class IntegratedTerminal(QWidget):
         self.event_bus.subscribe("terminal_error_received", self._route_error)
         self.event_bus.subscribe("terminal_success_received", self._route_success)
         self.event_bus.subscribe("terminal_command_finished", self._route_command_finished)
-        self.event_bus.subscribe("ai_fix_workflow_complete", self._on_ai_fix_complete) # <-- FIX
+        self.event_bus.subscribe("ai_fix_workflow_complete", self._on_ai_fix_complete)
 
     def _on_ai_fix_complete(self):
         """Hides the 'AI is fixing...' label when the task is done."""

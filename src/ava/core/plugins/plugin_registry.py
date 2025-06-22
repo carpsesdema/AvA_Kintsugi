@@ -1,6 +1,3 @@
-# kintsugi_ava/core/plugins/plugin_registry.py
-# Plugin discovery and metadata management
-
 import importlib
 import inspect
 import sys

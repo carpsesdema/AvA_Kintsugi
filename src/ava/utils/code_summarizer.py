@@ -1,6 +1,3 @@
-# kintsugi_ava/utils/code_summarizer.py
-# A utility to parse Python code and extract a structural summary.
-
 import ast
 
 

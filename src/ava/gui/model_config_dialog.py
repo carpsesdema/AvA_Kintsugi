@@ -1,13 +1,11 @@
 # src/ava/gui/model_config_dialog.py
-# V4: Added temperature sliders for each AI role.
-
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QMessageBox, QFrame
 )
 from PySide6.QtGui import QFont
 
-from .components import Colors, Typography, ModernButton, TemperatureSlider
-from ava.core.llm_client import LLMClient
+from src.ava.gui.components import Colors, Typography, ModernButton, TemperatureSlider
+from src.ava.core.llm_client import LLMClient
 
 
 class ModelConfigurationDialog(QDialog):

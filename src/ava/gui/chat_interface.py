@@ -1,6 +1,4 @@
 # src/ava/gui/chat_interface.py
-# FINAL FIX: Replaced QTimer-based scrolling with a robust rangeChanged signal.
-
 import json
 import base64
 import io
@@ -10,16 +8,16 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QScrollArea, QHBoxLayout, QFileDialog, QMessageBox
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPalette, QPixmap, QImage, QMovie
+from PySide6.QtGui import QPalette, QPixmap, QImage
 import qtawesome as qta
 
-from .components import Colors, Typography, ModernButton
-from .mode_toggle import ModeToggle
-from .advanced_chat_input import AdvancedChatInput
-from .loading_indicator import LoadingIndicator
-from ava.core.event_bus import EventBus
-from ava.core.app_state import AppState
-from ava.core.interaction_mode import InteractionMode
+from src.ava.gui.components import Colors, Typography
+from src.ava.gui.mode_toggle import ModeToggle
+from src.ava.gui.advanced_chat_input import AdvancedChatInput
+from src.ava.gui.loading_indicator import LoadingIndicator
+from src.ava.core.event_bus import EventBus
+from src.ava.core.app_state import AppState
+from src.ava.core.interaction_mode import InteractionMode
 from typing import Optional
 
 
@@ -164,7 +162,7 @@ class ChatInterface(QWidget):
 
         self.setAutoFillBackground(True)
         palette = self.palette()
-        palette.setColor(QPalette.Window, Colors.PRIMARY_BG)
+        palette.setColor(QPalette.ColorRole.Window, Colors.PRIMARY_BG)
         self.setPalette(palette)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(15, 15, 15, 15)
@@ -212,7 +210,7 @@ class ChatInterface(QWidget):
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
         # --- END OF FIX ---
 
-    def _scroll_to_bottom(self):
+    def _scroll_to_bottom(self, min_val, max_val):
         """A robust slot to scroll to the bottom of the chat."""
         self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
 

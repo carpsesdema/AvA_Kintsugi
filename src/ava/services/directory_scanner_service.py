@@ -1,6 +1,3 @@
-# kintsugi_ava/services/directory_scanner_service.py
-# Scans directories to find processable files for RAG ingestion.
-
 import os
 from pathlib import Path
 from typing import List

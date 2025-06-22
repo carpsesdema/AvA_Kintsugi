@@ -1,4 +1,4 @@
-# kintsugi_ava/core/plugins/plugin_config.py
+# src/ava/core/plugins/plugin_config.py
 # Plugin configuration management
 
 import json
@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Set
 from copy import deepcopy
 
-from .plugin_system import PluginMetadata
+from src.ava.core.plugins.plugin_system import PluginMetadata
 
 
 class PluginConfig:
@@ -18,14 +18,13 @@ class PluginConfig:
 
     def __init__(self, project_root: Path):
         # --- THIS IS THE FIX ---
-        # When running as a bundled executable, the config file is in a different
-        # location relative to the project root compared to running from source.
-        # This logic correctly handles both scenarios.
+        # This logic correctly finds the config file whether running from
+        # source or as a bundled executable. project_root is the repo root.
         if getattr(sys, 'frozen', False):
-            # For bundled executable, config is in `project_root/ava/config`
-            self.config_file = project_root / "ava" / "config" / "plugins.json"
+            # For bundled executable, config is in `config` dir next to exe
+            self.config_file = project_root / "config" / "plugins.json"
         else:
-            # For source, use the original location
+            # For source, use the location inside the src directory
             self.config_file = project_root / "src" / "ava" / "config" / "plugins.json"
         # --- END OF FIX ---
 

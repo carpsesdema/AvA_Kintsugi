@@ -1,6 +1,3 @@
-# gui/find_replace_dialog.py
-# Find and Replace functionality for the code editor
-
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit,
                                QPushButton, QCheckBox, QLabel, QFrame)
 from PySide6.QtCore import Qt, Signal

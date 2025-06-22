@@ -1,6 +1,3 @@
-# kintsugi_ava/gui/components.py
-# Our Design System. All reusable colors, fonts, and custom widgets live here.
-
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QPushButton, QSlider, QLabel, QHBoxLayout, QWidget
 from PySide6.QtCore import Qt, Signal

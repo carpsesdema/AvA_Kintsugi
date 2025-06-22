@@ -1,12 +1,10 @@
 # src/ava/services/validation_service.py
-# V17: Final simplification. Removed ExecutionEngine dependency.
-
 import re
 import json
 from pathlib import Path
-from ava.core.event_bus import EventBus
-from ava.core.project_manager import ProjectManager
-from ava.services.reviewer_service import ReviewerService
+from src.ava.core.event_bus import EventBus
+from src.ava.core.project_manager import ProjectManager
+from src.ava.services.reviewer_service import ReviewerService
 
 
 class ValidationService:

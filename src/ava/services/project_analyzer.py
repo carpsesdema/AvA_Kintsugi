@@ -1,6 +1,3 @@
-# kintsugi_ava/services/project_analyzer.py
-# A service dedicated to analyzing an existing project directory.
-
 import os
 from pathlib import Path
 

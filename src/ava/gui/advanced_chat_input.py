@@ -1,6 +1,3 @@
-# src/ava/gui/advanced_chat_input.py
-# Corrected byte handling for image pasting.
-
 import io
 from typing import Optional
 

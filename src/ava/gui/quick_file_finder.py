@@ -1,6 +1,3 @@
-# gui/quick_file_finder.py
-# Quick file finder for rapid navigation
-
 from pathlib import Path
 from typing import List, Callable
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLineEdit, QListWidget,
