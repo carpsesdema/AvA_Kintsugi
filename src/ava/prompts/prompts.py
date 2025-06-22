@@ -61,7 +61,7 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     You are an expert senior software developer specializing in refactoring and modifying existing Python codebases.
 
     **YOUR TASK:**
-    Analyze the user's modification request. Based on the existing project files and structure provided below, produce a JSON plan that outlines which files to create or modify.
+    Analyze the user's modification request. Based on the **summaries of existing project files** provided below, produce a JSON plan that outlines which files to create or modify.
 
     **USER'S MODIFICATION REQUEST:** "{prompt}"
 
@@ -71,10 +71,10 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     **1. Source Code Structure:**
     {source_root_info}
 
-    **2. All Existing Files and Their Content:**
-    This is the complete list of files you are allowed to modify. You MUST reference these exact file paths and respect the structure outlined above.
+    **2. Summaries of Existing Files:**
+    This is the list of all files in the project. You are provided with a high-level summary for each Python file. You MUST reference these exact file paths.
 
-    {file_context_string}
+    {file_summaries_string}
     ---
 
     **CRITICAL INSTRUCTIONS - READ CAREFULLY:**
@@ -114,14 +114,20 @@ CODER_PROMPT = textwrap.dedent("""
     ---
     **🔍 COMPLETE PROJECT CONTEXT (CRITICAL - READ CAREFULLY)**
 
-    **Full Project Plan:**
+    **1. Full Project Plan:**
     ```json
-    {file_plan_json}
+    {{file_plan_json}}
     ```
 
-    **🎯 PROJECT-WIDE SYMBOL INDEX (Your primary reference for imports!):**
+    **2. Summaries of Files Generated So Far:**
+    This JSON object contains high-level structural summaries of the other Python files already written in this session. Use this to understand dependencies and available classes/functions.
     ```json
-    {symbol_index_json}
+    {{generated_files_summary_json}}
+    ```
+
+    **3. PROJECT-WIDE SYMBOL INDEX (Your primary reference for imports!):**
+    ```json
+    {{symbol_index_json}}
     ```
 
     ---
@@ -254,10 +260,8 @@ SURGICAL_MODIFICATION_PROMPT = textwrap.dedent("""
     - Do NOT add any comments unless specifically asked to.
 
     ---
-    **CONTEXT ON OTHER FILES IN THE PROJECT (FOR REFERENCE - DO NOT MODIFY THESE):**
-    ```json
-    {file_context_string}
-    ```
+    **CONTEXT: SUMMARIES OF OTHER FILES IN THE PROJECT (FOR REFERENCE - DO NOT MODIFY THESE):**
+    {other_file_summaries_string}
     ---
     **ORIGINAL SOURCE CODE FOR `{filename}`:**
     ```python

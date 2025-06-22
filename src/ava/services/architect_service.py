@@ -21,6 +21,7 @@ from src.ava.services.generation_coordinator import GenerationCoordinator
 from src.ava.services.context_manager import ContextManager
 from src.ava.services.dependency_planner import DependencyPlanner
 from src.ava.services.integration_validator import IntegrationValidator
+from src.ava.utils.code_summarizer import CodeSummarizer
 
 if TYPE_CHECKING:
     from src.ava.core.managers import ServiceManager
@@ -89,17 +90,29 @@ class ArchitectService:
         return None
 
     def _format_files_for_prompt(self, files: Dict[str, str]) -> tuple[str, Optional[str]]:
+        """
+        Creates a string of file summaries for the Architect's context.
+        This is the new definitive method to prevent token overflow.
+        """
         if not files:
             return "No existing files in the project.", None
+
         source_root = self._determine_source_root(list(files.keys()))
         output = []
+
         for filename, content in sorted(files.items()):
-            lang = ""
-            if filename.endswith(".py"): lang = "python"
-            elif filename.endswith(".html"): lang = "html"
-            elif filename.endswith(".css"): lang = "css"
-            else: lang = "plaintext"
-            output.append(f"### File: `{filename}`\n```{lang}\n{content}\n```")
+            summary = ""
+            if filename.endswith(".py"):
+                # Use the utility to get a structural summary of the Python code.
+                summarizer = CodeSummarizer(content)
+                summary = summarizer.summarize()
+            else:
+                # For non-python files, just provide a placeholder to save tokens.
+                summary = f"// Non-Python file ({Path(filename).suffix}), content not shown for brevity."
+
+            # Use a consistent format that's easy for the LLM to parse.
+            output.append(f"### File: `{filename}`\n```\n{summary}\n```")
+
         return "\n\n".join(output), source_root
 
     def _sanitize_plan_paths(self, plan: dict) -> dict:
@@ -137,10 +150,12 @@ class ArchitectService:
     async def _generate_modification_plan(self, prompt: str, existing_files: dict) -> dict | None:
         self.log("info", "Analyzing existing files to create a modification plan...")
         try:
-            file_context_string, source_root = self._format_files_for_prompt(existing_files)
+            # THIS IS THE FIX: This now gets summaries instead of full content.
+            file_summaries_string, source_root = self._format_files_for_prompt(existing_files)
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
                 prompt=prompt,
-                file_context_string=file_context_string,
+                # Use the new placeholder from the updated prompt.
+                file_summaries_string=file_summaries_string,
                 source_root_info=f"The primary Python package for this project seems to be in the '{source_root}' directory. All new Python files should respect this structure." if source_root else "This project appears to have its source files in the root directory."
             )
             plan = await self._get_plan_from_llm(plan_prompt)

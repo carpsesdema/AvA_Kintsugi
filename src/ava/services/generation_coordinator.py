@@ -2,9 +2,11 @@ import json
 import re
 from typing import Dict, Any, Optional
 import textwrap
+from pathlib import Path
 
 from src.ava.core.event_bus import EventBus
 from src.ava.prompts.prompts import CODER_PROMPT, SURGICAL_MODIFICATION_PROMPT
+from src.ava.utils.code_summarizer import CodeSummarizer
 
 # FINAL FIX: Update the simple prompt to also accept the existing files context.
 SIMPLE_FILE_PROMPT = textwrap.dedent("""
@@ -126,14 +128,26 @@ class GenerationCoordinator:
 
     def _build_python_coder_prompt(self, file_info: Dict[str, str], context: Any,
                                    generated_files: Dict[str, str]) -> str:
+        """
+        Builds the prompt for the Coder AI for a new Python file, using
+        summaries of previously generated files to manage token count.
+        """
+        # Create summaries of files generated in this session so far.
+        generated_files_summary = {}
+        for gen_file, gen_code in generated_files.items():
+            if gen_file.endswith(".py"):
+                summarizer = CodeSummarizer(gen_code)
+                generated_files_summary[gen_file] = summarizer.summarize()
+            else:
+                generated_files_summary[gen_file] = "Non-Python file."
+
         return CODER_PROMPT.format(
             filename=file_info["filename"],
             purpose=file_info["purpose"],
             file_plan_json=json.dumps(context.plan, indent=2),
             symbol_index_json=json.dumps(context.project_index, indent=2),
-            existing_files_json=json.dumps(generated_files, indent=2),
-            dependency_map_json="{}",
-            project_structure_json="{}",
+            # Pass the summaries, not the full code.
+            generated_files_summary_json=json.dumps(generated_files_summary, indent=2),
             rag_context=context.rag_context
         )
 
@@ -147,17 +161,33 @@ class GenerationCoordinator:
         )
 
     def _build_modification_prompt(self, file_info: Dict[str, str], original_code: str, context: Any) -> str:
-        """Builds the prompt for surgical modification."""
-        # Provide a summary of other files for context, not their full content
-        other_files_summary = {
-            "project_plan": context.plan,
-            "symbol_index": context.project_index
-        }
+        """
+        Builds the prompt for surgical modification, providing the full content
+        of the target file but summaries of all other files.
+        """
+        # Create summaries of all *other* files in the project.
+        other_file_summaries = []
+        for other_filename, other_content in context.existing_files.items():
+            # Don't include the file being modified in the summaries context.
+            if other_filename == file_info["filename"]:
+                continue
+
+            summary = ""
+            if other_filename.endswith(".py"):
+                summarizer = CodeSummarizer(other_content)
+                summary = summarizer.summarize()
+            else:
+                summary = f"// Non-Python file ({Path(other_filename).suffix}), content not shown."
+
+            other_file_summaries.append(f"### File: `{other_filename}`\n```\n{summary}\n```")
+
+        other_file_summaries_string = "\n\n".join(other_file_summaries)
+
         return SURGICAL_MODIFICATION_PROMPT.format(
             filename=file_info["filename"],
             original_code=original_code,
             purpose=file_info["purpose"],
-            file_context_string=json.dumps(other_files_summary, indent=2)
+            other_file_summaries_string=other_file_summaries_string
         )
 
     def robust_clean_llm_output(self, content: str) -> str:
