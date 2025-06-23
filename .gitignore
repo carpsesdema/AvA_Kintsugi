@@ -82,3 +82,4 @@ yarn-error.log*
 # ZIP files (often used for updates or temporary archives)
 *.zip!/config/
 src/ava/config/role_assignments.json
+!/rag_db/

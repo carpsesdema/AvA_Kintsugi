@@ -98,8 +98,6 @@ class ChatInterface(QWidget):
         self.conversation_history = []
         self.streaming_message_widget = None
         self.streaming_sender = "Kintsugi AvA"  # Default sender
-        self.current_app_state = AppState.BOOTSTRAP
-        self.current_project_name = None
 
         self.setAutoFillBackground(True)
         palette = self.palette()
@@ -162,13 +160,14 @@ class ChatInterface(QWidget):
 
         panel.hide()  # Hide it by default
         return panel
+
     # --- END NEW ---
 
     def _create_header_controls(self, layout: QVBoxLayout):
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
         self.mode_toggle = ModeToggle()
-        self.mode_toggle.modeChanged.connect(self._on_mode_changed)
+        self.mode_toggle.modeChanged.connect(self._on_mode_change_requested)
         self.mode_toggle.setMode(InteractionMode.BUILD, animate=False)
         controls_layout.addWidget(self.mode_toggle)
         controls_layout.addStretch()
@@ -176,20 +175,19 @@ class ChatInterface(QWidget):
 
     def _setup_event_subscriptions(self):
         self.event_bus.subscribe("app_state_changed", self._on_app_state_changed)
+        self.event_bus.subscribe("interaction_mode_changed", self._on_interaction_mode_changed)
         self.event_bus.subscribe("load_chat_success", self._on_chat_loaded)
         self.event_bus.subscribe("streaming_start", self.on_streaming_start)
         self.event_bus.subscribe("streaming_chunk", self.on_streaming_chunk)
         self.event_bus.subscribe("streaming_end", self.on_streaming_end)
+        self.event_bus.subscribe("chat_cleared", self.clear_chat)
 
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
 
-        # --- NEW: Connect events to show/hide the thinking indicator ---
         self.event_bus.subscribe("user_request_submitted", self.show_thinking_indicator)
         self.event_bus.subscribe("streaming_end", self.hide_thinking_indicator)
         self.event_bus.subscribe("ai_fix_workflow_complete", self.hide_thinking_indicator)
-        # --- END NEW ---
 
-    # --- NEW: Slots to control the thinking indicator's visibility ---
     def show_thinking_indicator(self, *args):
         """Shows the AI thinking panel."""
         self.thinking_panel.show()
@@ -197,20 +195,20 @@ class ChatInterface(QWidget):
     def hide_thinking_indicator(self, *args):
         """Hides the AI thinking panel."""
         self.thinking_panel.hide()
-    # --- END NEW ---
 
     def _scroll_to_bottom(self, min_val, max_val):
         self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
 
     def _on_app_state_changed(self, new_state: AppState, project_name: str = None):
-        self.current_app_state = new_state
-        self.current_project_name = project_name
+        """Listens for the authoritative state change and updates the UI."""
         if new_state == AppState.BOOTSTRAP:
             self.input_widget.setPlaceholderText("Describe the new application you want to build...")
         elif new_state == AppState.MODIFY:
             self.input_widget.setPlaceholderText(f"What changes for '{project_name}'? Paste an image of an error!")
+
+        # Ensure the mode toggle reflects the current interaction mode
         current_mode = self.mode_toggle._current_mode
-        self._on_mode_changed(current_mode, is_state_change=True)
+        self._on_interaction_mode_changed(current_mode, is_state_change=True)
 
     def _on_chat_loaded(self, conversation_history: list):
         self.clear_chat(initial_message=None)
@@ -218,18 +216,20 @@ class ChatInterface(QWidget):
         for message in conversation_history:
             self._add_message(message, is_feedback=True)
 
-    def _on_mode_changed(self, new_mode: InteractionMode, is_state_change: bool = False):
-        self.event_bus.emit("interaction_mode_changed", new_mode)
+    def _on_mode_change_requested(self, new_mode: InteractionMode):
+        """Requests a change to the interaction mode."""
+        self.event_bus.emit("interaction_mode_change_requested", new_mode)
+
+    def _on_interaction_mode_changed(self, new_mode: InteractionMode, is_state_change: bool = False):
+        """Listens for the authoritative mode change and updates the UI."""
+        self.mode_toggle.setMode(new_mode)
         if new_mode == InteractionMode.CHAT:
             self.input_widget.setPlaceholderText("Ask a question, brainstorm ideas, or paste an image...")
             if not is_state_change: self._add_message(
                 message_data={"role": "assistant", "text": "Switched to Chat mode."}, is_feedback=True)
         elif new_mode == InteractionMode.BUILD:
-            if self.current_app_state == AppState.BOOTSTRAP:
-                self.input_widget.setPlaceholderText("Describe the new application you want to build...")
-            else:
-                self.input_widget.setPlaceholderText(
-                    f"What changes for '{self.current_project_name}'? Paste an image of an error!")
+            # The placeholder for build mode is now handled by _on_app_state_changed
+            pass
             if not is_state_change: self._add_message(
                 message_data={"role": "assistant", "text": "Switched to Build mode. Ready to code."}, is_feedback=True)
 

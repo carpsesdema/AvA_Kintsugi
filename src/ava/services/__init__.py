@@ -1,5 +1,6 @@
 # src/ava/services/__init__.py
 from .action_service import ActionService
+from .app_state_service import AppStateService
 from .architect_service import ArchitectService
 from .chunking_service import ChunkingService
 from .context_manager import ContextManager
@@ -18,6 +19,7 @@ from .validation_service import ValidationService
 
 __all__ = [
     "ActionService",
+    "AppStateService",
     "ArchitectService",
     "ChunkingService",
     "ContextManager",

@@ -13,7 +13,8 @@ from src.ava.core.managers.task_manager import TaskManager
 
 class WorkflowManager:
     """
-    Orchestrates AI workflows based on both application state and user interaction mode.
+    Orchestrates AI workflows based on the authoritative application state.
+    It reads state from AppStateService but does not set it.
     """
 
     def __init__(self, event_bus: EventBus):
@@ -21,23 +22,19 @@ class WorkflowManager:
         self.service_manager: ServiceManager = None
         self.window_manager: WindowManager = None
         self.task_manager: TaskManager = None
-        self.app_state: AppState = AppState.BOOTSTRAP
-        self.interaction_mode: InteractionMode = InteractionMode.BUILD
         self._last_error_report = None
-        print("[WorkflowManager] Initialized in BOOTSTRAP state, BUILD mode")
+        print("[WorkflowManager] Initialized")
 
     def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager, task_manager: TaskManager):
-        """Set references to other managers and subscribe to state-changing events."""
+        """Set references to other managers and subscribe to relevant events."""
         self.service_manager = service_manager
         self.window_manager = window_manager
         self.task_manager = task_manager
-        self.event_bus.subscribe("project_loaded", self._on_project_activated)
-        self.event_bus.subscribe("new_project_created", self._on_project_activated)
-        self.event_bus.subscribe("session_cleared", self._on_session_cleared)
-        self.event_bus.subscribe("interaction_mode_changed", self.handle_mode_change)
         self.event_bus.subscribe("review_and_fix_from_plugin_requested", self.handle_review_and_fix_request)
         self.event_bus.subscribe("execution_failed", self.handle_execution_failed)
         self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
+        self.event_bus.subscribe("session_cleared", self._on_session_cleared)
+
 
     def handle_user_request(self, prompt: str, conversation_history: list,
                             image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None):
@@ -46,23 +43,31 @@ class WorkflowManager:
         if not stripped_prompt and not image_bytes:
             return
 
+        app_state_service = self.service_manager.get_app_state_service()
+        if not app_state_service:
+            self.log("error", "AppStateService not available.")
+            return
+
+        interaction_mode = app_state_service.get_interaction_mode()
+        app_state = app_state_service.get_app_state()
+
         if stripped_prompt.startswith('/'):
-            self._handle_slash_command(stripped_prompt)
+            self._handle_slash_command(stripped_prompt, app_state_service)
             return
 
         workflow_coroutine = None
-        if self.interaction_mode == InteractionMode.CHAT:
+        if interaction_mode == InteractionMode.CHAT:
             print("[WorkflowManager] Mode is CHAT. Starting general chat workflow...")
             workflow_coroutine = self._run_chat_workflow(prompt, image_bytes, image_media_type)
-        elif self.interaction_mode == InteractionMode.BUILD:
-            if self.app_state == AppState.BOOTSTRAP:
+        elif interaction_mode == InteractionMode.BUILD:
+            if app_state == AppState.BOOTSTRAP:
                 print("[WorkflowManager] Mode is BUILD, State is BOOTSTRAP. Starting new project workflow...")
                 workflow_coroutine = self._run_bootstrap_workflow(prompt, image_bytes)
-            elif self.app_state == AppState.MODIFY:
+            elif app_state == AppState.MODIFY:
                 print("[WorkflowManager] Mode is BUILD, State is MODIFY. Starting modification workflow...")
                 workflow_coroutine = self._run_modification_workflow(prompt, image_bytes)
         else:
-            self.log("error", f"Unknown interaction mode: {self.interaction_mode}")
+            self.log("error", f"Unknown interaction mode: {interaction_mode}")
             return
 
         if workflow_coroutine:
@@ -134,15 +139,19 @@ class WorkflowManager:
 
         project_manager = self.service_manager.get_project_manager()
         project_manager.clear_active_project()
-        self._on_project_cleared()
+
+        app_state_service = self.service_manager.get_app_state_service()
+        app_state_service.set_app_state(AppState.BOOTSTRAP)
+
         project_path = project_manager.new_project("New_AI_Project")
         if not project_path:
             QMessageBox.critical(None, "Project Creation Failed", "Could not create temporary project directory.")
             return
 
-        self.window_manager.update_project_display(project_manager.active_project_name)
-        self.window_manager.prepare_code_viewer_for_new_project()
-        self.event_bus.emit("new_project_created", project_path, project_manager.active_project_name)
+        # This is now the single point of truth for this state change.
+        # The WindowManager will listen for this event and update all UI.
+        app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
+
         architect_service = self.service_manager.get_architect_service()
         await architect_service.generate_or_modify(final_prompt, existing_files=None)
 
@@ -171,21 +180,7 @@ class WorkflowManager:
         architect_service = self.service_manager.get_architect_service()
         await architect_service.generate_or_modify(final_prompt, existing_files)
 
-    def handle_mode_change(self, new_mode: InteractionMode):
-        self.interaction_mode = new_mode
-        self.log("info", f"Switched to {new_mode.name} mode.")
-
-    def _on_project_activated(self, project_path: str, project_name: str):
-        self.log("info", f"Project '{project_name}' is active. Switching to MODIFY state.")
-        self.app_state = AppState.MODIFY
-        self.event_bus.emit("app_state_changed", self.app_state, project_name)
-
-    def _on_project_cleared(self):
-        self.log("info", "Project context cleared. Switching to BOOTSTRAP state.")
-        self.app_state = AppState.BOOTSTRAP
-        self.event_bus.emit("app_state_changed", self.app_state, None)
-
-    def _handle_slash_command(self, command: str):
+    def _handle_slash_command(self, command: str, app_state_service):
         parts = command.strip().split(' ', 1)
         command_name = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
@@ -193,19 +188,18 @@ class WorkflowManager:
             if not args:
                 self.log("warning", "Usage: /new <description of new project>")
                 return
-            self.handle_mode_change(InteractionMode.BUILD)
+            app_state_service.set_interaction_mode(InteractionMode.BUILD)
             self.task_manager.start_ai_workflow_task(self._run_bootstrap_workflow(args))
         elif command_name == "/build":
-            self.handle_mode_change(InteractionMode.BUILD)
+            app_state_service.set_interaction_mode(InteractionMode.BUILD)
         elif command_name == "/chat":
-            self.handle_mode_change(InteractionMode.CHAT)
+            app_state_service.set_interaction_mode(InteractionMode.CHAT)
         else:
             self.log("error", f"Unknown command: {command_name}")
 
     def _on_session_cleared(self):
         """Resets the state of this manager when a new session is started."""
         self._last_error_report = None
-        self._on_project_cleared()
 
     def handle_execution_failed(self, error_report: str):
         self._last_error_report = error_report

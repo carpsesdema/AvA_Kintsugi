@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from src.ava.core.event_bus import EventBus
+from src.ava.core.app_state import AppState
 
 if TYPE_CHECKING:
     from src.ava.core.managers.service_manager import ServiceManager
@@ -27,7 +28,8 @@ class ActionService:
     def handle_new_project(self):
         """Handles the 'New Project' button click."""
         project_manager = self.service_manager.get_project_manager()
-        if not project_manager:
+        app_state_service = self.service_manager.get_app_state_service()
+        if not project_manager or not app_state_service:
             return
 
         project_path = project_manager.new_project("New_Project")
@@ -36,16 +38,16 @@ class ActionService:
                                  "Could not initialize project. Please ensure Git is installed.")
             return
 
-        self.window_manager.update_project_display(project_manager.active_project_name)
-        self.window_manager.prepare_code_viewer_for_new_project()
-        self.event_bus.emit("new_project_created", project_path, project_manager.active_project_name)
+        app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
+
         if project_manager.repo and project_manager.repo.active_branch:
             self.event_bus.emit("branch_updated", project_manager.repo.active_branch.name)
 
     def handle_load_project(self):
         """Handles the 'Load Project' button click."""
         project_manager = self.service_manager.get_project_manager()
-        if not project_manager:
+        app_state_service = self.service_manager.get_app_state_service()
+        if not project_manager or not app_state_service:
             return
 
         path = QFileDialog.getExistingDirectory(self.window_manager.get_main_window(), "Load Project",
@@ -55,9 +57,8 @@ class ActionService:
             if project_path:
                 branch_name = project_manager.begin_modification_session()
                 self.log("info", f"Created modification branch: {branch_name}")
-                self.window_manager.update_project_display(project_manager.active_project_name)
-                self.window_manager.load_project_in_code_viewer(project_path)
-                self.event_bus.emit("project_loaded", project_path, project_manager.active_project_name)
+                app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
+
                 if project_manager.repo and project_manager.repo.active_branch:
                     self.event_bus.emit("branch_updated", project_manager.repo.active_branch.name)
 
@@ -71,12 +72,9 @@ class ActionService:
         if project_manager:
             project_manager.clear_active_project()
 
-        # Emit an event that WorkflowManager will listen for to reset its state
-        self.event_bus.emit("session_cleared")
-
-        if self.window_manager:
-            self.window_manager.update_project_display("(none)")
-            self.window_manager.prepare_code_viewer_for_new_project()
+        app_state_service = self.service_manager.get_app_state_service()
+        if app_state_service:
+            app_state_service.set_app_state(AppState.BOOTSTRAP)
 
         self.event_bus.emit("chat_cleared")
 

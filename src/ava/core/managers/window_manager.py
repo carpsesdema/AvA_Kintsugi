@@ -9,6 +9,7 @@ from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
 from src.ava.core.project_manager import ProjectManager
 from src.ava.core.managers.service_manager import ServiceManager
+from src.ava.core.app_state import AppState
 
 
 class WindowManager:
@@ -47,6 +48,21 @@ class WindowManager:
         self.plugin_management_dialog = PluginManagementDialog(plugin_manager, self.event_bus, self.main_window)
 
         print("[WindowManager] Windows initialized")
+
+    # --- THIS IS THE FIX ---
+    def handle_app_state_change(self, new_state: AppState, project_name: str | None):
+        """
+        Listens for global state changes and updates all relevant UI components.
+        This is the central point for UI reaction to state changes.
+        """
+        self.update_project_display(project_name or "(none)")
+
+        if new_state == AppState.MODIFY:
+            if self.project_manager and self.project_manager.active_project_path:
+                self.load_project_in_code_viewer(str(self.project_manager.active_project_path))
+        else:  # BOOTSTRAP state
+            self.prepare_code_viewer_for_new_project()
+    # --- END OF FIX ---
 
     # --- Window Getters ---
     def get_main_window(self) -> MainWindow:

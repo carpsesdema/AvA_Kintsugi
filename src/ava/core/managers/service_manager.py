@@ -10,7 +10,7 @@ from src.ava.core.execution_engine import ExecutionEngine
 from src.ava.core.plugins.plugin_manager import PluginManager
 
 from src.ava.services import (
-    ActionService, TerminalService, RAGManager, ArchitectService, ReviewerService,
+    ActionService, AppStateService, TerminalService, RAGManager, ArchitectService, ReviewerService,
     ValidationService, ProjectIndexerService, ImportFixerService,
     GenerationCoordinator, ContextManager, DependencyPlanner, IntegrationValidator
 )
@@ -36,6 +36,7 @@ class ServiceManager:
         self.plugin_manager: PluginManager = None
 
         # Initialize all service properties to None
+        self.app_state_service: AppStateService = None
         self.action_service: "ActionService" = None
         self.terminal_service: TerminalService = None
         self.rag_manager: RAGManager = None
@@ -74,16 +75,14 @@ class ServiceManager:
         """Initialize services with proper dependency order."""
         print("[ServiceManager] Initializing services...")
 
+        self.app_state_service = AppStateService(self.event_bus)
         self.project_indexer_service = ProjectIndexerService()
         self.import_fixer_service = ImportFixerService()
         self.context_manager = ContextManager(self)
         self.dependency_planner = DependencyPlanner(self)
         self.integration_validator = IntegrationValidator(self)
 
-        # --- THIS IS THE FIX ---
-        # Pass the project_root to the RAGManager
         self.rag_manager = RAGManager(self.event_bus, self.project_root)
-        # --- END OF FIX ---
         if self.project_manager:
             self.rag_manager.set_project_manager(self.project_manager)
 
@@ -99,12 +98,12 @@ class ServiceManager:
         self.validation_service = ValidationService(self.event_bus, self.project_manager, self.reviewer_service)
         self.terminal_service = TerminalService(self.event_bus, self.project_manager)
 
-        # ActionService is initialized here but wired up in the EventCoordinator
         self.action_service = ActionService(self.event_bus, self, None, None)
 
         print("[ServiceManager] Services initialized")
 
     # Getters...
+    def get_app_state_service(self) -> AppStateService: return self.app_state_service
     def get_action_service(self) -> ActionService: return self.action_service
     def get_llm_client(self) -> LLMClient: return self.llm_client
     def get_project_manager(self) -> ProjectManager: return self.project_manager
@@ -124,11 +123,11 @@ class ServiceManager:
 
     def is_fully_initialized(self) -> bool:
         return all([
-            self.llm_client, self.project_manager, self.execution_engine, self.terminal_service,
-            self.rag_manager, self.architect_service, self.reviewer_service, self.validation_service,
-            self.project_indexer_service, self.import_fixer_service, self.context_manager,
-            self.dependency_planner, self.integration_validator, self.generation_coordinator, self.plugin_manager,
-            self.action_service
+            self.app_state_service, self.llm_client, self.project_manager, self.execution_engine,
+            self.terminal_service, self.rag_manager, self.architect_service, self.reviewer_service,
+            self.validation_service, self.project_indexer_service, self.import_fixer_service,
+            self.context_manager, self.dependency_planner, self.integration_validator,
+            self.generation_coordinator, self.plugin_manager, self.action_service
         ])
 
     def get_all_services(self) -> dict:
