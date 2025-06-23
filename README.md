@@ -1,8 +1,15 @@
+# README.md
 # Avakin
 
 ### Build, Modify, and Debug at the Speed of Thought.
 
-![Avakin In Action](https://github.com/carpsesdema/Avakin/raw/master/Kapture%202024-06-19%20at%2018.06.15.gif)
+<div align="center">
+  <a href="https://buymeacoffee.com/snowballkori" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+</div>
+<br>
+<div align="center">
+  <img src="src/ava/assets/AvAkin.gif" alt="Avakin In Action" width="800"/>
+</div>
 
 <div align="center">
   <img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version">
@@ -34,26 +41,30 @@
     
     This is a tool for the underdog, by an underdog. It's my hope that it gives you the freedom to build your escape, your masterpiece, your future.
     
-    ## Getting Started
-    
-    ### 1. Download
-    
-    Grab the latest release from the **Releases** page. Download the `Avakin_Launcher.exe` and the main application folder.
-    
-    ### 2. Installation
-    
-    1.  Create a folder for your application (e.g., `C:\Avakin`).
-    2.  Place `Avakin_Launcher.exe` inside this folder.
-    3.  Place the `main` folder (containing `main.exe` and other files) inside this folder.
-    
-    Your final folder structure should look like this:
-    
+    ## Getting Started (Running from Source)
+
+    Avakin is designed to be run directly from source, giving you full control.
+
+    ### 1. Clone the Repository
+
+    First, clone the project to your local machine:
+
+    ```bash
+    git clone https://github.com/carpsesdema/AvA_Kintsugi.git
+    cd AvA_Kintsugi
     ```
-    C:\Avakin\
-    ├── Avakin_Launcher.exe
-    └── main\
-        ├── main.exe
-        └── ... (all other application files)
+
+    ### 2. Install Dependencies
+
+    It's highly recommended to use a Python virtual environment.
+
+    ```bash
+    # Create and activate a virtual environment (optional but recommended)
+    python -m venv .venv
+    source .venv/bin/activate  # On Windows, use: .venv\Scripts\activate
+
+    # Install the required packages
+    pip install -r src/ava/requirements.txt
     ```
     
     ### 3. Configure Your API Keys (Important!)
@@ -75,11 +86,11 @@
         -   (Optional) `DEEPSEEK_API_KEY`
     6.  Once you've added all your keys, click **OK** on the "Environment Variables" window, and then **OK** on the "System Properties" window to save everything.
     
-    **IMPORTANT NOTE:** You must close and restart Avakin Launcher (and any open command prompts) for these new settings to take effect!
+    **IMPORTANT NOTE:** You must close and restart your terminal or command prompt for these new settings to take effect!
     
     #### Alternative Method for Developers (.env file)
     
-    If you are running from source or prefer using `.env` files, you can create a file named `.env` in the root of the project (the same folder as `main.py`). Avakin will automatically load it.
+    If you prefer using `.env` files, you can create a file named `.env` in the root of the project (the same folder as `README.md`). Avakin will automatically load it.
     
     ```dotenv
     # .env file content
@@ -90,7 +101,12 @@
     
     ### 4. Launch!
     
-    Run `Avakin_Launcher.exe`. It will check for updates and then launch the main application. You're ready to go!
+    Run the main application script from the root directory of the project:
+
+    ```bash
+    python src/ava/main.py
+    ```
+    You're ready to go!
     
     ## Quick Usage
     
@@ -100,6 +116,8 @@
     ## Support Avakin's Mission
     
     Avakin is a labor of love from a solo developer. If this tool helps you build something amazing, saves you time, or just makes your coding life a little easier, please consider supporting its development. Every little bit helps me keep the lights on and continue making Avakin more powerful for everyone.
+
+    You can support the project via [Buy Me a Coffee](https://buymeacoffee.com/snowballkori)!
     
     ## Contributing
     
