@@ -17,15 +17,19 @@ class PluginConfig:
     """
 
     def __init__(self, project_root: Path):
-        # --- THIS IS THE FIX ---
+        # --- THIS IS THE DEFINITIVE FIX ---
         # This logic correctly finds the config file whether running from
-        # source or as a bundled executable. project_root is the repo root.
+        # source or as a bundled executable.
         if getattr(sys, 'frozen', False):
-            # For bundled executable, config is in `config` dir next to exe
-            self.config_file = project_root / "config" / "plugins.json"
+            # When bundled, assets are in the temporary _MEIPASS folder.
+            base_path = Path(sys._MEIPASS)
+            config_dir = base_path / "ava" / "config"
         else:
-            # For source, use the location inside the src directory
-            self.config_file = project_root / "src" / "ava" / "config" / "plugins.json"
+            # When running from source, find the config dir relative to this file.
+            # .../src/ava/core/plugins/plugin_config.py -> .../src/ava/config
+            config_dir = Path(__file__).resolve().parent.parent.parent / "config"
+
+        self.config_file = config_dir / "plugins.json"
         # --- END OF FIX ---
 
         self.config_file.parent.mkdir(exist_ok=True, parents=True)

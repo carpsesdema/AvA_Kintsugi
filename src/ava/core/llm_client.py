@@ -1,3 +1,4 @@
+# src/ava/core/llm_client.py
 import os
 import json
 import base64
@@ -39,8 +40,9 @@ class LLMClient:
             base_path = Path(sys._MEIPASS)
             self.config_dir = base_path / "ava" / "config"
         else:
-            # When running from source, the path is relative to the project root.
-            self.config_dir = project_root / "src" / "ava" / "config"
+            # When running from source, find the config dir relative to this file.
+            # .../src/ava/core/llm_client.py -> .../src/ava/config
+            self.config_dir = Path(__file__).resolve().parent.parent / "config"
         # --- END OF FIX ---
 
         self.config_dir.mkdir(exist_ok=True, parents=True)

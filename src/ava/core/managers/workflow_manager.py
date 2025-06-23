@@ -1,4 +1,5 @@
 # src/ava/core/managers/workflow_manager.py
+import asyncio
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from typing import Optional
 
@@ -249,24 +250,24 @@ class WorkflowManager:
 
     def handle_review_and_fix_button(self):
         if self._last_error_report:
-            self._initiate_fix_workflow(self._last_error_report)
+            asyncio.create_task(self._initiate_fix_workflow(self._last_error_report))
         else:
             self.log("warning", "Fix button clicked but no error report was available.")
 
     def handle_review_and_fix_request(self, error_report: str):
         if error_report:
-            self._initiate_fix_workflow(error_report)
+            asyncio.create_task(self._initiate_fix_workflow(error_report))
         else:
             self.log("warning", "Received an empty error report to fix.")
 
     def handle_highlighted_error_fix_request(self, highlighted_text: str):
         if self._last_error_report:
-            self._initiate_fix_workflow(
-                f"User highlighted: {highlighted_text}\n\nFull error:\n{self._last_error_report}")
+            asyncio.create_task(self._initiate_fix_workflow(
+                f"User highlighted: {highlighted_text}\n\nFull error:\n{self._last_error_report}"))
         else:
             self.log("warning", "A fix was requested for highlighted text, but no previous error is stored.")
 
-    def _initiate_fix_workflow(self, error_report: str):
+    async def _initiate_fix_workflow(self, error_report: str):
         if not (self.service_manager and self.task_manager): return
         if self.window_manager and self.window_manager.get_code_viewer():
             self.window_manager.get_code_viewer().terminal.show_fixing_in_progress()
