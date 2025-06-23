@@ -1,3 +1,4 @@
+# src/ava/services/generation_coordinator.py
 import json
 import re
 from typing import Dict, Any, Optional
@@ -68,16 +69,11 @@ class GenerationCoordinator:
                     self.log("error", f"Could not find file info for {filename} in plan. Skipping.")
                     continue
 
-                # Generate the file using the CURRENT state of the context
                 generated_content = await self._generate_single_file(file_info, context, generated_files)
 
                 if generated_content is not None:
                     generated_files[filename] = generated_content
-                    # --- THE CRITICAL FIX ---
-                    # Update the context with the file we just created.
-                    # This ensures the NEXT file knows about this one. This creates the "rolling context".
-                    context = self.context_manager.update_session_context(context, {filename: generated_content})
-                    # --- END CRITICAL FIX ---
+                    context = await self.context_manager.update_session_context(context, {filename: generated_content})
                 else:
                     self.log("error", f"Failed to generate content for {filename}.")
                     generated_files[filename] = f"# ERROR: Failed to generate content for {filename}"
@@ -100,8 +96,8 @@ class GenerationCoordinator:
         is_modification = filename in context.existing_files
 
         if is_modification:
-            original_code = context.existing_files[filename]
-            prompt = self._build_modification_prompt(file_info, original_code, context)
+            original_code = context.existing_files.get(filename, "")
+            prompt = self._build_modification_prompt(file_info, original_code, context, generated_files)
         elif filename.endswith('.py'):
             prompt = self._build_python_coder_prompt(file_info, context, generated_files)
         else:
@@ -128,26 +124,18 @@ class GenerationCoordinator:
 
     def _build_python_coder_prompt(self, file_info: Dict[str, str], context: Any,
                                    generated_files: Dict[str, str]) -> str:
-        """
-        Builds the prompt for the Coder AI for a new Python file, using
-        summaries of previously generated files to manage token count.
-        """
-        # Create summaries of files generated in this session so far.
-        generated_files_summary = {}
-        for gen_file, gen_code in generated_files.items():
-            if gen_file.endswith(".py"):
-                summarizer = CodeSummarizer(gen_code)
-                generated_files_summary[gen_file] = summarizer.summarize()
-            else:
-                generated_files_summary[gen_file] = "Non-Python file."
+        python_generated_files = {
+            filename: code
+            for filename, code in generated_files.items()
+            if filename.endswith('.py')
+        }
 
         return CODER_PROMPT.format(
             filename=file_info["filename"],
             purpose=file_info["purpose"],
             file_plan_json=json.dumps(context.plan, indent=2),
             symbol_index_json=json.dumps(context.project_index, indent=2),
-            # Pass the summaries, not the full code.
-            generated_files_summary_json=json.dumps(generated_files_summary, indent=2),
+            generated_files_code_json=json.dumps(python_generated_files, indent=2),
             rag_context=context.rag_context
         )
 
@@ -157,28 +145,27 @@ class GenerationCoordinator:
             filename=file_info["filename"],
             purpose=file_info["purpose"],
             file_plan_json=json.dumps(context.plan, indent=2),
-            existing_files_json=json.dumps(generated_files, indent=2)  # Pass the rolling context
+            existing_files_json=json.dumps(generated_files, indent=2)
         )
 
-    def _build_modification_prompt(self, file_info: Dict[str, str], original_code: str, context: Any) -> str:
+    def _build_modification_prompt(self, file_info: Dict[str, str], original_code: str, context: Any, generated_files: Dict[str, str]) -> str:
         """
-        Builds the prompt for surgical modification, providing the full content
-        of the target file but summaries of all other files.
+        Builds the prompt for surgical modification, providing summaries of ALL
+        other files in their most up-to-date state.
         """
-        # Create summaries of all *other* files in the project.
+        # Combine original project files with files generated/modified in this session.
+        # The `update` method ensures newly modified files overwrite the originals.
+        all_known_files = context.existing_files.copy()
+        all_known_files.update(generated_files)
+
         other_file_summaries = []
-        for other_filename, other_content in context.existing_files.items():
-            # Don't include the file being modified in the summaries context.
+        # Iterate through the complete, up-to-date list of all files.
+        for other_filename, other_content in all_known_files.items():
+            # Exclude the file currently being modified from the context summaries.
             if other_filename == file_info["filename"]:
                 continue
 
-            summary = ""
-            if other_filename.endswith(".py"):
-                summarizer = CodeSummarizer(other_content)
-                summary = summarizer.summarize()
-            else:
-                summary = f"// Non-Python file ({Path(other_filename).suffix}), content not shown."
-
+            summary = CodeSummarizer(other_content).summarize() if other_filename.endswith(".py") else f"// Non-Python file ({Path(other_filename).suffix})."
             other_file_summaries.append(f"### File: `{other_filename}`\n```\n{summary}\n```")
 
         other_file_summaries_string = "\n\n".join(other_file_summaries)

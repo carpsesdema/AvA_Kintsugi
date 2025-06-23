@@ -141,6 +141,7 @@ class WorkflowManager:
         project_manager.clear_active_project()
 
         app_state_service = self.service_manager.get_app_state_service()
+        # Ensure we are in bootstrap state before creating the project directory
         app_state_service.set_app_state(AppState.BOOTSTRAP)
 
         project_path = project_manager.new_project("New_AI_Project")
@@ -148,12 +149,22 @@ class WorkflowManager:
             QMessageBox.critical(None, "Project Creation Failed", "Could not create temporary project directory.")
             return
 
-        # This is now the single point of truth for this state change.
-        # The WindowManager will listen for this event and update all UI.
-        app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
-
+        # The Architect is called with `existing_files=None`, indicating a bootstrap operation.
         architect_service = self.service_manager.get_architect_service()
-        await architect_service.generate_or_modify(final_prompt, existing_files=None)
+        generation_success = await architect_service.generate_or_modify(final_prompt, existing_files=None)
+
+        # --- THIS IS THE FIX ---
+        # Only after the initial generation is successful, we transition the application
+        # to the MODIFY state. This ensures the state is always accurate.
+        if generation_success:
+            self.log("info", "Bootstrap generation successful. Transitioning to MODIFY state.")
+            app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
+        else:
+            self.log("error", "Bootstrap generation failed. Remaining in BOOTSTRAP state.")
+            # Optionally, we could clean up the failed project directory here.
+            # For now, we leave it for inspection.
+        # --- END OF FIX ---
+
 
     async def _run_modification_workflow(self, prompt: str, image_bytes: Optional[bytes] = None):
         """Runs the workflow to modify an existing project from a prompt or image description."""

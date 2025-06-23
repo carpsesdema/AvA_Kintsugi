@@ -121,10 +121,10 @@ CODER_PROMPT = textwrap.dedent("""
     {{file_plan_json}}
     ```
 
-    **2. Summaries of Files Generated So Far:**
-    This JSON object contains high-level structural summaries of the other Python files already written in this session. Use this to understand dependencies and available classes/functions.
+    **2. Full Code of Files Generated So Far:**
+    This JSON object contains the complete source code of the other Python files already written in this session. Use this to ensure perfect integration.
     ```json
-    {{generated_files_summary_json}}
+    {{generated_files_code_json}}
     ```
 
     **3. PROJECT-WIDE SYMBOL INDEX (Your primary reference for imports!):**

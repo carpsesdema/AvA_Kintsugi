@@ -1,3 +1,4 @@
+# src/ava/services/project_indexer_service.py
 import ast
 from pathlib import Path
 from typing import Dict
@@ -39,34 +40,42 @@ class ProjectIndexerService:
                 print(f"[ProjectIndexer] Warning: Could not parse {py_file.name}: {e}")
 
         print(f"[ProjectIndexer] Scan complete. Found {len(self.index)} definitions.")
-        return self.index
+        return self.index.copy()
+
+    def get_symbols_from_content(self, content: str, module_path: str) -> Dict[str, str]:
+        """
+        Parses Python code content and returns a dictionary of its top-level symbols.
+
+        Args:
+            content: The Python source code as a string.
+            module_path: The dot-separated module path (e.g., 'my_app.utils').
+
+        Returns:
+            A dictionary mapping symbol names to the provided module_path.
+        """
+        symbols = {}
+        try:
+            tree = ast.parse(content)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    # A simple way to check for top-level is to check the column offset
+                    if hasattr(node, 'col_offset') and node.col_offset == 0:
+                        symbols[node.name] = module_path
+        except Exception as e:
+            print(f"[ProjectIndexer] Warning: Could not parse content for module '{module_path}': {e}")
+        return symbols
 
     def _parse_file(self, file_path: Path, project_root: Path):
-        """Parses a single Python file to find class and function definitions."""
+        """Parses a single Python file and adds its symbols to the index."""
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        tree = ast.parse(content)
-
         # Calculate the Python module path (e.g., 'game_logic.player')
         relative_path = file_path.relative_to(project_root)
-        # Ensure consistent path separators (posix style) for module paths
         module_path = str(relative_path.with_suffix('')).replace('\\', '/').replace('/', '.')
 
-        for node in ast.walk(tree):
-            # We only care about top-level definitions for this index
-            is_top_level = isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-
-            # Check if it's at the top level of the module (not nested in another function/class)
-            parent_is_module = isinstance(node, ast.AST) and hasattr(node, 'parent') and isinstance(node.parent,
-                                                                                                    ast.Module)
-
-            if is_top_level:
-                # A simpler way to check for top-level is to check the column offset
-                if hasattr(node, 'col_offset') and node.col_offset == 0:
-                    definition_name = node.name
-                    if definition_name in self.index:
-                        # Handle potential name collisions if necessary
-                        print(
-                            f"[ProjectIndexer] Warning: Duplicate definition found for '{definition_name}'. Overwriting.")
-                    self.index[definition_name] = module_path
+        new_symbols = self.get_symbols_from_content(content, module_path)
+        for symbol, mod_path in new_symbols.items():
+            if symbol in self.index:
+                print(f"[ProjectIndexer] Warning: Duplicate definition found for '{symbol}'. Overwriting.")
+            self.index[symbol] = mod_path

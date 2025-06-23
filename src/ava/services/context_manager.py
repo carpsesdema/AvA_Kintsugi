@@ -1,3 +1,4 @@
+# src/ava/services/context_manager.py
 import ast
 import json
 from pathlib import Path
@@ -36,6 +37,8 @@ class ContextManager:
             project_indexer = self.service_manager.get_project_indexer_service()
             project_manager = self.service_manager.get_project_manager()
 
+            # The initial index is built from files already on disk (for modifications)
+            # For new projects, this will be empty.
             if project_manager and project_manager.active_project_path:
                 project_index = project_indexer.build_index(project_manager.active_project_path)
             else:
@@ -46,9 +49,12 @@ class ContextManager:
             try:
                 plugin_manager = self.service_manager.get_plugin_manager()
                 if plugin_manager:
-                    living_design_agent = plugin_manager.get_active_plugin_instance("living_design_agent")
-                    if living_design_agent and hasattr(living_design_agent, 'get_current_documentation'):
-                        living_design_context = living_design_agent.get_current_documentation() or {}
+                    # This needs to be adapted to the new plugin manager API
+                    # For now, let's assume it might not exist.
+                    # living_design_agent = plugin_manager.get_active_plugin_instance("living_design_agent")
+                    # if living_design_agent and hasattr(living_design_agent, 'get_current_documentation'):
+                    #     living_design_context = living_design_agent.get_current_documentation() or {}
+                    pass # Placeholder
             except Exception as e:
                 print(f"Warning: Could not get living design context: {e}")
 
@@ -89,27 +95,38 @@ class ContextManager:
                 existing_files=existing_files or {}
             )
 
-    def update_session_context(self, context: GenerationContext,
-                               generated_files: Dict[str, str]) -> GenerationContext:
-        """Update context with newly generated files in this session."""
+    async def update_session_context(self, context: GenerationContext,
+                                     generated_files: Dict[str, str]) -> GenerationContext:
+        """
+        Update the context with a newly generated file, including its symbols.
+        This is the core of the "rolling context".
+        """
         try:
-            # Update generation session with completed files
-            for filename in generated_files:
+            # Update the generation session log with the completed file
+            for filename, code in generated_files.items():
                 if filename in context.generation_session:
                     context.generation_session[filename]["status"] = "completed"
-                    context.generation_session[filename]["generated_code"] = generated_files[filename]
+                    context.generation_session[filename]["generated_code"] = code
 
-            # Update project index with new files
+            # --- THIS IS THE FIX ---
+            # Get the indexer service to parse the new code
+            project_indexer = self.service_manager.get_project_indexer_service()
             updated_index = context.project_index.copy()
+
             for filename, code in generated_files.items():
                 if filename.endswith('.py'):
-                    module_name = filename.replace('.py', '').replace('/', '.')
-                    updated_index[module_name] = self._extract_code_summary(code)
+                    # Convert file path to module path (e.g., 'src/utils/helpers.py' -> 'src.utils.helpers')
+                    module_path = filename.replace('.py', '').replace('/', '.')
+                    # Get all top-level symbols (classes, functions) from the new code
+                    new_symbols = project_indexer.get_symbols_from_content(code, module_path)
+                    # Add these new symbols to our master index for the next generation step
+                    updated_index.update(new_symbols)
+            # --- END OF FIX ---
 
-            # Create updated context
+            # Create and return the new, updated context object
             updated_context = GenerationContext(
                 plan=context.plan,
-                project_index=updated_index,
+                project_index=updated_index, # Use the updated index
                 living_design_context=context.living_design_context,
                 dependency_order=context.dependency_order,
                 generation_session=context.generation_session,
@@ -122,6 +139,8 @@ class ContextManager:
 
         except Exception as e:
             print(f"Error updating session context: {e}")
+            import traceback
+            traceback.print_exc()
             return context
 
     def get_filtered_context_for_file(self, filename: str, context: GenerationContext) -> Dict[str, Any]:
