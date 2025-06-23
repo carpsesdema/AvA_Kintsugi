@@ -1,3 +1,4 @@
+# src/ava/utils/code_summarizer.py
 import ast
 
 
@@ -22,9 +23,10 @@ class CodeSummarizer(ast.NodeVisitor):
             tree = ast.parse(self.source_code)
             self.visit(tree)
             return "\n".join(self.summary)
-        except SyntaxError:
-            # If the code can't be parsed, return it as-is.
-            return self.source_code
+        except SyntaxError as e:
+            # If the code can't be parsed, return a clear error message
+            # instead of the full, potentially huge, source code.
+            return f"# [CodeSummarizer] Error: Could not parse file due to SyntaxError: {e}"
 
     def visit_Import(self, node: ast.Import):
         for alias in node.names:
