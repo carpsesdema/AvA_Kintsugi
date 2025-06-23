@@ -1,5 +1,7 @@
 # src/ava/core/managers/service_manager.py
+from __future__ import annotations
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
@@ -7,17 +9,14 @@ from src.ava.core.project_manager import ProjectManager
 from src.ava.core.execution_engine import ExecutionEngine
 from src.ava.core.plugins.plugin_manager import PluginManager
 
-from src.ava.services.terminal_service import TerminalService
-from src.ava.services.rag_manager import RAGManager
-from src.ava.services.architect_service import ArchitectService
-from src.ava.services.reviewer_service import ReviewerService
-from src.ava.services.validation_service import ValidationService
-from src.ava.services.project_indexer_service import ProjectIndexerService
-from src.ava.services.import_fixer_service import ImportFixerService
-from src.ava.services.generation_coordinator import GenerationCoordinator
-from src.ava.services.context_manager import ContextManager
-from src.ava.services.dependency_planner import DependencyPlanner
-from src.ava.services.integration_validator import IntegrationValidator
+from src.ava.services import (
+    ActionService, TerminalService, RAGManager, ArchitectService, ReviewerService,
+    ValidationService, ProjectIndexerService, ImportFixerService,
+    GenerationCoordinator, ContextManager, DependencyPlanner, IntegrationValidator
+)
+
+if TYPE_CHECKING:
+    from src.ava.services.action_service import ActionService
 
 
 class ServiceManager:
@@ -37,6 +36,7 @@ class ServiceManager:
         self.plugin_manager: PluginManager = None
 
         # Initialize all service properties to None
+        self.action_service: "ActionService" = None
         self.terminal_service: TerminalService = None
         self.rag_manager: RAGManager = None
         self.architect_service: ArchitectService = None
@@ -99,9 +99,13 @@ class ServiceManager:
         self.validation_service = ValidationService(self.event_bus, self.project_manager, self.reviewer_service)
         self.terminal_service = TerminalService(self.event_bus, self.project_manager)
 
+        # ActionService is initialized here but wired up in the EventCoordinator
+        self.action_service = ActionService(self.event_bus, self, None, None)
+
         print("[ServiceManager] Services initialized")
 
     # Getters...
+    def get_action_service(self) -> ActionService: return self.action_service
     def get_llm_client(self) -> LLMClient: return self.llm_client
     def get_project_manager(self) -> ProjectManager: return self.project_manager
     def get_execution_engine(self) -> ExecutionEngine: return self.execution_engine
@@ -123,7 +127,8 @@ class ServiceManager:
             self.llm_client, self.project_manager, self.execution_engine, self.terminal_service,
             self.rag_manager, self.architect_service, self.reviewer_service, self.validation_service,
             self.project_indexer_service, self.import_fixer_service, self.context_manager,
-            self.dependency_planner, self.integration_validator, self.generation_coordinator, self.plugin_manager
+            self.dependency_planner, self.integration_validator, self.generation_coordinator, self.plugin_manager,
+            self.action_service
         ])
 
     def get_all_services(self) -> dict:

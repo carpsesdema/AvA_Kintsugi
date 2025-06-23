@@ -33,7 +33,7 @@ class WorkflowManager:
         self.task_manager = task_manager
         self.event_bus.subscribe("project_loaded", self._on_project_activated)
         self.event_bus.subscribe("new_project_created", self._on_project_activated)
-        self.event_bus.subscribe("new_session_requested", self.handle_new_session)
+        self.event_bus.subscribe("session_cleared", self._on_session_cleared)
         self.event_bus.subscribe("interaction_mode_changed", self.handle_mode_change)
         self.event_bus.subscribe("review_and_fix_from_plugin_requested", self.handle_review_and_fix_request)
         self.event_bus.subscribe("execution_failed", self.handle_execution_failed)
@@ -202,46 +202,10 @@ class WorkflowManager:
         else:
             self.log("error", f"Unknown command: {command_name}")
 
-    def handle_new_project(self):
-        if not (self.service_manager and self.window_manager): return
-        project_manager = self.service_manager.get_project_manager()
-        project_path = project_manager.new_project("New_Project")
-        if not project_path:
-            QMessageBox.critical(self.window_manager.get_main_window(), "Project Creation Failed",
-                                 "Could not initialize project. Please ensure Git is installed.")
-            return
-        self.window_manager.update_project_display(project_manager.active_project_name)
-        self.window_manager.prepare_code_viewer_for_new_project()
-        self.event_bus.emit("new_project_created", project_path, project_manager.active_project_name)
-        if project_manager.repo and project_manager.repo.active_branch:
-            self.event_bus.emit("branch_updated", project_manager.repo.active_branch.name)
-
-    def handle_load_project(self):
-        if not (self.service_manager and self.window_manager): return
-        project_manager = self.service_manager.get_project_manager()
-        path = QFileDialog.getExistingDirectory(self.window_manager.get_main_window(), "Load Project",
-                                                str(project_manager.workspace_root))
-        if path:
-            project_path = project_manager.load_project(path)
-            if project_path:
-                branch_name = project_manager.begin_modification_session()
-                self.log("info", f"Created modification branch: {branch_name}")
-                self.window_manager.update_project_display(project_manager.active_project_name)
-                self.window_manager.load_project_in_code_viewer(project_path)
-                self.event_bus.emit("project_loaded", project_path, project_manager.active_project_name)
-                if project_manager.repo and project_manager.repo.active_branch:
-                    self.event_bus.emit("branch_updated", project_manager.repo.active_branch.name)
-
-    def handle_new_session(self):
-        self.log("info", "Handling new session reset")
-        if self.task_manager: self.task_manager.cancel_all_tasks()
-        if self.service_manager: self.service_manager.get_project_manager().clear_active_project()
+    def _on_session_cleared(self):
+        """Resets the state of this manager when a new session is started."""
         self._last_error_report = None
         self._on_project_cleared()
-        if self.window_manager:
-            self.window_manager.update_project_display("(none)")
-            self.window_manager.prepare_code_viewer_for_new_project()
-        self.event_bus.emit("chat_cleared")
 
     def handle_execution_failed(self, error_report: str):
         self._last_error_report = error_report

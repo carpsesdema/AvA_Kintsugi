@@ -28,6 +28,13 @@ class EventCoordinator:
         self.task_manager = task_manager
         self.workflow_manager = workflow_manager
 
+        # Pass managers to the action service now that they are all available
+        action_service = self.service_manager.get_action_service()
+        if action_service:
+            action_service.window_manager = self.window_manager
+            action_service.task_manager = self.task_manager
+
+
     def wire_all_events(self):
         """Wire all events between components."""
         print("[EventCoordinator] Wiring all events...")
@@ -49,10 +56,15 @@ class EventCoordinator:
             print("[EventCoordinator] ✓ Chat session events wired")
 
     def _wire_ui_events(self):
-        if not all([self.workflow_manager, self.window_manager, self.service_manager]):
+        if not all([self.service_manager, self.window_manager]):
             return
-        self.event_bus.subscribe("new_project_requested", self.workflow_manager.handle_new_project)
-        self.event_bus.subscribe("load_project_requested", self.workflow_manager.handle_load_project)
+
+        action_service = self.service_manager.get_action_service()
+        if action_service:
+            self.event_bus.subscribe("new_project_requested", action_service.handle_new_project)
+            self.event_bus.subscribe("load_project_requested", action_service.handle_load_project)
+            self.event_bus.subscribe("new_session_requested", action_service.handle_new_session)
+
         self.event_bus.subscribe(
             "configure_models_requested",
             lambda: asyncio.create_task(self.window_manager.show_model_config_dialog())
@@ -70,7 +82,6 @@ class EventCoordinator:
                                      lambda name: asyncio.create_task(plugin_manager.stop_plugin(name)))
             self.event_bus.subscribe("plugin_reload_requested",
                                      lambda name: asyncio.create_task(plugin_manager.reload_plugin(name)))
-        self.event_bus.subscribe("new_session_requested", self.workflow_manager.handle_new_session)
         self.event_bus.subscribe("show_log_viewer_requested", self.window_manager.show_log_viewer)
         self.event_bus.subscribe("show_code_viewer_requested", self.window_manager.show_code_viewer)
         print("[EventCoordinator] ✓ UI events wired")
