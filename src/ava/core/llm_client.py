@@ -273,7 +273,10 @@ class LLMClient:
             async with client.messages.stream(
                     max_tokens=4096, model=model, messages=[{"role": "user", "content": content}], temperature=temp
             ) as stream:
-                async for text in stream.text_stream: yield text
+                async for event in stream:
+                    # The most robust way is to check the event type
+                    if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                        yield event.delta.text
         except Exception as e:
             yield f"\n\nError from Anthropic API: {e}"
 
@@ -288,9 +291,18 @@ class LLMClient:
             async with aiohttp.ClientSession() as session:
                 async with session.post(ollama_url, json=payload) as resp:
                     resp.raise_for_status()
-                    async for line in resp.content:
-                        if line:
-                            content = json.loads(line).get("message", {}).get("content")
-                            if content: yield content
+                    async for line_bytes in resp.content:
+                        if line_bytes:
+                            # CRITICAL FIX: Decode bytes to string before parsing
+                            line_str = line_bytes.decode('utf-8')
+                            try:
+                                # Each line is a separate JSON object
+                                chunk_json = json.loads(line_str)
+                                content = chunk_json.get("message", {}).get("content")
+                                if content:
+                                    yield content
+                            except json.JSONDecodeError:
+                                print(f"[LLMClient] Warning: Could not decode JSON line from Ollama stream: {line_str}")
+                                continue
         except Exception as e:
-            yield f"\n\nError: {e}"
+            yield f"\n\nError from Ollama: {e}"
