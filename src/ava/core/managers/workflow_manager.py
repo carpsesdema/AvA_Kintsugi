@@ -153,18 +153,11 @@ class WorkflowManager:
         architect_service = self.service_manager.get_architect_service()
         generation_success = await architect_service.generate_or_modify(final_prompt, existing_files=None)
 
-        # --- THIS IS THE FIX ---
-        # Only after the initial generation is successful, we transition the application
-        # to the MODIFY state. This ensures the state is always accurate.
         if generation_success:
             self.log("info", "Bootstrap generation successful. Transitioning to MODIFY state.")
             app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
         else:
             self.log("error", "Bootstrap generation failed. Remaining in BOOTSTRAP state.")
-            # Optionally, we could clean up the failed project directory here.
-            # For now, we leave it for inspection.
-        # --- END OF FIX ---
-
 
     async def _run_modification_workflow(self, prompt: str, image_bytes: Optional[bytes] = None):
         """Runs the workflow to modify an existing project from a prompt or image description."""
@@ -218,31 +211,45 @@ class WorkflowManager:
             self.window_manager.get_code_viewer().show_fix_button()
 
     def handle_review_and_fix_button(self):
+        """Handles the "Review & Fix" button click from the UI."""
         if self._last_error_report:
-            asyncio.create_task(self._initiate_fix_workflow(self._last_error_report))
+            self._initiate_fix_workflow(self._last_error_report)
         else:
             self.log("warning", "Fix button clicked but no error report was available.")
 
     def handle_review_and_fix_request(self, error_report: str):
+        """Handles a fix request from a plugin or other internal service."""
         if error_report:
-            asyncio.create_task(self._initiate_fix_workflow(error_report))
+            self._initiate_fix_workflow(error_report)
         else:
             self.log("warning", "Received an empty error report to fix.")
 
     def handle_highlighted_error_fix_request(self, highlighted_text: str):
+        """Handles a fix request from the user highlighting text in the terminal."""
         if self._last_error_report:
-            asyncio.create_task(self._initiate_fix_workflow(
-                f"User highlighted: {highlighted_text}\n\nFull error:\n{self._last_error_report}"))
+            self._initiate_fix_workflow(
+                f"User highlighted: {highlighted_text}\n\nFull error:\n{self._last_error_report}"
+            )
         else:
             self.log("warning", "A fix was requested for highlighted text, but no previous error is stored.")
 
-    async def _initiate_fix_workflow(self, error_report: str):
-        if not (self.service_manager and self.task_manager): return
+    def _initiate_fix_workflow(self, error_report: str):
+        """
+        Prepares and starts the single AI task for fixing an error.
+        This is now a synchronous method that creates the async task.
+        """
+        if not (self.service_manager and self.task_manager):
+            return
+
         if self.window_manager and self.window_manager.get_code_viewer():
             self.window_manager.get_code_viewer().terminal.show_fixing_in_progress()
+
         validation_service = self.service_manager.get_validation_service()
         if validation_service:
-            self.task_manager.start_ai_workflow_task(validation_service.review_and_fix_file(error_report))
+            # Get the coroutine object from the service
+            fix_coroutine = validation_service.review_and_fix_file(error_report)
+            # Start the one and only task for this workflow
+            self.task_manager.start_ai_workflow_task(fix_coroutine)
 
     def log(self, level, message):
         self.event_bus.emit("log_message_received", "WorkflowManager", level, message)
