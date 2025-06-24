@@ -1,12 +1,13 @@
 # src/ava/gui/editor_tab_manager.py
 from pathlib import Path
-from typing import Dict, Optional
-from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget
+from typing import Dict, Optional, List  # Added List
+from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget, QMessageBox  # Added QMessageBox
 from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QKeySequence, QShortcut
 
 from src.ava.gui.components import Colors, Typography
 from src.ava.gui.code_viewer_helpers import PythonHighlighter
+from src.ava.core.event_bus import EventBus  # Added EventBus
 
 
 class LineNumberArea(QWidget):
@@ -28,43 +29,27 @@ class EnhancedCodeEditor(QPlainTextEdit):
     A professional code editor with line numbers, current line highlighting,
     error highlighting, and enhanced editing keyboard shortcuts.
     """
-
-    # Signal emitted when content is modified
     content_changed = Signal()
-    # Signal emitted when save is requested
     save_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
-        # Use a proper programming font
         self.setFont(Typography.get_font(11, family="JetBrains Mono"))
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(' ') * 4)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-
         self.line_number_area = LineNumberArea(self)
-
-        # Colors
         self.current_line_color = QColor(Colors.ELEVATED_BG.name()).lighter(110)
         self.error_line_color = Colors.DIFF_ADD_BG
         self.line_number_color = Colors.TEXT_SECONDARY
         self.line_number_bg_color = Colors.SECONDARY_BG
-
-        # Track modification state
         self._is_dirty = False
         self._original_content = ""
-
         self.setup_styling()
         self.setup_shortcuts()
-
-        # Connect signals for line numbers and highlighting
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
-
-        # Connect content change tracking
         self.textChanged.connect(self._on_content_changed)
-
         self.update_line_number_area_width(0)
         self.highlight_current_line()
 
@@ -80,33 +65,26 @@ class EnhancedCodeEditor(QPlainTextEdit):
         """)
 
     def setup_shortcuts(self):
-        """Set up keyboard shortcuts for the editor."""
-        # Save shortcut
         save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
         save_shortcut.activated.connect(self.save_requested.emit)
 
     def set_content(self, content: str):
-        """Set content and mark as clean."""
         self.setPlainText(content)
         self._original_content = content
         self._is_dirty = False
 
     def is_dirty(self) -> bool:
-        """Check if the content has been modified."""
         return self._is_dirty
 
     def mark_clean(self):
-        """Mark the content as saved/clean."""
         self._original_content = self.toPlainText()
         self._is_dirty = False
         self.content_changed.emit()
 
     def _on_content_changed(self):
-        """Handle content changes to track dirty state."""
         current_content = self.toPlainText()
         was_dirty = self._is_dirty
         self._is_dirty = current_content != self._original_content
-
         if was_dirty != self._is_dirty:
             self.content_changed.emit()
 
@@ -138,12 +116,10 @@ class EnhancedCodeEditor(QPlainTextEdit):
     def line_number_area_paint_event(self, event):
         painter = QPainter(self.line_number_area)
         painter.fillRect(event.rect(), self.line_number_bg_color)
-
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
         top = self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
         bottom = top + self.blockBoundingRect(block).height()
-
         height = self.fontMetrics().height()
         while block.isValid() and (top <= event.rect().bottom()):
             if block.isVisible() and (bottom >= event.rect().top()):
@@ -151,7 +127,6 @@ class EnhancedCodeEditor(QPlainTextEdit):
                 painter.setPen(self.line_number_color)
                 painter.drawText(0, int(top), self.line_number_area.width() - 5, height,
                                  Qt.AlignmentFlag.AlignRight, number)
-
             block = block.next()
             top = bottom
             bottom = top + self.blockBoundingRect(block).height()
@@ -160,7 +135,6 @@ class EnhancedCodeEditor(QPlainTextEdit):
     def highlight_current_line(self):
         extra_selections = []
         extra_selections = [sel for sel in self.extraSelections() if sel.format.background() != self.current_line_color]
-
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
             selection.format.setBackground(self.current_line_color)
@@ -168,12 +142,10 @@ class EnhancedCodeEditor(QPlainTextEdit):
             selection.cursor = self.textCursor()
             selection.cursor.clearSelection()
             extra_selections.append(selection)
-
         self.setExtraSelections(extra_selections)
 
     def highlight_error_line(self, line_number: int):
         extra_selections = self.extraSelections()
-
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(self.error_line_color)
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
@@ -181,7 +153,6 @@ class EnhancedCodeEditor(QPlainTextEdit):
         cursor = QTextCursor(block)
         selection.cursor = cursor
         extra_selections.append(selection)
-
         self.setExtraSelections(extra_selections)
         self.setTextCursor(cursor)
 
@@ -192,31 +163,23 @@ class EnhancedCodeEditor(QPlainTextEdit):
 
     def keyPressEvent(self, event):
         cursor = self.textCursor()
-
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             current_block = cursor.block()
             current_text = current_block.text()
             indent_level = len(current_text) - len(current_text.lstrip(' '))
-
             super().keyPressEvent(event)
-
             new_indent = ' ' * indent_level
             if current_text.strip().endswith(':'):
                 new_indent += ' ' * 4
-
             self.insertPlainText(new_indent)
-
         elif event.key() == Qt.Key.Key_Tab:
             self.handle_indent(cursor, "indent")
         elif event.key() == Qt.Key.Key_Backtab:
             self.handle_indent(cursor, "unindent")
-
         elif event.key() == Qt.Key.Key_D and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.duplicate_line(cursor)
-
         elif event.key() == Qt.Key.Key_Slash and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.toggle_comment(cursor)
-
         else:
             super().keyPressEvent(event)
 
@@ -225,12 +188,11 @@ class EnhancedCodeEditor(QPlainTextEdit):
             start, end = cursor.selectionStart(), cursor.selectionEnd()
             cursor.setPosition(start, QTextCursor.MoveMode.MoveAnchor)
             cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.MoveAnchor)
-
             cursor.beginEditBlock()
             while True:
                 if direction == "indent":
                     cursor.insertText(' ' * 4)
-                else:  # unindent
+                else:
                     if cursor.block().text().startswith(' ' * 4):
                         for _ in range(4): cursor.deleteChar()
                     elif cursor.block().text().startswith('\t'):
@@ -258,18 +220,15 @@ class EnhancedCodeEditor(QPlainTextEdit):
         cursor.beginEditBlock()
         start_pos = cursor.selectionStart()
         end_pos = cursor.selectionEnd()
-
         cursor.setPosition(start_pos, QTextCursor.MoveMode.MoveAnchor)
         start_block = cursor.blockNumber()
         cursor.setPosition(end_pos, QTextCursor.MoveMode.MoveAnchor)
         end_block = cursor.blockNumber()
-
         for block_num in range(start_block, end_block + 1):
             block = self.document().findBlockByNumber(block_num)
             cursor.setPosition(block.position(), QTextCursor.MoveMode.MoveAnchor)
             line_text = block.text()
             stripped_text = line_text.lstrip()
-
             if stripped_text.startswith('# '):
                 cursor.movePosition(QTextCursor.MoveMode.Right, count=line_text.find('# '))
                 cursor.deleteChar()
@@ -285,10 +244,20 @@ class EnhancedCodeEditor(QPlainTextEdit):
 class EditorTabManager:
     """Manages editor tabs with enhanced code editors and file saving."""
 
-    def __init__(self, tab_widget: QTabWidget):
+    def __init__(self, tab_widget: QTabWidget, event_bus: EventBus,
+                 project_manager):  # Added EventBus and ProjectManager
         self.tab_widget = tab_widget
-        self.editors: Dict[str, EnhancedCodeEditor] = {}
+        self.event_bus = event_bus
+        self.project_manager = project_manager  # Store ProjectManager
+        self.editors: Dict[str, EnhancedCodeEditor] = {}  # Stores abs_path_str -> editor
         self._setup_initial_state()
+        self._connect_events()  # Connect to events
+
+    def _connect_events(self):
+        """Connect to relevant events from the EventBus."""
+        self.event_bus.subscribe("file_renamed", self._handle_file_renamed)
+        self.event_bus.subscribe("items_deleted", self._handle_items_deleted)
+        # We can also listen for file_created if we want to auto-open new files, for example.
 
     def _setup_initial_state(self):
         self.clear_all_tabs()
@@ -302,197 +271,250 @@ class EditorTabManager:
         self.tab_widget.addTab(welcome_label, "Welcome")
 
     def prepare_for_new_project(self):
+        # Before clearing, check for unsaved changes
+        if self.has_unsaved_changes():
+            reply = QMessageBox.question(self.tab_widget, "Unsaved Changes",
+                                         "You have unsaved changes. Save them before creating a new project?",
+                                         QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+            if reply == QMessageBox.StandardButton.Save:
+                self.save_all_files()
+            elif reply == QMessageBox.StandardButton.Cancel:
+                return  # User cancelled the new project operation
+
         self.clear_all_tabs()
         self._add_welcome_tab("Ready for new project generation...")
         print("[EditorTabManager] State reset for new project session.")
 
     def clear_all_tabs(self):
         while self.tab_widget.count() > 0:
+            widget_to_remove = self.tab_widget.widget(0)
             self.tab_widget.removeTab(0)
+            if widget_to_remove in self.editors.values():  # Check if it's an editor we manage
+                path_key_to_remove = None
+                for key, editor_instance in self.editors.items():
+                    if editor_instance == widget_to_remove:
+                        path_key_to_remove = key
+                        break
+                if path_key_to_remove:
+                    del self.editors[path_key_to_remove]
+            widget_to_remove.deleteLater()  # Ensure proper cleanup
         self.editors.clear()
 
     def get_active_file_path(self) -> Optional[str]:
         current_index = self.tab_widget.currentIndex()
         if current_index == -1: return None
+        # The tooltip now stores the absolute path string
         return self.tab_widget.tabToolTip(current_index)
 
-    def create_or_update_tab(self, path_key: str, content: str):
-        """Creates a tab if it doesn't exist, or updates it if it does."""
-        if path_key not in self.editors:
-            self.create_editor_tab(path_key)
-        self.set_editor_content(path_key, content)
-        self.focus_tab(path_key)
+    def create_or_update_tab(self, abs_path_str: str, content: str):
+        if abs_path_str not in self.editors:
+            self.create_editor_tab(abs_path_str)
+        self.set_editor_content(abs_path_str, content)
+        self.focus_tab(abs_path_str)
 
-    def create_editor_tab(self, path_key: str) -> bool:
-        if path_key in self.editors:
-            return False
+    def create_editor_tab(self, abs_path_str: str) -> bool:
+        if abs_path_str in self.editors:
+            return False  # Already exists
 
         if self.tab_widget.count() == 1 and isinstance(self.tab_widget.widget(0), QLabel):
-            self.tab_widget.removeTab(0)
+            self.tab_widget.removeTab(0)  # Remove welcome tab
 
         editor = EnhancedCodeEditor()
-        if path_key.endswith('.py'):
+        if abs_path_str.endswith('.py'):
             PythonHighlighter(editor.document())
 
-        # Connect save signal
-        editor.save_requested.connect(lambda: self.save_file(path_key))
-        editor.content_changed.connect(lambda: self._update_tab_title(path_key))
+        editor.save_requested.connect(lambda: self.save_file(abs_path_str))
+        editor.content_changed.connect(lambda: self._update_tab_title(abs_path_str))
 
-        tab_index = self.tab_widget.addTab(editor, Path(path_key).name)
-        self.tab_widget.setTabToolTip(tab_index, path_key)
-        self.editors[path_key] = editor
-        print(f"[EditorTabManager] Created enhanced editor tab for: {path_key}")
+        tab_index = self.tab_widget.addTab(editor, Path(abs_path_str).name)
+        self.tab_widget.setTabToolTip(tab_index, abs_path_str)  # Store abs path in tooltip
+        self.editors[abs_path_str] = editor
+        print(f"[EditorTabManager] Created enhanced editor tab for: {abs_path_str}")
         return True
 
-    def set_editor_content(self, path_key: str, content: str):
-        if path_key in self.editors:
-            self.editors[path_key].set_content(content)
-            self._update_tab_title(path_key)
+    def set_editor_content(self, abs_path_str: str, content: str):
+        if abs_path_str in self.editors:
+            self.editors[abs_path_str].set_content(content)
+            self._update_tab_title(abs_path_str)
 
-    def stream_content_to_editor(self, path_key: str, chunk: str):
-        if path_key not in self.editors:
-            self.create_editor_tab(path_key)
-            self.focus_tab(path_key)
+    def stream_content_to_editor(self, abs_path_str: str, chunk: str):
+        if abs_path_str not in self.editors:
+            self.create_editor_tab(abs_path_str)
+            self.focus_tab(abs_path_str)
 
-        editor = self.editors[path_key]
+        editor = self.editors[abs_path_str]
         cursor = editor.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(chunk)
         editor.ensureCursorVisible()
 
-    def focus_tab(self, path_key: str):
+    def focus_tab(self, abs_path_str: str):
         for i in range(self.tab_widget.count()):
-            if self.tab_widget.tabToolTip(i) == path_key:
+            if self.tab_widget.tabToolTip(i) == abs_path_str:
                 self.tab_widget.setCurrentIndex(i)
                 return True
         return False
 
-    def open_file_in_tab(self, file_path: Path):
+    def open_file_in_tab(self, file_path: Path):  # Takes Path object
         if not file_path.is_file(): return
-        path_key = str(file_path.resolve())
-        if path_key in self.editors:
-            self.focus_tab(path_key)
+        abs_path_str = str(file_path.resolve())  # Ensure it's an absolute path string
+        if abs_path_str in self.editors:
+            self.focus_tab(abs_path_str)
             return
 
         try:
             content = file_path.read_text(encoding='utf-8')
-            self.create_or_update_tab(path_key, content)
+            self.create_or_update_tab(abs_path_str, content)
         except Exception as e:
             print(f"[EditorTabManager] Error opening file {file_path}: {e}")
+            QMessageBox.warning(self.tab_widget, "Open File Error", f"Could not open file:\n{file_path.name}\n\n{e}")
 
-    def close_tab(self, index: int):
-        tooltip = self.tab_widget.tabToolTip(index)
-        if tooltip in self.editors:
-            editor = self.editors[tooltip]
-            if editor.is_dirty():
-                self.save_file(tooltip)
+    def close_tab(self, index: int, force_close: bool = False):  # Added force_close
+        abs_path_str = self.tab_widget.tabToolTip(index)
+        if abs_path_str in self.editors:
+            editor = self.editors[abs_path_str]
+            if not force_close and editor.is_dirty():  # Check force_close flag
+                reply = QMessageBox.question(self.tab_widget, "Unsaved Changes",
+                                             f"File '{Path(abs_path_str).name}' has unsaved changes. Save before closing?",
+                                             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+                if reply == QMessageBox.StandardButton.Save:
+                    if not self.save_file(abs_path_str):
+                        return  # Save failed, don't close
+                elif reply == QMessageBox.StandardButton.Cancel:
+                    return  # User cancelled closing
 
-            del self.editors[tooltip]
+            del self.editors[abs_path_str]
 
         self.tab_widget.removeTab(index)
         if self.tab_widget.count() == 0:
             self._add_welcome_tab("All tabs closed. Open a file or generate code.")
 
-    def save_file(self, path_key: str) -> bool:
-        """Save the file content to disk."""
-        if path_key not in self.editors:
-            print(f"[EditorTabManager] Cannot save: No editor for {path_key}")
+    def save_file(self, abs_path_str: str) -> bool:
+        if abs_path_str not in self.editors:
+            print(f"[EditorTabManager] Cannot save: No editor for {abs_path_str}")
             return False
-
-        editor = self.editors[path_key]
+        editor = self.editors[abs_path_str]
         try:
-            file_path = Path(path_key)
+            file_path = Path(abs_path_str)
             content = editor.toPlainText()
-
-            # Ensure parent directory exists
             file_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Write content to file
             file_path.write_text(content, encoding='utf-8')
-
-            # Mark as clean
             editor.mark_clean()
-            self._update_tab_title(path_key)
-
+            self._update_tab_title(abs_path_str)
             print(f"[EditorTabManager] Saved file: {file_path.name}")
+            # Also inform ProjectManager to stage this change if it's part of an active project
+            if self.project_manager and self.project_manager.active_project_path and self.project_manager.repo:
+                if file_path.is_relative_to(self.project_manager.active_project_path):
+                    rel_path = file_path.relative_to(self.project_manager.active_project_path).as_posix()
+                    self.project_manager.stage_file(rel_path)  # Stage the save
             return True
-
         except Exception as e:
-            print(f"[EditorTabManager] Error saving file {path_key}: {e}")
-            self._show_save_error(Path(path_key).name, str(e))
+            print(f"[EditorTabManager] Error saving file {abs_path_str}: {e}")
+            self._show_save_error(Path(abs_path_str).name, str(e))
             return False
 
     def save_current_file(self) -> bool:
-        """Save the currently active file."""
         current_path = self.get_active_file_path()
         if current_path:
             return self.save_file(current_path)
         return False
 
     def save_all_files(self) -> bool:
-        """Save all modified files."""
         all_saved = True
-        for path_key, editor in self.editors.items():
+        for abs_path_str, editor in self.editors.items():
             if editor.is_dirty():
-                if not self.save_file(path_key):
+                if not self.save_file(abs_path_str):
                     all_saved = False
         return all_saved
 
     def has_unsaved_changes(self) -> bool:
-        """Check if any file has unsaved changes."""
         return any(editor.is_dirty() for editor in self.editors.values())
 
     def get_unsaved_files(self) -> list[str]:
-        """Get list of files with unsaved changes."""
-        return [path_key for path_key, editor in self.editors.items() if editor.is_dirty()]
+        return [abs_path_str for abs_path_str, editor in self.editors.items() if editor.is_dirty()]
 
-    def _update_tab_title(self, path_key: str):
-        """Update tab title to show dirty state."""
-        if path_key not in self.editors:
-            return
-
-        editor = self.editors[path_key]
-        base_name = Path(path_key).name
+    def _update_tab_title(self, abs_path_str: str):
+        if abs_path_str not in self.editors: return
+        editor = self.editors[abs_path_str]
+        base_name = Path(abs_path_str).name
         title = f"{'*' if editor.is_dirty() else ''}{base_name}"
-
         for i in range(self.tab_widget.count()):
-            if self.tab_widget.tabToolTip(i) == path_key:
+            if self.tab_widget.tabToolTip(i) == abs_path_str:
                 self.tab_widget.setTabText(i, title)
                 break
 
     def _show_save_error(self, filename: str, error: str):
-        """Logs a save error to the console instead of showing a dialog."""
-        print(f"CRITICAL: Could not save '{filename}'\nError: {error}")
+        QMessageBox.critical(self.tab_widget, "Save Error", f"Could not save '{filename}'\nError: {error}")
 
     def highlight_error(self, file_path_str: str, line_number: int):
-        """
-        Highlights an error in the specified file, opening it if necessary.
-        """
         try:
             file_to_highlight = Path(file_path_str).resolve()
             if not file_to_highlight.is_file():
                 print(f"[EditorTabManager] Error: Cannot highlight non-existent file: {file_to_highlight}")
                 return
-
-            path_key = str(file_to_highlight)
-
-            # If the tab isn't open, open it now.
-            if path_key not in self.editors:
-                print(f"[EditorTabManager] File '{file_to_highlight.name}' not open. Opening for error highlighting.")
+            abs_path_str = str(file_to_highlight)
+            if abs_path_str not in self.editors:
                 self.open_file_in_tab(file_to_highlight)
-
-            # Now that the tab is guaranteed to be open, apply the highlight.
-            if path_key in self.editors:
-                self.editors[path_key].highlight_error_line(line_number)
-                self.focus_tab(path_key)
-                print(f"[EditorTabManager] Highlighted error on line {line_number} in {path_key}")
+            if abs_path_str in self.editors:
+                self.editors[abs_path_str].highlight_error_line(line_number)
+                self.focus_tab(abs_path_str)
+                print(f"[EditorTabManager] Highlighted error on line {line_number} in {abs_path_str}")
             else:
-                print(f"[EditorTabManager] Failed to open or find editor for highlighting: {path_key}")
-
+                print(f"[EditorTabManager] Failed to open or find editor for highlighting: {abs_path_str}")
         except Exception as e:
             print(f"[EditorTabManager] Unexpected error during error highlighting: {e}")
 
     def clear_all_error_highlights(self):
-        """Clears error highlights from all open editor tabs."""
         for editor in self.editors.values():
             editor.clear_error_highlight()
+
+    # --- Event Handlers for File System Changes ---
+    def _handle_file_renamed(self, old_rel_path_str: str, new_rel_path_str: str):
+        if not self.project_manager or not self.project_manager.active_project_path:
+            return
+
+        old_abs_path_str = str((self.project_manager.active_project_path / old_rel_path_str).resolve())
+        new_abs_path_str = str((self.project_manager.active_project_path / new_rel_path_str).resolve())
+
+        if old_abs_path_str in self.editors:
+            editor = self.editors.pop(old_abs_path_str)
+            self.editors[new_abs_path_str] = editor
+
+            for i in range(self.tab_widget.count()):
+                if self.tab_widget.tabToolTip(i) == old_abs_path_str:
+                    self.tab_widget.setTabText(i, Path(new_abs_path_str).name + ("*" if editor.is_dirty() else ""))
+                    self.tab_widget.setTabToolTip(i, new_abs_path_str)
+                    print(f"[EditorTabManager] Updated tab for renamed file: {old_rel_path_str} -> {new_rel_path_str}")
+                    break
+        # If a directory was renamed, we might need to update paths of open files within it
+        # This is more complex and can be added if needed. For now, individual file renames are handled.
+
+    def _handle_items_deleted(self, deleted_rel_paths: List[str]):
+        if not self.project_manager or not self.project_manager.active_project_path:
+            return
+
+        for rel_path_str in deleted_rel_paths:
+            abs_path_str = str((self.project_manager.active_project_path / rel_path_str).resolve())
+
+            # Check if the deleted item itself is an open tab
+            if abs_path_str in self.editors:
+                for i in range(self.tab_widget.count()):
+                    if self.tab_widget.tabToolTip(i) == abs_path_str:
+                        self.close_tab(i, force_close=True)  # Force close without save prompt
+                        print(f"[EditorTabManager] Closed tab for deleted file: {rel_path_str}")
+                        break
+            else:
+                # Check if any open tabs are *within* a deleted directory
+                keys_to_remove = []
+                for open_abs_path_str in self.editors.keys():
+                    if Path(abs_path_str).is_dir() and Path(open_abs_path_str).is_relative_to(Path(abs_path_str)):
+                        for i in range(self.tab_widget.count()):
+                            if self.tab_widget.tabToolTip(i) == open_abs_path_str:
+                                self.close_tab(i, force_close=True)
+                                keys_to_remove.append(open_abs_path_str)
+                                print(
+                                    f"[EditorTabManager] Closed tab for file in deleted directory: {open_abs_path_str}")
+                                break
+                for key in keys_to_remove:  # Remove from self.editors after iteration
+                    if key in self.editors:
+                        del self.editors[key]

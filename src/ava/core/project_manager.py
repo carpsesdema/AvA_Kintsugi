@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
+from typing import List, Optional  # Added List and Optional
 
 try:
     import git
@@ -18,7 +19,6 @@ except ImportError:
 class ProjectManager:
     """
     Manages project lifecycles, including Git versioning and virtual environments.
-    Simplified with patch system removed - only handles full file operations.
     """
 
     def __init__(self, workspace_path: str = "workspace"):
@@ -214,107 +214,43 @@ class ProjectManager:
         except Exception:
             return None
 
-    def delete_file(self, relative_path: str) -> str:
-        if not self.active_project_path or not self.repo:
-            return "Error: No active project."
-        full_path = self.active_project_path / relative_path
-        if not full_path.exists():
-            return f"Error: File not found: {relative_path}"
-        try:
-            full_path.unlink()
-            self.repo.index.remove([str(relative_path)])
-            return f"Deleted and staged removal: {relative_path}"
-        except GitCommandError as e:
-            return f"Error removing file from Git: {e}"
-        except Exception as e:
-            return f"Error deleting file: {e}"
-
-    def stage_file(self, relative_path: str) -> str:
-        if not self.repo:
-            return "Error: No active Git repository."
-        full_path = self.active_project_path / relative_path
-        if not full_path.exists():
-            return f"Error: File not found: {relative_path}"
-        try:
-            self.repo.index.add([str(relative_path)])
-            return f"Staged '{relative_path}' for commit."
-        except GitCommandError as e:
-            return f"Error staging file: {e}"
-
-    def commit_staged_files(self, commit_message: str) -> str:
-        if not self.repo:
-            return "Error: No active Git repository."
-        if not self.repo.index.diff("HEAD"):
-            return "No changes staged for commit."
-        try:
-            self.repo.index.commit(commit_message)
-            return f"Committed staged changes to branch '{self.repo.active_branch.name}'."
-        except GitCommandError as e:
-            return f"Error committing changes: {e}"
-
     def get_project_files(self) -> dict[str, str]:
-        """
-        Gets all relevant text-based project files by walking the directory,
-        ignoring common temporary/binary directories and filtering by extension.
-        """
         if not self.active_project_path:
             return {}
-
         project_files = {}
         ignore_dirs = {'.git', '.venv', 'venv', '__pycache__', 'node_modules', 'dist', 'build', 'rag_db'}
-
-        # --- THIS IS THE FIX ---
-        # Define a set of common text-based and code-related extensions.
-        # This will prevent logs, images, and other binaries from being included.
         allowed_extensions = {
             '.py', '.md', '.txt', '.json', '.toml', '.ini', '.cfg', '.yaml', '.yml',
             '.html', '.css', '.js', '.ts', '.java', '.c', '.cpp', '.h', '.hpp',
             '.cs', '.go', '.rb', '.php', '.sh', '.bat', '.ps1', '.dockerfile',
-            '.gitignore', '.env',  # Common config/dotfiles
-            # Add any other specific text-based extensions your projects might use.
+            '.gitignore', '.env',
         }
-        # --- END OF FIX ---
-
         try:
             for item in self.active_project_path.rglob('*'):
                 if any(part in ignore_dirs for part in item.parts):
                     continue
-
                 if item.is_file():
-                    # --- THIS IS THE FIX ---
-                    # Only process files with allowed extensions.
                     if item.suffix.lower() not in allowed_extensions:
                         print(f"[ProjectManager] Skipping non-text/non-code file: {item.name}")
                         continue
-                    # --- END OF FIX ---
                     try:
                         relative_path = item.relative_to(self.active_project_path)
                         project_files[relative_path.as_posix()] = item.read_text(encoding='utf-8', errors='ignore')
                     except (IOError, UnicodeDecodeError) as e:
                         print(f"[ProjectManager] Skipping unreadable file {item}: {e}")
-
             print(f"[ProjectManager] Retrieved {len(project_files)} relevant project files.")
             return project_files
-
         except Exception as e:
             print(f"[ProjectManager] An unexpected error occurred in get_project_files: {e}")
             return {}
 
     def get_git_diff(self) -> str:
-        """
-        Gets the git diff of staged and unstaged changes against the last commit.
-
-        Returns:
-            A string containing the git diff, or an explanatory string on error.
-        """
         if not self.repo:
             return "No Git repository available."
         try:
             if not self.repo.head.is_valid():
                 return self.repo.git.diff('--cached')
-
             return self.repo.git.diff('HEAD')
-
         except (GitCommandError, ValueError) as e:
             print(f"[ProjectManager] Warning: Could not get git diff (might be a new repo): {e}")
             return "Could not retrieve git diff. Repository might be in an empty state."
@@ -350,3 +286,196 @@ class ProjectManager:
             raise RuntimeError(f"Virtual environment creation failed: {e.stderr}")
         except Exception as e:
             raise
+
+    # --- NEW FILE OPERATION METHODS ---
+
+    def rename_item(self, relative_item_path_str: str, new_name_str: str) -> tuple[bool, str, Optional[str]]:
+        """
+        Renames a file or directory within the active project and stages the change in Git.
+        Returns (success_status, message, new_relative_path_str).
+        """
+        if not self.active_project_path or not self.repo:
+            return False, "No active project or repository.", None
+
+        old_abs_path = self.active_project_path / relative_item_path_str
+        if not old_abs_path.exists():
+            return False, f"Error: Item not found: {relative_item_path_str}", None
+
+        # Basic validation for new name (e.g., no slashes)
+        if '/' in new_name_str or '\\' in new_name_str:
+            return False, "Error: New name cannot contain path separators.", None
+
+        new_abs_path = old_abs_path.parent / new_name_str
+        new_relative_path_str = new_abs_path.relative_to(self.active_project_path).as_posix()
+
+        if new_abs_path.exists():
+            return False, f"Error: An item named '{new_name_str}' already exists.", None
+
+        try:
+            # Use git mv for renaming, as it handles staging correctly
+            self.repo.git.mv(str(old_abs_path), str(new_abs_path))
+            print(f"[ProjectManager] Renamed '{relative_item_path_str}' to '{new_relative_path_str}' and staged.")
+            return True, f"Renamed to '{new_name_str}'.", new_relative_path_str
+        except GitCommandError as e:
+            msg = f"Error renaming item with Git: {e}"
+            print(f"[ProjectManager] {msg}")
+            # Attempt a fallback manual rename + stage if git mv fails (e.g., on case-insensitive filesystems sometimes)
+            try:
+                old_abs_path.rename(new_abs_path)
+                self.repo.index.add([str(new_abs_path)])
+                self.repo.index.remove([str(old_abs_path)], working_tree=False)  # Remove old path from index
+                print(
+                    f"[ProjectManager] Fallback: Manually renamed '{relative_item_path_str}' to '{new_relative_path_str}' and staged.")
+                return True, f"Renamed to '{new_name_str}'. (Used fallback)", new_relative_path_str
+            except Exception as manual_e:
+                msg_manual = f"Fallback rename also failed: {manual_e}"
+                print(f"[ProjectManager] {msg_manual}")
+                return False, f"Error: {msg}. Fallback: {msg_manual}", None
+        except Exception as e:
+            msg = f"Unexpected error renaming item: {e}"
+            print(f"[ProjectManager] {msg}")
+            return False, msg, None
+
+    def delete_items(self, relative_item_paths: List[str]) -> tuple[bool, str]:
+        """
+        Deletes files or directories within the active project and stages the changes in Git.
+        """
+        if not self.active_project_path or not self.repo:
+            return False, "No active project or repository."
+
+        deleted_paths_git = []
+        errors = []
+
+        for rel_path_str in relative_item_paths:
+            abs_path = self.active_project_path / rel_path_str
+            if not abs_path.exists():
+                errors.append(f"Item not found: {rel_path_str}")
+                continue
+
+            try:
+                if abs_path.is_file():
+                    abs_path.unlink()
+                elif abs_path.is_dir():
+                    shutil.rmtree(abs_path)
+                deleted_paths_git.append(str(abs_path))  # Use absolute path for git rm
+                print(f"[ProjectManager] Deleted item: {rel_path_str}")
+            except Exception as e:
+                err_msg = f"Error deleting '{rel_path_str}': {e}"
+                print(f"[ProjectManager] {err_msg}")
+                errors.append(err_msg)
+
+        if deleted_paths_git:
+            try:
+                # Stage the removals. Git handles whether it's a file or directory.
+                # The files/dirs are already deleted from the working tree.
+                self.repo.index.remove(deleted_paths_git, r=True, f=True, working_tree=True)
+                print(f"[ProjectManager] Staged deletion of: {', '.join(relative_item_paths)}")
+            except GitCommandError as e:
+                err_msg = f"Error staging deletions with Git: {e}"
+                print(f"[ProjectManager] {err_msg}")
+                errors.append(err_msg)
+
+        if errors:
+            return False, "Some items could not be deleted:\n" + "\n".join(errors)
+        if not deleted_paths_git and not errors:
+            return False, "No items were specified for deletion."
+        return True, f"Successfully deleted and staged {len(deleted_paths_git)} item(s)."
+
+    def create_file(self, relative_parent_dir_str: str, new_filename_str: str) -> tuple[bool, str, Optional[str]]:
+        """
+        Creates a new empty file in the specified directory and stages it in Git.
+        Returns (success_status, message, new_relative_file_path_str).
+        """
+        if not self.active_project_path or not self.repo:
+            return False, "No active project or repository.", None
+
+        parent_abs_path = self.active_project_path / relative_parent_dir_str
+        if not parent_abs_path.is_dir():  # Ensure parent is a directory
+            parent_abs_path = parent_abs_path.parent  # If a file was selected, use its parent
+
+        if not parent_abs_path.exists():  # Create parent if it doesn't exist
+            parent_abs_path.mkdir(parents=True, exist_ok=True)
+            print(f"[ProjectManager] Created directory: {parent_abs_path}")
+            # Need to stage the parent directory if it's new and we want to commit it (e.g., via .gitkeep)
+            # For now, just creating it is fine. Git will track it once a file is added.
+
+        # Basic validation for new file name
+        if not new_filename_str or '/' in new_filename_str or '\\' in new_filename_str:
+            return False, "Error: Invalid file name.", None
+
+        new_file_abs_path = parent_abs_path / new_filename_str
+        new_file_rel_path_str = new_file_abs_path.relative_to(self.active_project_path).as_posix()
+
+        if new_file_abs_path.exists():
+            return False, f"Error: File '{new_filename_str}' already exists.", None
+
+        try:
+            new_file_abs_path.touch()  # Create empty file
+            self.repo.index.add([str(new_file_abs_path)])
+            print(f"[ProjectManager] Created and staged new file: {new_file_rel_path_str}")
+            return True, f"File '{new_filename_str}' created.", new_file_rel_path_str
+        except GitCommandError as e:
+            msg = f"Error staging new file with Git: {e}"
+            print(f"[ProjectManager] {msg}")
+            return False, msg, None
+        except Exception as e:
+            msg = f"Unexpected error creating file: {e}"
+            print(f"[ProjectManager] {msg}")
+            return False, msg, None
+
+    def create_folder(self, relative_parent_dir_str: str, new_folder_name_str: str) -> tuple[bool, str, Optional[str]]:
+        """
+        Creates a new empty folder in the specified directory.
+        Git doesn't track empty folders, but we create it. A .gitkeep file could be added to track it.
+        Returns (success_status, message, new_relative_folder_path_str).
+        """
+        if not self.active_project_path:  # No repo check needed as Git doesn't track empty folders.
+            return False, "No active project.", None
+
+        parent_abs_path = self.active_project_path / relative_parent_dir_str
+        if not parent_abs_path.is_dir():  # Ensure parent is a directory
+            parent_abs_path = parent_abs_path.parent  # If a file was selected, use its parent
+
+        if not parent_abs_path.exists():
+            parent_abs_path.mkdir(parents=True, exist_ok=True)
+            print(f"[ProjectManager] Created directory: {parent_abs_path}")
+
+        # Basic validation for new folder name
+        if not new_folder_name_str or '/' in new_folder_name_str or '\\' in new_folder_name_str:
+            return False, "Error: Invalid folder name.", None
+
+        new_folder_abs_path = parent_abs_path / new_folder_name_str
+        new_folder_rel_path_str = new_folder_abs_path.relative_to(self.active_project_path).as_posix()
+
+        if new_folder_abs_path.exists():
+            return False, f"Error: Folder '{new_folder_name_str}' already exists.", None
+
+        try:
+            new_folder_abs_path.mkdir()
+            # Optionally, add a .gitkeep file to make Git track it.
+            # (new_folder_abs_path / ".gitkeep").touch()
+            # self.repo.index.add([str(new_folder_abs_path / ".gitkeep")])
+            print(f"[ProjectManager] Created new folder: {new_folder_rel_path_str}")
+            return True, f"Folder '{new_folder_name_str}' created.", new_folder_rel_path_str
+        except Exception as e:
+            msg = f"Unexpected error creating folder: {e}"
+            print(f"[ProjectManager] {msg}")
+            return False, msg, None
+
+    # --- END NEW METHODS ---
+
+    def commit_staged_files(self, commit_message: str) -> str:
+        if not self.repo:
+            return "Error: No active Git repository."
+        if not self.repo.index.diff("HEAD") and not self.repo.untracked_files:
+            # Check if there are staged changes OR untracked files that might have been added
+            if not any(True for _ in self.repo.index.diff(None)):  # diff against working tree for newly added
+                return "No changes staged for commit."
+        try:
+            self.repo.index.commit(commit_message)
+            return f"Committed staged changes to branch '{self.repo.active_branch.name}'."
+        except GitCommandError as e:
+            # This can happen if there are absolutely no changes, even after adding.
+            if "nothing to commit" in str(e).lower():
+                return "No changes staged for commit."
+            return f"Error committing changes: {e}"
