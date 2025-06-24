@@ -156,23 +156,17 @@ class ProjectManager:
             self.repo = None
             return None
 
-        # --- THIS IS THE FIX ---
-        # After loading or initializing, ensure there's at least one commit.
-        # This prevents errors when `HEAD` doesn't exist in an empty repo.
         try:
             _ = self.repo.head.commit
         except (ValueError, GitCommandError):
             print("[ProjectManager] Loaded repo has no commits. Creating initial baseline commit.")
             self._create_gitignore_if_needed()
-            # Stage all existing files, including untracked ones.
             self.repo.git.add(A=True)
-            # Check if there are any staged entries.
             if self.repo.index.entries:
                 self.repo.index.commit("Baseline commit by Kintsugi AvA")
                 print("[ProjectManager] Created baseline commit for existing files.")
             else:
                 print("[ProjectManager] Repo is empty, no baseline commit needed.")
-        # --- END OF FIX ---
 
         return str(self.active_project_path)
 
@@ -260,9 +254,8 @@ class ProjectManager:
 
     def get_project_files(self) -> dict[str, str]:
         """
-        Gets all project files by walking the directory, ignoring common
-        temporary/binary directories. This ensures the most up-to-date
-        file state is used for context.
+        Gets all relevant text-based project files by walking the directory,
+        ignoring common temporary/binary directories and filtering by extension.
         """
         if not self.active_project_path:
             return {}
@@ -270,20 +263,37 @@ class ProjectManager:
         project_files = {}
         ignore_dirs = {'.git', '.venv', 'venv', '__pycache__', 'node_modules', 'dist', 'build', 'rag_db'}
 
+        # --- THIS IS THE FIX ---
+        # Define a set of common text-based and code-related extensions.
+        # This will prevent logs, images, and other binaries from being included.
+        allowed_extensions = {
+            '.py', '.md', '.txt', '.json', '.toml', '.ini', '.cfg', '.yaml', '.yml',
+            '.html', '.css', '.js', '.ts', '.java', '.c', '.cpp', '.h', '.hpp',
+            '.cs', '.go', '.rb', '.php', '.sh', '.bat', '.ps1', '.dockerfile',
+            '.gitignore', '.env',  # Common config/dotfiles
+            # Add any other specific text-based extensions your projects might use.
+        }
+        # --- END OF FIX ---
+
         try:
             for item in self.active_project_path.rglob('*'):
-                # Check if any part of the path is an ignored directory
                 if any(part in ignore_dirs for part in item.parts):
                     continue
 
                 if item.is_file():
+                    # --- THIS IS THE FIX ---
+                    # Only process files with allowed extensions.
+                    if item.suffix.lower() not in allowed_extensions:
+                        print(f"[ProjectManager] Skipping non-text/non-code file: {item.name}")
+                        continue
+                    # --- END OF FIX ---
                     try:
                         relative_path = item.relative_to(self.active_project_path)
                         project_files[relative_path.as_posix()] = item.read_text(encoding='utf-8', errors='ignore')
                     except (IOError, UnicodeDecodeError) as e:
-                        print(f"[ProjectManager] Skipping file {item}: {e}")
+                        print(f"[ProjectManager] Skipping unreadable file {item}: {e}")
 
-            print(f"[ProjectManager] Retrieved {len(project_files)} files by walking the project directory.")
+            print(f"[ProjectManager] Retrieved {len(project_files)} relevant project files.")
             return project_files
 
         except Exception as e:
@@ -300,17 +310,12 @@ class ProjectManager:
         if not self.repo:
             return "No Git repository available."
         try:
-            # Check if there is a HEAD commit to diff against.
             if not self.repo.head.is_valid():
-                # If no HEAD, it's a new repo. Diff the index (staged files).
-                # This will show the initial set of files.
                 return self.repo.git.diff('--cached')
 
-            # Diff working tree (staged & unstaged) against the last commit.
             return self.repo.git.diff('HEAD')
 
         except (GitCommandError, ValueError) as e:
-            # A ValueError can be raised if `is_valid()` check itself has issues in edge cases.
             print(f"[ProjectManager] Warning: Could not get git diff (might be a new repo): {e}")
             return "Could not retrieve git diff. Repository might be in an empty state."
         except Exception as e:

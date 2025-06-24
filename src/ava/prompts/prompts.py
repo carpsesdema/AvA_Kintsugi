@@ -59,32 +59,31 @@ HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
     """)
 
 MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
-    You are an expert senior software developer specializing in refactoring and modifying existing Python codebases.
-
-    **YOUR TASK:**
-    Analyze the user's modification request. Based on the **summaries of existing project files** provided below, produce a JSON plan that outlines which files to create or modify.
+    You are an expert senior software developer specializing in refactoring and modifying existing Python codebases. Your primary directive is to adhere strictly to the existing architecture, libraries, and patterns.
 
     **USER'S MODIFICATION REQUEST:** "{prompt}"
 
     ---
     **CONTEXT ON EXISTING PROJECT:**
 
-    **1. Source Code Structure:**
-    {source_root_info}
+    **1. FULL SOURCE OF HIGHLY RELEVANT FILES:**
+    The following files are the most relevant to the user's request. You MUST use them as your primary reference for style, libraries, and architecture. Your plan must integrate seamlessly with this code.
+    ```
+    {full_code_context}
+    ```
 
-    **2. Summaries of Existing Files:**
-    This is the list of all files in the project. You are provided with a high-level summary for each Python file. You MUST reference these exact file paths.
-
+    **2. SUMMARIES OF OTHER PROJECT FILES:**
+    This provides a broad overview of the rest of the project for general awareness.
+    ```
     {file_summaries_string}
+    ```
     ---
 
     **CRITICAL INSTRUCTIONS - READ CAREFULLY:**
-    1.  **DO NOT RE-ARCHITECT THE PROJECT:** Your only job is to modify the existing files or add new, secondary files to fulfill the user's request.
-    2.  **STRICTLY ADHERE TO EXISTING FILENAMES AND PATHS:** When modifying a file, you MUST use its exact path from the list above (e.g., `todo_app/routes.py`). Do not invent new paths or create duplicate directories.
-    3.  **DETERMINE NECESSARY CHANGES:** Based on the user's request, decide which files to modify and which NEW helper files to create (if and only if a new file is truly required).
-    4.  **PROVIDE A CONCISE, ONE-SENTENCE PURPOSE:** For each file in your plan, write a clear, specific "purpose" explaining *only the high-level goal* of the changes (e.g., "Add a route to handle task deletion.").
-    5.  **DO NOT WRITE IMPLEMENTATION CODE:** The 'purpose' field should not contain any code snippets, just the description of the change.
-    6.  **JSON OUTPUT ONLY:** Your response MUST be ONLY a valid JSON object. Do not add any other text, explanations, or markdown.
+    1.  **STRICT ADHERENCE:** Your plan MUST conform to the patterns, libraries (e.g., ursina, PySide6), and structure demonstrated in the **FULL SOURCE** provided above. Do NOT introduce incompatible libraries or architectural patterns.
+    2.  **EXISTING FILENAMES ONLY:** When modifying a file, you MUST use its exact path. Do not invent new paths for existing files.
+    3.  **JSON OUTPUT ONLY:** Your response MUST be ONLY a valid JSON object. Do not add any other text, explanations, or markdown.
+    4.  **CONCISE PURPOSE:** For each file in your plan, write a clear, one-sentence "purpose" explaining the high-level goal of the changes. Do not write implementation details in the purpose.
 
     ---
     **EXAMPLE JSON RESPONSE FORMAT:**
@@ -92,18 +91,18 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     {{
       "files": [
         {{
-          "filename": "todo_app/routes.py",
-          "purpose": "Add a new route for deleting tasks."
+          "filename": "game/player.py",
+          "purpose": "Add a new method to handle player inventory."
         }},
         {{
-          "filename": "todo_app/templates/index.html",
-          "purpose": "Add a 'Delete' button next to each task item."
+          "filename": "game/ui/inventory_screen.py",
+          "purpose": "Create a new UI component to display the player's inventory."
         }}
       ]
     }}
     ```
     ---
-    **Generate the JSON modification plan now. Ensure your output matches the example format exactly.**
+    **Generate the JSON modification plan now. Ensure your output is a single, valid JSON object and nothing else.**
     """)
 
 

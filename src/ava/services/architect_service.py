@@ -71,36 +71,58 @@ class ArchitectService:
             self.handle_error("coder", "Code generation failed.")
         return success
 
-    def _determine_source_root(self, file_paths: List[str]) -> Optional[str]:
-        if not file_paths: return None
-        top_level_files = {'main.py', 'config.py', 'setup.py', 'requirements.txt', '.gitignore', 'README.md',
-                           'pyproject.toml'}
-        potential_src_paths = [p for p in file_paths if p not in top_level_files and ('/' in p or '\\' in p)]
-        if not potential_src_paths: return None
-        common_path_str = os.path.commonpath(potential_src_paths)
-        if not common_path_str or common_path_str == '.': return None
-        common_path = Path(common_path_str)
-        return common_path.as_posix() if common_path.name else None
+    def _find_relevant_files(self, prompt: str, existing_files: Dict[str, str], top_n: int = 4) -> List[str]:
+        """
+        Finds the most relevant files from the existing project to the user's prompt.
+        This is a simple but effective keyword-based relevance scoring.
+        """
+        prompt_keywords = set(re.findall(r'\b\w+\b', prompt.lower()))
+        if not prompt_keywords:
+            return list(existing_files.keys())[:top_n]
 
-    def _create_summaries_for_prompt(self, files: Dict[str, str]) -> tuple[str, Optional[str]]:
-        if not files: return "No existing files in the project.", None
-        source_root = self._determine_source_root(list(files.keys()))
-        output = []
-        for filename, content in sorted(files.items()):
-            summary = CodeSummarizer(content).summarize() if filename.endswith(
-                ".py") else f"// Non-Python file ({Path(filename).suffix})."
-            output.append(f"### File: `{filename}`\n```\n{summary}\n```")
-        return "\n\n".join(output), source_root
+        scored_files = []
+        for filename, content in existing_files.items():
+            score = 0
+            # Heavily weight matches in the filename
+            if any(keyword in filename.lower() for keyword in prompt_keywords):
+                score += 10
+            # Score based on keyword count in content
+            content_lower = content.lower()
+            for keyword in prompt_keywords:
+                score += content_lower.count(keyword)
+            scored_files.append((score, filename))
+
+        scored_files.sort(key=lambda x: x[0], reverse=True)
+
+        # Always include main.py if it exists, as it's critical for project-level context
+        relevant_set = {filename for score, filename in scored_files[:top_n]}
+        if 'main.py' in existing_files:
+            relevant_set.add('main.py')
+        return list(relevant_set)
 
     async def _generate_modification_plan(self, prompt: str, existing_files: dict) -> dict | None:
-        self.log("info", "Creating summaries of all project files for the Architect...")
+        self.log("info", "Analyzing existing files to create a modification plan...")
         try:
-            file_summaries_string, source_root_info = self._create_summaries_for_prompt(existing_files)
+            relevant_filenames = self._find_relevant_files(prompt, existing_files)
+            self.log("info", f"Identified most relevant files for full context: {relevant_filenames}")
+
+            full_code_context_list = []
+            summaries_context_list = []
+
+            for filename, content in sorted(existing_files.items()):
+                if filename in relevant_filenames:
+                    full_code_context_list.append(f"--- File: {filename} ---\n```python\n{content}\n```")
+                else:
+                    summary = CodeSummarizer(content).summarize() if filename.endswith('.py') else "// Non-Python file"
+                    summaries_context_list.append(f"### File: `{filename}`\n```\n{summary}\n```")
+
+            full_code_context_str = "\n\n".join(full_code_context_list)
+            summaries_context_str = "\n\n".join(summaries_context_list)
 
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
                 prompt=prompt,
-                file_summaries_string=file_summaries_string,
-                source_root_info=f"The primary Python package for this project seems to be in the '{source_root_info}' directory. All new Python files should respect this structure." if source_root_info else "This project appears to have its source files in the root directory."
+                full_code_context=full_code_context_str,
+                file_summaries_string=summaries_context_str
             )
 
             plan = await self._get_plan_from_llm(plan_prompt)
