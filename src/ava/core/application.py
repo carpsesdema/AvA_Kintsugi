@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from src.ava.core.event_bus import EventBus
+# --- THIS IS THE FIX: Only import from the 'managers' package ---
 from src.ava.core.managers import (
     ServiceManager,
     WindowManager,
@@ -27,20 +28,14 @@ class Application:
 
         Args:
             project_root: Root directory for data files.
-                          When running from source, this is typically <repo_root>/src.
-                          When bundled, this is sys.executable.parent or sys._MEIPASS.
         """
         self.project_root = project_root
         print(f"[Application] Initializing with data_files_root: {self.project_root}")
 
         self.event_bus = EventBus()
-        # ProjectManager still manages the user's workspace (e.g., "workspace/" directory)
-        # It does not depend on the data_files_root for its primary operation.
         self.project_manager = ProjectManager()
-        # PluginManager needs data_files_root for plugins.json AND for plugin discovery
         self.plugin_manager = PluginManager(self.event_bus, self.project_root)
         self.window_manager = WindowManager(self.event_bus, self.project_manager)
-        # ServiceManager and its children (LLMClient, RAGManager) need data_files_root
         self.service_manager = ServiceManager(self.event_bus, self.project_root)
         self.task_manager = TaskManager(self.event_bus)
         self.workflow_manager = WorkflowManager(self.event_bus)
@@ -52,15 +47,14 @@ class Application:
         """Set up event connections between components."""
         self.event_bus.subscribe("open_code_viewer_requested", self.window_manager.show_code_viewer)
         self.event_bus.subscribe("project_root_selected", self.project_manager.load_project)
-        self.event_bus.subscribe("application_shutdown", lambda: asyncio.create_task(self.cancel_all_tasks()))
+        self.event_bus.subscribe("application_shutdown", lambda: asyncio.create_task(self.shutdown()))
 
     async def initialize_async(self):
         """Perform async initialization of components."""
         print("[Application] Starting async initialization...")
         try:
             self.service_manager.plugin_manager = self.plugin_manager
-            self._configure_plugin_paths() # Uses self.project_root (data_files_root)
-            # Pass data_files_root to service_manager for its sub-components
+            self._configure_plugin_paths()
             self.service_manager.initialize_core_components(self.project_root, self.project_manager)
             await self.service_manager.initialize_plugins()
             self.service_manager.initialize_services()
@@ -70,11 +64,10 @@ class Application:
                 print("[Application] Triggering automatic RAG server launch...")
                 asyncio.create_task(rag_manager.launch_rag_server())
 
-            # Pass data_files_root to window_manager for its sub-components (like LoadingIndicator)
             self.window_manager.initialize_windows(
                 self.service_manager.get_llm_client(),
                 self.service_manager,
-                self.project_root # Pass data_files_root
+                self.project_root
             )
             self.update_sidebar_plugin_status()
             self.task_manager.set_managers(self.service_manager, self.window_manager)
@@ -90,25 +83,14 @@ class Application:
             raise
 
     def _configure_plugin_paths(self):
-        """
-        Configure plugin discovery paths.
-        Uses self.project_root (which is data_files_root) to find bundled plugins.
-        When running from source, it derives the actual repository root to find plugins.
-        """
         if getattr(sys, 'frozen', False):
-            # Bundled executable:
-            # self.project_root is data_files_root (e.g., sys.executable.parent or sys._MEIPASS)
-            # Built-in plugins are expected in: data_files_root / "ava" / "core" / "plugins" / "examples"
             bundled_builtin_plugins_dir = self.project_root / "ava" / "core" / "plugins" / "examples"
             if bundled_builtin_plugins_dir.exists():
                 self.plugin_manager.add_discovery_path(bundled_builtin_plugins_dir)
                 print(f"[Application] Added bundled plugin discovery path: {bundled_builtin_plugins_dir}")
             else:
-                # This path might be different for cx_Freeze if _MEIPASS is not defined.
-                # If sys.executable.parent is used, this check should still be valid.
                 print(f"[Application] Bundled built-in plugin path not found: {bundled_builtin_plugins_dir}")
 
-            # Optional: For custom plugins placed in a "plugins" folder next to the executable
             custom_plugins_next_to_exe = self.project_root / "plugins"
             if custom_plugins_next_to_exe.exists():
                 self.plugin_manager.add_discovery_path(custom_plugins_next_to_exe)
@@ -117,12 +99,8 @@ class Application:
                 print(f"[Application] Custom plugin path (next to exe) not found: {custom_plugins_next_to_exe}")
 
         else:
-            # Source mode:
-            # self.project_root is .../repo_root/src
-            # We need to find the actual repository root to locate plugins.
-            actual_repo_root = self.project_root.parent # Go up one level from 'src'
+            actual_repo_root = self.project_root.parent
 
-            # Path for built-in plugins when running from source
             builtin_plugins_src_dir = actual_repo_root / "src" / "ava" / "core" / "plugins" / "examples"
             if builtin_plugins_src_dir.exists():
                 self.plugin_manager.add_discovery_path(builtin_plugins_src_dir)
@@ -130,7 +108,6 @@ class Application:
             else:
                 print(f"[Application] Source built-in plugin path not found: {builtin_plugins_src_dir}")
 
-            # Path for custom plugins in repo_root/plugins when running from source
             custom_plugins_repo_dir = actual_repo_root / "plugins"
             if custom_plugins_repo_dir.exists():
                 self.plugin_manager.add_discovery_path(custom_plugins_repo_dir)
@@ -160,11 +137,13 @@ class Application:
     def show(self):
         self.window_manager.show_main_window()
 
-    async def cancel_all_tasks(self):
-        print("[Application] Cancelling all tasks and shutting down...")
-        if self.task_manager: await self.task_manager.cancel_all_tasks()
-        if self.service_manager: await self.service_manager.shutdown()
-        print("[Application] All tasks cancelled and plugins shut down")
+    async def shutdown(self):
+        print("[Application] Shutting down application components...")
+        if self.task_manager:
+            await self.task_manager.cancel_all_tasks()
+        if self.service_manager:
+            await self.service_manager.shutdown()
+        print("[Application] All components shut down.")
 
     def is_fully_initialized(self) -> bool:
         return (self._initialization_complete and

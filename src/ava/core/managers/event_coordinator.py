@@ -44,7 +44,10 @@ class EventCoordinator:
         self._wire_terminal_events()
         self._wire_plugin_events()
         self._wire_chat_session_events()
-        print("[EventCoordinator] ✓ All events wired successfully")
+        # --- THIS IS THE FIX ---
+        # Removed the '✓' character to prevent encoding errors on Windows
+        print("[EventCoordinator] All events wired successfully.")
+        # --- END OF FIX ---
 
     def _wire_chat_session_events(self):
         """Wire events for saving and loading chat sessions."""
@@ -53,7 +56,7 @@ class EventCoordinator:
         if chat_interface:
             self.event_bus.subscribe("save_chat_requested", chat_interface.save_session)
             self.event_bus.subscribe("load_chat_requested", chat_interface.load_session)
-            print("[EventCoordinator] ✓ Chat session events wired")
+            print("[EventCoordinator] Chat session events wired.")
 
     def _wire_ui_events(self):
         if not all([self.service_manager, self.window_manager]):
@@ -69,11 +72,8 @@ class EventCoordinator:
         if app_state_service:
             self.event_bus.subscribe("interaction_mode_change_requested", app_state_service.set_interaction_mode)
 
-        # --- THIS IS THE FIX ---
-        # Connect the authoritative state change event to the WindowManager's handler.
         if self.window_manager:
             self.event_bus.subscribe("app_state_changed", self.window_manager.handle_app_state_change)
-        # --- END OF FIX ---
 
         self.event_bus.subscribe(
             "configure_models_requested",
@@ -94,7 +94,7 @@ class EventCoordinator:
                                      lambda name: asyncio.create_task(plugin_manager.reload_plugin(name)))
         self.event_bus.subscribe("show_log_viewer_requested", self.window_manager.show_log_viewer)
         self.event_bus.subscribe("show_code_viewer_requested", self.window_manager.show_code_viewer)
-        print("[EventCoordinator] ✓ UI events wired")
+        print("[EventCoordinator] UI events wired.")
 
     def _wire_ai_workflow_events(self):
         if self.workflow_manager:
@@ -107,7 +107,7 @@ class EventCoordinator:
             self.event_bus.subscribe("prepare_for_generation", code_viewer.prepare_for_generation)
             self.event_bus.subscribe("stream_code_chunk", code_viewer.stream_code_chunk)
             self.event_bus.subscribe("code_generation_complete", code_viewer.display_code)
-        print("[EventCoordinator] ✓ AI workflow events wired")
+        print("[EventCoordinator] AI workflow events wired.")
 
     def _wire_execution_events(self):
         code_viewer = self.window_manager.get_code_viewer()
@@ -116,12 +116,12 @@ class EventCoordinator:
             self.event_bus.subscribe("clear_error_highlights", code_viewer.clear_all_error_highlights)
         if self.workflow_manager:
             self.event_bus.subscribe("execution_failed", self.workflow_manager.handle_execution_failed)
-        print("[EventCoordinator] ✓ Execution events wired")
+        print("[EventCoordinator] Execution events wired.")
 
     def _wire_terminal_events(self):
         if not (self.task_manager and self.service_manager): return
         self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
-        print("[EventCoordinator] ✓ Terminal events wired")
+        print("[EventCoordinator] Terminal events wired.")
 
     def _handle_terminal_command(self, command: str, session_id: int):
         terminal_service = self.service_manager.get_terminal_service()
@@ -136,7 +136,7 @@ class EventCoordinator:
             self.event_bus.subscribe("plugin_unloaded", lambda name: print(f"[EventCoordinator] Plugin unloaded: {name}"))
             self.event_bus.subscribe("plugin_error", lambda name, err: self.event_bus.emit("log_message_received", "Plugin", "error", f"Error in {name}: {err}"))
             self.event_bus.subscribe("plugin_state_changed", self._on_plugin_state_changed_for_sidebar)
-        print("[EventCoordinator] ✓ Plugin events wired")
+        print("[EventCoordinator] Plugin events wired.")
 
     def _on_plugin_state_changed_for_sidebar(self, plugin_name, old_state, new_state):
         self._update_sidebar_plugin_status()

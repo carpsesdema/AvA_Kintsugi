@@ -4,20 +4,28 @@ import asyncio
 import qasync
 from pathlib import Path
 
-
+# --- THIS IS THE FIX: ROBUST PATHING LOGIC FOR BUNDLING AND SOURCE ---
 if getattr(sys, 'frozen', False):
-
+    # We are running in a bundled environment (e.g., cx_Freeze, PyInstaller).
+    # The `data_files_root` is the directory containing the executable.
+    # This is the most reliable approach for both cx_Freeze and Nuitka.
     project_root = Path(sys.executable).parent
-
-    sys.path.insert(0, str(Path(sys._MEIPASS)))
 else:
     # We are running from source.
-    # project_root is the main repo folder (e.g., 'AVA_Kintsugi')
-    project_root = Path(__file__).resolve().parent.parent.parent
-    # We add the 'src' directory to the path for our 'from ava...' imports
-    src_path = project_root / "src"
+    # The root of the repository is 3 levels up from this file:
+    # <repo_root>/src/ava/main.py
+    repo_root = Path(__file__).resolve().parent.parent.parent
+
+    # We need to add the 'src' directory to the path so that imports
+    # like 'from src.ava...' or 'from ava...' work correctly.
+    src_path = repo_root / "src"
     if str(src_path) not in sys.path:
         sys.path.insert(0, str(src_path))
+
+    # When running from source, the `data_files_root` for our assets,
+    # configs, etc., is the 'src' directory itself, since our other
+    # modules will look for them relative to this (e.g., src/ava/assets).
+    project_root = src_path
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QTimer
@@ -41,14 +49,17 @@ async def main_async_logic(app_instance, root_path: Path):
         shutdown_in_progress = True
         print("[main] Application is about to quit. Starting graceful shutdown...")
         if ava_app:
-            try: await ava_app.cancel_all_tasks()
-            except Exception as e: print(f"[main] Error during shutdown tasks: {e}")
+            try:
+                await ava_app.cancel_all_tasks()
+            except Exception as e:
+                print(f"[main] Error during shutdown tasks: {e}")
         if not shutdown_future.done(): shutdown_future.set_result(True)
         print("[main] Graceful shutdown complete.")
 
     app_instance.aboutToQuit.connect(lambda: asyncio.create_task(on_about_to_quit()))
 
     try:
+        # Pass the correctly determined project_root to the Application
         ava_app = Application(project_root=root_path)
         await ava_app.initialize_async()
         ava_app.show()
@@ -75,10 +86,8 @@ if __name__ == "__main__":
     app.setApplicationName("Kintsugi AvA")
     app.setOrganizationName("Kintsugi AvA")
 
-    if getattr(sys, 'frozen', False):
-        icon_path = Path(sys._MEIPASS) / "ava" / "assets" / "Ava_Icon.ico"
-    else:
-        icon_path = project_root / "src" / "ava" / "assets" / "Ava_Icon.ico"
+    # Use the project_root determined at the start to find the icon
+    icon_path = project_root / "ava" / "assets" / "Ava_Icon.ico"
 
     if icon_path.exists():
         app_icon = QIcon(str(icon_path))
@@ -87,5 +96,6 @@ if __name__ == "__main__":
     else:
         print(f"[main] WARNING: Application icon not found at {icon_path}")
 
+    # Pass the determined project_root to the main async logic
     qasync.run(main_async_logic(app, project_root))
     print("[main] Application has exited cleanly.")

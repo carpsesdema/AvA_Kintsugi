@@ -9,14 +9,28 @@ from src.ava.core.project_manager import ProjectManager
 from src.ava.core.execution_engine import ExecutionEngine
 from src.ava.core.plugins.plugin_manager import PluginManager
 
-from src.ava.services import (
-    ActionService, AppStateService, TerminalService, RAGManager, ArchitectService, ReviewerService,
-    ValidationService, ProjectIndexerService, ImportFixerService,
-    GenerationCoordinator, ContextManager, DependencyPlanner, IntegrationValidator
-)
+# --- THIS IS THE FIX: Import each service directly from its module ---
+# This breaks the import cycle by making dependencies explicit and linear,
+# bypassing the services/__init__.py file completely.
+from src.ava.services.action_service import ActionService
+from src.ava.services.app_state_service import AppStateService
+from src.ava.services.terminal_service import TerminalService
+from src.ava.services.architect_service import ArchitectService
+from src.ava.services.reviewer_service import ReviewerService
+from src.ava.services.validation_service import ValidationService
+from src.ava.services.project_indexer_service import ProjectIndexerService
+from src.ava.services.import_fixer_service import ImportFixerService
+from src.ava.services.generation_coordinator import GenerationCoordinator
+from src.ava.services.context_manager import ContextManager
+from src.ava.services.dependency_planner import DependencyPlanner
+from src.ava.services.integration_validator import IntegrationValidator
+from src.ava.services.rag_manager import RAGManager
+# --- END OF FIX ---
 
 if TYPE_CHECKING:
+    # This block is for type checkers only and doesn't run, so it's safe.
     from src.ava.services.action_service import ActionService
+    from src.ava.services.rag_manager import RAGManager
 
 
 class ServiceManager:
@@ -29,17 +43,14 @@ class ServiceManager:
         self.event_bus = event_bus
         self.project_root = project_root
 
-        # Core components (will be initialized later)
         self.llm_client: LLMClient = None
         self.project_manager: ProjectManager = None
         self.execution_engine: ExecutionEngine = None
         self.plugin_manager: PluginManager = None
-
-        # Initialize all service properties to None
         self.app_state_service: AppStateService = None
         self.action_service: "ActionService" = None
         self.terminal_service: TerminalService = None
-        self.rag_manager: RAGManager = None
+        self.rag_manager: "RAGManager" = None
         self.architect_service: ArchitectService = None
         self.reviewer_service: ReviewerService = None
         self.validation_service: ValidationService = None
@@ -49,13 +60,11 @@ class ServiceManager:
         self.dependency_planner: DependencyPlanner = None
         self.integration_validator: IntegrationValidator = None
         self.generation_coordinator: GenerationCoordinator = None
-
         self._service_injection_enabled = True
 
         print("[ServiceManager] Initialized")
 
     def initialize_core_components(self, project_root: Path, project_manager: ProjectManager):
-        """Initialize core components in dependency order."""
         print("[ServiceManager] Initializing core components...")
         self.llm_client = LLMClient(project_root)
         self.project_manager = project_manager
@@ -63,7 +72,6 @@ class ServiceManager:
         print("[ServiceManager] Core components initialized")
 
     async def initialize_plugins(self) -> bool:
-        """Initialize plugins asynchronously."""
         if not self.plugin_manager:
             print("[ServiceManager] No plugin manager available")
             return False
@@ -102,7 +110,6 @@ class ServiceManager:
 
         print("[ServiceManager] Services initialized")
 
-    # Getters...
     def get_app_state_service(self) -> AppStateService: return self.app_state_service
     def get_action_service(self) -> ActionService: return self.action_service
     def get_llm_client(self) -> LLMClient: return self.llm_client
@@ -137,10 +144,12 @@ class ServiceManager:
         return {name: service is not None for name, service in self.get_all_services().items()}
 
     async def shutdown(self):
-        """Async shutdown method for compatibility with Application."""
+        """Async shutdown method to correctly shut down all services."""
         print("[ServiceManager] Shutting down services...")
+        if self.rag_manager and hasattr(self.rag_manager, 'terminate_rag_server'):
+            try: await self.rag_manager.terminate_rag_server()
+            except Exception as e: print(f"[ServiceManager] Error shutting down RAG manager: {e}")
         if self.plugin_manager and hasattr(self.plugin_manager, 'shutdown'):
             try: await self.plugin_manager.shutdown()
             except Exception as e: print(f"[ServiceManager] Error shutting down plugin manager: {e}")
-        # Other services shutdown logic...
         print("[ServiceManager] Services shutdown complete")

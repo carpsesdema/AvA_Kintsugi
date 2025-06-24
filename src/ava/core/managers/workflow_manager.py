@@ -224,14 +224,34 @@ class WorkflowManager:
         else:
             self.log("warning", "Received an empty error report to fix.")
 
+    # --- THIS IS THE FIX ---
     def handle_highlighted_error_fix_request(self, highlighted_text: str):
         """Handles a fix request from the user highlighting text in the terminal."""
+        if not highlighted_text.strip():
+            self.log("warning", "Fix requested for empty highlighted text.")
+            # Optionally, notify the user via chat interface or status bar if desired
+            # self.event_bus.emit("ai_response_ready", "Please highlight some text to fix.")
+            return
+
+        error_context_for_fix: str
+
         if self._last_error_report:
-            self._initiate_fix_workflow(
-                f"User highlighted: {highlighted_text}\n\nFull error:\n{self._last_error_report}"
+            # If a previous full error report exists, combine them, making highlighted text prominent.
+            error_context_for_fix = (
+                f"User highlighted the following from the terminal output:\n--- HIGHLIGHTED TEXT ---\n{highlighted_text}\n--- END HIGHLIGHTED TEXT ---\n\n"
+                f"This may be related to the last full error report from a failed command execution:\n--- LAST FULL ERROR ---\n{self._last_error_report}\n--- END LAST FULL ERROR ---"
             )
+            self.log("info", "Fixing highlighted text with context from last full error report.")
         else:
-            self.log("warning", "A fix was requested for highlighted text, but no previous error is stored.")
+            # No previous full error report, use only the highlighted text.
+            error_context_for_fix = (
+                f"User highlighted the following error/text from the terminal output. This is the primary context for the fix:\n"
+                f"--- HIGHLIGHTED TEXT ---\n{highlighted_text}\n--- END HIGHLIGHTED TEXT ---"
+            )
+            self.log("info", "Fixing highlighted text (no previous full error report stored).")
+
+        self._initiate_fix_workflow(error_context_for_fix)
+    # --- END OF FIX ---
 
     def _initiate_fix_workflow(self, error_report: str):
         """
@@ -239,6 +259,7 @@ class WorkflowManager:
         This is now a synchronous method that creates the async task.
         """
         if not (self.service_manager and self.task_manager):
+            self.log("error", "Cannot initiate fix: Core services not available.")
             return
 
         if self.window_manager and self.window_manager.get_code_viewer():
@@ -250,6 +271,10 @@ class WorkflowManager:
             fix_coroutine = validation_service.review_and_fix_file(error_report)
             # Start the one and only task for this workflow
             self.task_manager.start_ai_workflow_task(fix_coroutine)
+        else:
+            self.log("error", "ValidationService not available to initiate fix.")
+            if self.window_manager and self.window_manager.get_code_viewer():
+                self.window_manager.get_code_viewer().terminal.hide_fix_button() # Reset UI if it was shown
 
     def log(self, level, message):
         self.event_bus.emit("log_message_received", "WorkflowManager", level, message)

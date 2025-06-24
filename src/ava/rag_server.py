@@ -12,7 +12,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 # --- Configuration ---
-# The server runs from the main project directory (one level above src)
+# The server's CWD will be set by the RAGManager that launches it.
 # This ensures the database is created in a consistent, user-accessible location.
 PERSIST_DIRECTORY = "rag_db"
 MODEL_NAME = 'all-miniLM-L6-v2'
@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI):
 
     print(f"Connecting to ChromaDB at: '{PERSIST_DIRECTORY}'...")
     try:
+        # Since CWD is managed by the launcher, this path will be correct.
         client = chromadb.PersistentClient(path=PERSIST_DIRECTORY)
         app_state["collection"] = client.get_or_create_collection(name=COLLECTION_NAME)
         print("ChromaDB connection successful.")
@@ -82,16 +83,17 @@ async def lifespan(app: FastAPI):
 
 
 # --- FastAPI App Initialization (with the new lifespan handler) ---
-app = FastAPI(title="Kintsugi AvA RAG Service", lifespan=lifespan)
+# We now define `rag_app` so it can be imported by other modules.
+rag_app = FastAPI(title="Kintsugi AvA RAG Service", lifespan=lifespan)
 
 
 # --- API Endpoints ---
-@app.get("/")
+@rag_app.get("/")
 def read_root():
     return {"status": "Kintsugi RAG Server is running"}
 
 
-@app.post("/add")
+@rag_app.post("/add")
 def add_documents(request: AddRequest):
     if not app_state.get("embedding_model") or not app_state.get("collection"):
         raise HTTPException(status_code=503, detail="RAG service is not initialized or has failed.")
@@ -131,7 +133,7 @@ def add_documents(request: AddRequest):
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during document addition: {e}")
 
 
-@app.post("/query", response_model=QueryResponse)
+@rag_app.post("/query", response_model=QueryResponse)
 def query_rag(request: QueryRequest) -> QueryResponse:
     if not app_state.get("embedding_model") or not app_state.get("collection"):
         raise HTTPException(status_code=503, detail="RAG service is not initialized or has failed. Check server logs.")
@@ -161,6 +163,5 @@ def query_rag(request: QueryRequest) -> QueryResponse:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during the query: {e}")
 
 
-if __name__ == "__main__":
-    print("Starting Kintsugi RAG Server...")
-    uvicorn.run(app, host=HOST, port=PORT)
+# The 'if __name__ == "__main__"' block is removed so this script doesn't
+# try to run itself directly. It's now intended to be imported.
