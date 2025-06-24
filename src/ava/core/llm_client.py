@@ -32,18 +32,11 @@ class LLMClient:
     def __init__(self, project_root: Path):
         load_dotenv()
 
-        # --- THIS IS THE DEFINITIVE FIX ---
-        # This logic correctly finds the config directory whether running from
-        # source or as a bundled executable.
         if getattr(sys, 'frozen', False):
-            # When bundled, assets are in the temporary _MEIPASS folder.
             base_path = Path(sys._MEIPASS)
             self.config_dir = base_path / "ava" / "config"
         else:
-            # When running from source, find the config dir relative to this file.
-            # .../src/ava/core/llm_client.py -> .../src/ava/config
             self.config_dir = Path(__file__).resolve().parent.parent / "config"
-        # --- END OF FIX ---
 
         self.config_dir.mkdir(exist_ok=True, parents=True)
         self.assignments_file = self.config_dir / "role_assignments.json"
@@ -207,46 +200,93 @@ class LLMClient:
     async def stream_chat(self, provider: str, model: str, prompt: str, role: str = None,
                           image_bytes: Optional[bytes] = None, image_media_type: str = "image/png"):
         if provider not in self.clients:
-            yield f"Error: Provider {provider} not configured."
+            error_msg = f"Provider {provider} not configured."
+            print(f"[LLMClient] Error: {error_msg}")
+            yield f"LLM_API_ERROR: {error_msg}"
             return
 
         temperature = self.get_role_temperature(role) if role else 0.7
         print(
             f"[LLMClient] Streaming from {provider}/{model} (temp: {temperature:.2f}, image: {'Yes' if image_bytes else 'No'})...")
-        router = {"openai": self._stream_openai_compatible, "deepseek": self._stream_openai_compatible,
-                  "google": self._stream_google, "ollama": self._stream_ollama, "anthropic": self._stream_anthropic}
-        client = self.clients.get(provider)
+
+        router = {
+            "openai": self._stream_openai_compatible,
+            "deepseek": self._stream_openai_compatible,
+            "google": self._stream_google,
+            "ollama": self._stream_ollama,
+            "anthropic": self._stream_anthropic
+        }
+        client_instance = self.clients.get(provider)
         stream_func = router.get(provider)
 
-        if not stream_func or (client is None and provider not in ['google', 'ollama']):
-            yield f"Error: Streaming function for {provider} not found."
+        if not stream_func or (client_instance is None and provider not in ['google', 'ollama']):
+            error_msg = f"Streaming function or client for {provider} not found."
+            print(f"[LLMClient] Error: {error_msg}")
+            yield f"LLM_API_ERROR: {error_msg}"
             return
 
         encoded_image = base64.b64encode(image_bytes).decode('utf-8') if image_bytes else None
 
-        stream = stream_func(client, model, prompt, temperature, encoded_image, image_media_type)
-        async for chunk in stream: yield chunk
+        # --- MODIFIED: Added retry logic ---
+        max_retries = 2  # Try original + 2 retries = 3 total attempts
+        attempt = 0
+        last_exception = None
+
+        while attempt <= max_retries:
+            try:
+                # Pass the actual client_instance to the streaming function
+                stream = stream_func(client_instance, model, prompt, temperature, encoded_image, image_media_type)
+                async for chunk in stream:
+                    yield chunk
+                return  # Success, exit retry loop
+            except (anthropic.APIConnectionError, aiohttp.ClientError,
+                    openai.APIConnectionError) as e:  # Catch specific retryable errors
+                last_exception = e
+                print(
+                    f"[LLMClient] Network/Connection error on attempt {attempt + 1}/{max_retries + 1} for {provider}/{model}: {e}")
+                attempt += 1
+                if attempt <= max_retries:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff (2s, 4s)
+                    print(f"[LLMClient] Retrying...")
+                else:
+                    print(f"[LLMClient] Max retries reached for {provider}/{model}.")
+                    break  # Exit loop, will fall through to error handling
+            except Exception as e:  # Catch other non-retryable exceptions
+                last_exception = e
+                error_msg = f"LLM_API_ERROR: Streaming failed for {provider}/{model}: {e}"
+                print(f"[LLMClient] {error_msg}")
+                yield error_msg
+                return
+
+        # If loop finishes due to max_retries, handle the last exception
+        if last_exception:
+            error_msg = f"LLM_API_ERROR: Streaming failed for {provider}/{model} after {max_retries + 1} attempts: {last_exception}"
+            print(f"[LLMClient] {error_msg}")
+            yield error_msg
+        # --- END MODIFICATION ---
 
     async def _stream_openai_compatible(self, client, model: str, prompt: str, temp: float,
-                                        image_b64: str, media_type: str):
+                                        image_b64: Optional[str], media_type: Optional[str]):
         content = []
         if prompt:
             content.append({"type": "text", "text": prompt})
-        if image_b64:
+        if image_b64 and media_type:
             content.append({"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}})
         try:
             stream = await client.chat.completions.create(
                 model=model, messages=[{"role": "user", "content": content}], stream=True, temperature=temp,
                 max_tokens=4096)
             async for chunk in stream:
-                if content := chunk.choices[0].delta.content: yield content
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
         except Exception as e:
-            yield f"\n\nError: {e}"
+            print(f"[LLMClient] OpenAI API Error: {type(e).__name__} - {e}")  # Log type and message
+            raise
 
     async def _stream_google(self, client, model: str, prompt: str, temp: float,
-                             image_b64: str, media_type: str):
+                             image_b64: Optional[str], media_type: Optional[str]):
         if not genai or not Image or not io:
-            yield "\n\nError: Google dependencies (google-generativeai, Pillow) are not installed."
+            yield "LLM_SETUP_ERROR: Google dependencies (google-generativeai, Pillow) are not installed."
             return
         try:
             model_instance = genai.GenerativeModel(f'models/{model}')
@@ -257,15 +297,20 @@ class LLMClient:
                 img = Image.open(io.BytesIO(base64.b64decode(image_b64)))
                 content_parts.append(img)
 
-            async for chunk in await model_instance.generate_content_async(content_parts, stream=True):
-                if chunk.text: yield chunk.text
+            response_stream = await model_instance.generate_content_async(content_parts, stream=True,
+                                                                          generation_config=genai.types.GenerationConfig(
+                                                                              temperature=temp))
+            async for chunk in response_stream:
+                if chunk.text:
+                    yield chunk.text
         except Exception as e:
-            yield f"\n\nError from Google API: {e}"
+            print(f"[LLMClient] Google API Error: {type(e).__name__} - {e}")  # Log type and message
+            raise
 
     async def _stream_anthropic(self, client, model: str, prompt: str, temp: float,
-                                image_b64: str, media_type: str):
+                                image_b64: Optional[str], media_type: Optional[str]):
         content = []
-        if image_b64:
+        if image_b64 and media_type:
             content.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}})
         if prompt:
             content.append({"type": "text", "text": prompt})
@@ -274,14 +319,18 @@ class LLMClient:
                     max_tokens=4096, model=model, messages=[{"role": "user", "content": content}], temperature=temp
             ) as stream:
                 async for event in stream:
-                    # The most robust way is to check the event type
                     if event.type == "content_block_delta" and event.delta.type == "text_delta":
                         yield event.delta.text
-        except Exception as e:
-            yield f"\n\nError from Anthropic API: {e}"
+        except anthropic.APIConnectionError as e:  # Catch specific connection errors for retry
+            print(f"[LLMClient] Anthropic APIConnectionError: {type(e).__name__} - {e}")
+            # Potentially log more details if available in 'e', e.g., e.request
+            raise  # Re-raise for the retry_logic in stream_chat
+        except Exception as e:  # Catch other Anthropic errors
+            print(f"[LLMClient] Anthropic API Error: {type(e).__name__} - {e}")
+            raise  # Re-raise to be handled by the main error handler in stream_chat
 
     async def _stream_ollama(self, client, model: str, prompt: str, temp: float,
-                             image_b64: str, media_type: str):
+                             image_b64: Optional[str], media_type: Optional[str]):
         ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/chat"
         payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True,
                    "options": {"temperature": temp}}
@@ -290,19 +339,30 @@ class LLMClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(ollama_url, json=payload) as resp:
-                    resp.raise_for_status()
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        print(f"[LLMClient] Ollama API HTTP Error {resp.status}: {error_text}")
+                        raise aiohttp.ClientResponseError(
+                            resp.request_info,
+                            resp.history,
+                            status=resp.status,
+                            message=error_text,
+                            headers=resp.headers
+                        )
                     async for line_bytes in resp.content:
                         if line_bytes:
-                            # CRITICAL FIX: Decode bytes to string before parsing
                             line_str = line_bytes.decode('utf-8')
                             try:
-                                # Each line is a separate JSON object
                                 chunk_json = json.loads(line_str)
-                                content = chunk_json.get("message", {}).get("content")
-                                if content:
-                                    yield content
+                                content_chunk = chunk_json.get("message", {}).get("content")
+                                if content_chunk:
+                                    yield content_chunk
                             except json.JSONDecodeError:
                                 print(f"[LLMClient] Warning: Could not decode JSON line from Ollama stream: {line_str}")
                                 continue
+        except aiohttp.ClientError as e:  # Catch generic aiohttp client errors for retry
+            print(f"[LLMClient] Ollama Communication ClientError: {type(e).__name__} - {e}")
+            raise  # Re-raise for the retry_logic in stream_chat
         except Exception as e:
-            yield f"\n\nError from Ollama: {e}"
+            print(f"[LLMClient] Ollama Communication Error: {type(e).__name__} - {e}")
+            raise
