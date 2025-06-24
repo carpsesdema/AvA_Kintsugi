@@ -4,14 +4,11 @@ import asyncio
 import qasync
 from pathlib import Path
 
-# --- THIS IS THE DEFINITIVE PATHING SETUP ---
-# It determines the absolute root directory for the app and adds the 'src'
-# folder to the Python path. This ensures all imports and asset lookups
-# work correctly in both source-mode and bundled-mode.
+
 if getattr(sys, 'frozen', False):
-    # We are running in a bundle (e.g., from PyInstaller)
+
     project_root = Path(sys.executable).parent
-    # The _MEIPASS directory is where bundled assets are unpacked.
+
     sys.path.insert(0, str(Path(sys._MEIPASS)))
 else:
     # We are running from source.

@@ -1,4 +1,5 @@
 # src/ava/core/managers/window_manager.py
+from pathlib import Path # Added Path import
 from src.ava.gui.main_window import MainWindow
 from src.ava.gui.code_viewer import CodeViewerWindow
 from src.ava.gui.model_config_dialog import ModelConfigurationDialog
@@ -33,12 +34,14 @@ class WindowManager:
 
         print("[WindowManager] Initialized")
 
-    def initialize_windows(self, llm_client: LLMClient, service_manager: ServiceManager):
+    # MODIFIED: Added project_root parameter
+    def initialize_windows(self, llm_client: LLMClient, service_manager: ServiceManager, project_root: Path):
         """Initialize all GUI windows."""
         print("[WindowManager] Initializing windows...")
 
         # Create main windows
-        self.main_window = MainWindow(self.event_bus)
+        # MODIFIED: Pass project_root to MainWindow
+        self.main_window = MainWindow(self.event_bus, project_root)
         self.code_viewer = CodeViewerWindow(self.event_bus, self.project_manager)
         self.log_viewer = LogViewerWindow(self.event_bus)
 

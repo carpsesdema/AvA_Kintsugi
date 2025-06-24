@@ -1,4 +1,5 @@
 # src/ava/gui/main_window.py
+from pathlib import Path # Added Path import
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QApplication
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
@@ -13,9 +14,11 @@ class MainWindow(QWidget):
     Main window of the application, holding the sidebar and chat interface.
     """
 
-    def __init__(self, event_bus: EventBus):
+    # MODIFIED: Added project_root parameter
+    def __init__(self, event_bus: EventBus, project_root: Path):
         super().__init__()
         self.event_bus = event_bus
+        self.project_root = project_root # Store project_root
         self._closing = False
 
         # --- Window Properties ---
@@ -30,7 +33,8 @@ class MainWindow(QWidget):
 
         # --- Components ---
         self.sidebar = EnhancedSidebar(event_bus)
-        self.chat_interface = ChatInterface(event_bus)
+        # MODIFIED: Pass project_root to ChatInterface
+        self.chat_interface = ChatInterface(event_bus, self.project_root)
 
         # --- Add Components to Layout ---
         # The numbers (1, 3) are stretch factors.

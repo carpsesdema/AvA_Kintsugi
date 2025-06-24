@@ -92,9 +92,11 @@ class ChatMessageWidget(QWidget):
 
 
 class ChatInterface(QWidget):
-    def __init__(self, event_bus: EventBus):
+    # MODIFIED: Added project_root to __init__
+    def __init__(self, event_bus: EventBus, project_root: Path):
         super().__init__()
         self.event_bus = event_bus
+        self.project_root = project_root # Store project_root
         self.conversation_history = []
         self.streaming_message_widget = None
         self.streaming_sender = "Kintsugi AvA"  # Default sender
@@ -131,7 +133,6 @@ class ChatInterface(QWidget):
         self._add_message({"role": "assistant", "text": "Hello! Let's build something amazing from scratch."},
                           is_feedback=True)
 
-    # --- NEW: Method to create the thinking indicator panel ---
     def _create_thinking_panel(self) -> QFrame:
         """Creates the panel that shows when the AI is working."""
         panel = QFrame()
@@ -148,7 +149,8 @@ class ChatInterface(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
 
-        loading_indicator = LoadingIndicator()
+        # MODIFIED: Pass self.project_root to LoadingIndicator
+        loading_indicator = LoadingIndicator(self.project_root)
         loading_indicator.setFixedSize(38, 38)
         layout.addWidget(loading_indicator)
 
@@ -160,8 +162,6 @@ class ChatInterface(QWidget):
 
         panel.hide()  # Hide it by default
         return panel
-
-    # --- END NEW ---
 
     def _create_header_controls(self, layout: QVBoxLayout):
         controls_layout = QHBoxLayout()

@@ -17,18 +17,11 @@ class PluginConfig:
     """
 
     def __init__(self, project_root: Path):
-        # --- THIS IS THE DEFINITIVE FIX ---
-        # This logic correctly finds the config file whether running from
-        # source or as a bundled executable.
-        if getattr(sys, 'frozen', False):
-            # When bundled, assets are in the temporary _MEIPASS folder.
-            base_path = Path(sys._MEIPASS)
-            config_dir = base_path / "ava" / "config"
-        else:
-            # When running from source, find the config dir relative to this file.
-            # .../src/ava/core/plugins/plugin_config.py -> .../src/ava/config
-            config_dir = Path(__file__).resolve().parent.parent.parent / "config"
-
+        # --- THIS IS THE FIX ---
+        # Use the passed 'project_root' to determine the config directory.
+        # This 'project_root' is intelligently set by main.py to be
+        # the correct base path whether running from source or bundled.
+        config_dir = project_root / "ava" / "config"
         self.config_file = config_dir / "plugins.json"
         # --- END OF FIX ---
 

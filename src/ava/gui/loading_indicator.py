@@ -13,8 +13,9 @@ class LoadingIndicator(QWidget):
     issues with QPropertyAnimation, ensuring it works for launch.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, project_root: Path, parent=None):
         super().__init__(parent)
+        self.project_root = project_root # Store project_root
 
         # --- Image Filenames ---
         self.base_image_name = "loading_gear_base.png"
@@ -40,12 +41,11 @@ class LoadingIndicator(QWidget):
     def _load_pixmaps(self):
         """Finds and loads the two gear images into QPixmap objects."""
         try:
-            if getattr(sys, 'frozen', False):
-                # We are running in a bundle, assets are in _MEIPASS
-                asset_dir = Path(sys._MEIPASS) / "ava" / "assets"
-            else:
-                # We are running from source
-                asset_dir = Path(__file__).resolve().parent.parent / "assets"
+            # --- THIS IS THE FIX ---
+            # Use the passed 'project_root' to determine the asset directory.
+            # This 'project_root' is intelligently set by main.py.
+            asset_dir = self.project_root / "ava" / "assets"
+            # --- END OF FIX ---
 
             base_image_path = asset_dir / self.base_image_name
             glow_image_path = asset_dir / self.glow_image_name

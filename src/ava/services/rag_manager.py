@@ -22,7 +22,7 @@ class RAGManager(QObject):
     def __init__(self, event_bus, project_root: Path):
         super().__init__()
         self.event_bus = event_bus
-        self.project_root = project_root
+        self.project_root = project_root # This is the data_files_root from main.py
         self.project_manager = None
 
         self.rag_service = RAGService()
@@ -60,8 +60,10 @@ class RAGManager(QObject):
 
             python_executable = sys.executable
             # --- THIS IS THE PATH FIX ---
-            server_script_path = self.project_root / "src" / "ava" / "rag_server.py"
-            requirements_path = self.project_root / "src" / "ava" / "requirements_rag.txt"
+            # Paths are now relative to the 'project_root' (data_files_root)
+            # and then into the 'ava' subdirectory where these files are bundled.
+            server_script_path = self.project_root / "ava" / "rag_server.py"
+            requirements_path = self.project_root / "ava" / "requirements_rag.txt"
             # --- END OF FIX ---
 
             if not await self._install_dependencies(python_executable, requirements_path):
@@ -73,8 +75,8 @@ class RAGManager(QObject):
 
     def _perform_preflight_checks(self) -> bool:
         # --- THIS IS THE PATH FIX ---
-        server_script_path = self.project_root / "src" / "ava" / "rag_server.py"
-        requirements_path = self.project_root / "src" / "ava" / "requirements_rag.txt"
+        server_script_path = self.project_root / "ava" / "rag_server.py"
+        requirements_path = self.project_root / "ava" / "requirements_rag.txt"
         # --- END OF FIX ---
 
         if not server_script_path.exists():
@@ -89,8 +91,26 @@ class RAGManager(QObject):
 
         if not self._check_port_availability():
             self.log_message.emit("RAGManager", "warning", "Port 8001 appears to be in use")
-        if not self._check_database_permissions():
+        # --- THIS IS THE PATH FIX for rag_db ---
+        # rag_db should be at the actual repository root when running from source,
+        # or next to the executable when bundled.
+        # The 'project_root' passed to RAGManager is the data_files_root.
+        # If bundled, data_files_root is sys.executable.parent.
+        # If source, data_files_root is project_repo_root / "src".
+        # We want rag_db to be at project_repo_root or sys.executable.parent.
+
+        if getattr(sys, 'frozen', False):
+            # Bundled: rag_db next to executable
+            # self.project_root here is sys.executable.parent
+            db_parent_dir = self.project_root
+        else:
+            # Source: rag_db in the main project repository root
+            # self.project_root here is .../repo_root/src
+            db_parent_dir = self.project_root.parent # Go up one level from 'src'
+
+        if not self._check_database_permissions(db_parent_dir):
             return False
+        # --- END OF FIX for rag_db ---
         return True
 
     def _check_port_availability(self) -> bool:
@@ -102,16 +122,16 @@ class RAGManager(QObject):
         except OSError:
             return False
 
-    def _check_database_permissions(self) -> bool:
+    def _check_database_permissions(self, db_base_path: Path) -> bool:
         try:
-            rag_db_path = self.project_root / "rag_db"
-            rag_db_path.mkdir(exist_ok=True)
+            rag_db_path = db_base_path / "rag_db"
+            rag_db_path.mkdir(exist_ok=True, parents=True)
             test_file = rag_db_path / "test_permissions.tmp"
             test_file.write_text("test")
             test_file.unlink()
             return True
         except Exception as e:
-            self.log_message.emit("RAGManager", "error", f"Cannot write to rag_db directory: {e}")
+            self.log_message.emit("RAGManager", "error", f"Cannot write to rag_db directory ({rag_db_path}): {e}")
             return False
 
     async def _install_dependencies(self, python_executable: str, requirements_path: Path) -> bool:
@@ -142,13 +162,24 @@ class RAGManager(QObject):
             while not self._server_error_queue.empty(): self._server_error_queue.get()
 
             creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+            # --- THIS IS THE CWD FIX for rag_server.py ---
+            # The rag_server.py itself needs to run with its CWD set to where rag_db should be.
+            if getattr(sys, 'frozen', False):
+                # Bundled: CWD is where executable is
+                server_cwd = self.project_root
+            else:
+                # Source: CWD is the main project repository root
+                server_cwd = self.project_root.parent
+            # --- END OF CWD FIX ---
+
             self.rag_server_process = subprocess.Popen(
                 [python_executable, str(server_script_path)],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1,
                 universal_newlines=True, creationflags=creation_flags,
-                cwd=self.project_root # Set CWD to ensure rag_db is created at the project root
+                cwd=server_cwd # Set CWD for the RAG server process
             )
-            self.log_message.emit("RAGManager", "info", f"RAG server process started with PID: {self.rag_server_process.pid}")
+            self.log_message.emit("RAGManager", "info", f"RAG server process started with PID: {self.rag_server_process.pid} in CWD: {server_cwd}")
             self._last_connection_status = None
             self._last_process_status = None
         except Exception as e:

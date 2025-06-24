@@ -32,11 +32,12 @@ class LLMClient:
     def __init__(self, project_root: Path):
         load_dotenv()
 
-        if getattr(sys, 'frozen', False):
-            base_path = Path(sys._MEIPASS)
-            self.config_dir = base_path / "ava" / "config"
-        else:
-            self.config_dir = Path(__file__).resolve().parent.parent / "config"
+        # --- THIS IS THE FIX ---
+        # Use the passed 'project_root' to determine the config directory.
+        # This 'project_root' is intelligently set by main.py to be
+        # the correct base path whether running from source or bundled.
+        self.config_dir = project_root / "ava" / "config"
+        # --- END OF FIX ---
 
         self.config_dir.mkdir(exist_ok=True, parents=True)
         self.assignments_file = self.config_dir / "role_assignments.json"
