@@ -1,10 +1,10 @@
 # src/ava/gui/code_viewer.py
 from pathlib import Path
-from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter, QTabWidget, QTreeWidget,
-                               QMessageBox)  # Added QTabWidget, QTreeWidget
+from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter,
+                               QTabWidget, QMessageBox)  # Removed QTreeWidget as it's handled by FileTreeManager
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent
-import qasync # Ensure qasync is imported if used directly (it is via decorator)
+from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent  # Added QMessageBox
+import qasync
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
@@ -47,8 +47,22 @@ class CodeViewerWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        file_tree_panel = self._create_file_tree_panel()
-        main_splitter.addWidget(file_tree_panel)
+
+        # Create the panel that will HOST the tree widget
+        file_tree_panel_widget = QWidget()
+        file_tree_panel_layout = QVBoxLayout(file_tree_panel_widget)
+        file_tree_panel_layout.setContentsMargins(0, 0, 0, 0)
+
+        # FileTreeManager now creates its own CustomFileTreeWidget.
+        # We pass the panel as the parent for the CustomFileTreeWidget.
+        self.file_tree_manager = FileTreeManager(file_tree_panel_widget, self.project_manager, self.event_bus)
+        self.file_tree_manager.set_file_selection_callback(self._on_file_selected)
+
+        # Add the actual tree widget (obtained from the manager) to the panel's layout
+        file_tree_panel_layout.addWidget(self.file_tree_manager.get_widget())
+
+        main_splitter.addWidget(file_tree_panel_widget)  # Add the panel to the splitter
+
         editor_terminal_splitter = self._create_editor_terminal_splitter()
         main_splitter.addWidget(editor_terminal_splitter)
         main_splitter.setSizes([300, 1100])
@@ -58,15 +72,10 @@ class CodeViewerWindow(QMainWindow):
         self.status_bar.showMessage("Ready")
 
     def _create_file_tree_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        tree_widget = QTreeWidget()
-        # Pass ProjectManager and EventBus to FileTreeManager
-        self.file_tree_manager = FileTreeManager(tree_widget, self.project_manager, self.event_bus)
-        self.file_tree_manager.set_file_selection_callback(self._on_file_selected)
-        layout.addWidget(tree_widget)
-        return panel
+        # This method is now effectively part of _init_ui for clarity.
+        # If we needed to return the panel, the logic from _init_ui would go here.
+        # For now, _init_ui handles its creation and addition.
+        pass
 
     def _create_editor_terminal_splitter(self) -> QSplitter:
         right_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -74,7 +83,6 @@ class CodeViewerWindow(QMainWindow):
         tab_widget.setTabsClosable(True)
         tab_widget.setMovable(True)
         tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
-        # Pass EventBus and ProjectManager to EditorTabManager
         self.editor_manager = EditorTabManager(tab_widget, self.event_bus, self.project_manager)
         self.terminal = IntegratedTerminal(self.event_bus, self.project_manager)
         right_splitter.addWidget(tab_widget)
@@ -176,10 +184,10 @@ class CodeViewerWindow(QMainWindow):
         return self.editor_manager.get_active_file_path() if self.editor_manager else None
 
     def prepare_for_new_project_session(self):
-        if self.editor_manager: # Check if editor_manager exists
-             self.editor_manager.prepare_for_new_project() # Call its method
+        if self.editor_manager:
+            self.editor_manager.prepare_for_new_project()
         self.project_context.clear_context()
-        if self.file_tree_manager: self.file_tree_manager.clear_tree() # Check if file_tree_manager exists
+        if self.file_tree_manager: self.file_tree_manager.clear_tree()
         print("[CodeViewer] Prepared for new project session")
 
     def load_project(self, project_path_str: str):
@@ -271,17 +279,14 @@ class CodeViewerWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent):
         if self.editor_manager and self.editor_manager.has_unsaved_changes():
-            # Ask to save all files, not just the current one
             reply = QMessageBox.question(self, "Unsaved Changes",
-                                       "You have unsaved changes. Save all before exiting?",
-                                       QMessageBox.StandardButton.SaveAll | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+                                         "You have unsaved changes. Save all before exiting?",
+                                         QMessageBox.StandardButton.SaveAll | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
             if reply == QMessageBox.StandardButton.SaveAll:
                 if not self.editor_manager.save_all_files():
-                    # If saving failed for some reason, don't exit
                     event.ignore()
                     return
             elif reply == QMessageBox.StandardButton.Cancel:
                 event.ignore()
                 return
-            # If Discard, just proceed to accept.
         event.accept()

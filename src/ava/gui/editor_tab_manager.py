@@ -1,13 +1,14 @@
 # src/ava/gui/editor_tab_manager.py
 from pathlib import Path
-from typing import Dict, Optional, List  # Added List
-from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget, QMessageBox  # Added QMessageBox
+from typing import Dict, Optional, List
+from PySide6.QtWidgets import QTabWidget, QTextEdit, QLabel, QPlainTextEdit, QWidget, QMessageBox
 from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QKeySequence, QShortcut
 
 from src.ava.gui.components import Colors, Typography
 from src.ava.gui.code_viewer_helpers import PythonHighlighter
-from src.ava.core.event_bus import EventBus  # Added EventBus
+from src.ava.core.event_bus import EventBus
+from src.ava.core.project_manager import ProjectManager  # Added ProjectManager for path resolution
 
 
 class LineNumberArea(QWidget):
@@ -244,20 +245,19 @@ class EnhancedCodeEditor(QPlainTextEdit):
 class EditorTabManager:
     """Manages editor tabs with enhanced code editors and file saving."""
 
-    def __init__(self, tab_widget: QTabWidget, event_bus: EventBus,
-                 project_manager):  # Added EventBus and ProjectManager
+    def __init__(self, tab_widget: QTabWidget, event_bus: EventBus, project_manager: ProjectManager):
         self.tab_widget = tab_widget
         self.event_bus = event_bus
-        self.project_manager = project_manager  # Store ProjectManager
-        self.editors: Dict[str, EnhancedCodeEditor] = {}  # Stores abs_path_str -> editor
+        self.project_manager = project_manager
+        self.editors: Dict[str, EnhancedCodeEditor] = {}
         self._setup_initial_state()
-        self._connect_events()  # Connect to events
+        self._connect_events()
 
     def _connect_events(self):
-        """Connect to relevant events from the EventBus."""
         self.event_bus.subscribe("file_renamed", self._handle_file_renamed)
         self.event_bus.subscribe("items_deleted", self._handle_items_deleted)
-        # We can also listen for file_created if we want to auto-open new files, for example.
+        self.event_bus.subscribe("items_moved", self._handle_items_moved)  # New
+        self.event_bus.subscribe("items_added", self._handle_items_added)  # New
 
     def _setup_initial_state(self):
         self.clear_all_tabs()
@@ -271,7 +271,6 @@ class EditorTabManager:
         self.tab_widget.addTab(welcome_label, "Welcome")
 
     def prepare_for_new_project(self):
-        # Before clearing, check for unsaved changes
         if self.has_unsaved_changes():
             reply = QMessageBox.question(self.tab_widget, "Unsaved Changes",
                                          "You have unsaved changes. Save them before creating a new project?",
@@ -279,7 +278,7 @@ class EditorTabManager:
             if reply == QMessageBox.StandardButton.Save:
                 self.save_all_files()
             elif reply == QMessageBox.StandardButton.Cancel:
-                return  # User cancelled the new project operation
+                return
 
         self.clear_all_tabs()
         self._add_welcome_tab("Ready for new project generation...")
@@ -289,7 +288,7 @@ class EditorTabManager:
         while self.tab_widget.count() > 0:
             widget_to_remove = self.tab_widget.widget(0)
             self.tab_widget.removeTab(0)
-            if widget_to_remove in self.editors.values():  # Check if it's an editor we manage
+            if widget_to_remove in self.editors.values():
                 path_key_to_remove = None
                 for key, editor_instance in self.editors.items():
                     if editor_instance == widget_to_remove:
@@ -297,13 +296,13 @@ class EditorTabManager:
                         break
                 if path_key_to_remove:
                     del self.editors[path_key_to_remove]
-            widget_to_remove.deleteLater()  # Ensure proper cleanup
+            if widget_to_remove:  # Ensure widget exists before calling deleteLater
+                widget_to_remove.deleteLater()
         self.editors.clear()
 
     def get_active_file_path(self) -> Optional[str]:
         current_index = self.tab_widget.currentIndex()
         if current_index == -1: return None
-        # The tooltip now stores the absolute path string
         return self.tab_widget.tabToolTip(current_index)
 
     def create_or_update_tab(self, abs_path_str: str, content: str):
@@ -314,10 +313,10 @@ class EditorTabManager:
 
     def create_editor_tab(self, abs_path_str: str) -> bool:
         if abs_path_str in self.editors:
-            return False  # Already exists
+            return False
 
         if self.tab_widget.count() == 1 and isinstance(self.tab_widget.widget(0), QLabel):
-            self.tab_widget.removeTab(0)  # Remove welcome tab
+            self.tab_widget.removeTab(0)
 
         editor = EnhancedCodeEditor()
         if abs_path_str.endswith('.py'):
@@ -327,7 +326,7 @@ class EditorTabManager:
         editor.content_changed.connect(lambda: self._update_tab_title(abs_path_str))
 
         tab_index = self.tab_widget.addTab(editor, Path(abs_path_str).name)
-        self.tab_widget.setTabToolTip(tab_index, abs_path_str)  # Store abs path in tooltip
+        self.tab_widget.setTabToolTip(tab_index, abs_path_str)
         self.editors[abs_path_str] = editor
         print(f"[EditorTabManager] Created enhanced editor tab for: {abs_path_str}")
         return True
@@ -355,9 +354,9 @@ class EditorTabManager:
                 return True
         return False
 
-    def open_file_in_tab(self, file_path: Path):  # Takes Path object
+    def open_file_in_tab(self, file_path: Path):
         if not file_path.is_file(): return
-        abs_path_str = str(file_path.resolve())  # Ensure it's an absolute path string
+        abs_path_str = str(file_path.resolve())
         if abs_path_str in self.editors:
             self.focus_tab(abs_path_str)
             return
@@ -369,23 +368,27 @@ class EditorTabManager:
             print(f"[EditorTabManager] Error opening file {file_path}: {e}")
             QMessageBox.warning(self.tab_widget, "Open File Error", f"Could not open file:\n{file_path.name}\n\n{e}")
 
-    def close_tab(self, index: int, force_close: bool = False):  # Added force_close
+    def close_tab(self, index: int, force_close: bool = False):
         abs_path_str = self.tab_widget.tabToolTip(index)
+        widget_to_remove = self.tab_widget.widget(index)  # Get widget before removing tab
+
         if abs_path_str in self.editors:
             editor = self.editors[abs_path_str]
-            if not force_close and editor.is_dirty():  # Check force_close flag
+            if not force_close and editor.is_dirty():
                 reply = QMessageBox.question(self.tab_widget, "Unsaved Changes",
                                              f"File '{Path(abs_path_str).name}' has unsaved changes. Save before closing?",
                                              QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
                 if reply == QMessageBox.StandardButton.Save:
                     if not self.save_file(abs_path_str):
-                        return  # Save failed, don't close
+                        return
                 elif reply == QMessageBox.StandardButton.Cancel:
-                    return  # User cancelled closing
-
+                    return
             del self.editors[abs_path_str]
 
         self.tab_widget.removeTab(index)
+        if widget_to_remove:  # Ensure widget exists before calling deleteLater
+            widget_to_remove.deleteLater()
+
         if self.tab_widget.count() == 0:
             self._add_welcome_tab("All tabs closed. Open a file or generate code.")
 
@@ -402,11 +405,10 @@ class EditorTabManager:
             editor.mark_clean()
             self._update_tab_title(abs_path_str)
             print(f"[EditorTabManager] Saved file: {file_path.name}")
-            # Also inform ProjectManager to stage this change if it's part of an active project
             if self.project_manager and self.project_manager.active_project_path and self.project_manager.repo:
                 if file_path.is_relative_to(self.project_manager.active_project_path):
                     rel_path = file_path.relative_to(self.project_manager.active_project_path).as_posix()
-                    self.project_manager.stage_file(rel_path)  # Stage the save
+                    self.project_manager.stage_file(rel_path)
             return True
         except Exception as e:
             print(f"[EditorTabManager] Error saving file {abs_path_str}: {e}")
@@ -421,8 +423,10 @@ class EditorTabManager:
 
     def save_all_files(self) -> bool:
         all_saved = True
-        for abs_path_str, editor in self.editors.items():
-            if editor.is_dirty():
+        # Iterate over a copy of keys if modifying the dictionary (not here, but good practice)
+        for abs_path_str in list(self.editors.keys()):
+            editor = self.editors.get(abs_path_str)  # Use .get for safety
+            if editor and editor.is_dirty():
                 if not self.save_file(abs_path_str):
                     all_saved = False
         return all_saved
@@ -482,39 +486,99 @@ class EditorTabManager:
 
             for i in range(self.tab_widget.count()):
                 if self.tab_widget.tabToolTip(i) == old_abs_path_str:
-                    self.tab_widget.setTabText(i, Path(new_abs_path_str).name + ("*" if editor.is_dirty() else ""))
+                    new_tab_name = Path(new_abs_path_str).name
+                    self.tab_widget.setTabText(i, new_tab_name + ("*" if editor.is_dirty() else ""))
                     self.tab_widget.setTabToolTip(i, new_abs_path_str)
                     print(f"[EditorTabManager] Updated tab for renamed file: {old_rel_path_str} -> {new_rel_path_str}")
                     break
-        # If a directory was renamed, we might need to update paths of open files within it
-        # This is more complex and can be added if needed. For now, individual file renames are handled.
 
     def _handle_items_deleted(self, deleted_rel_paths: List[str]):
         if not self.project_manager or not self.project_manager.active_project_path:
             return
 
+        abs_paths_to_check_for_closing = set()
         for rel_path_str in deleted_rel_paths:
-            abs_path_str = str((self.project_manager.active_project_path / rel_path_str).resolve())
+            abs_path = (self.project_manager.active_project_path / rel_path_str).resolve()
+            abs_paths_to_check_for_closing.add(str(abs_path))
+            # If it's a directory, we need to check all files within it that might be open
+            if abs_path.is_dir():  # This check might be tricky if dir is already deleted, rely on path structure
+                for open_abs_path_str in list(self.editors.keys()):  # Iterate on copy
+                    if Path(open_abs_path_str).is_relative_to(abs_path):
+                        abs_paths_to_check_for_closing.add(open_abs_path_str)
 
-            # Check if the deleted item itself is an open tab
-            if abs_path_str in self.editors:
+        tabs_to_close_indices = []
+        for i in range(self.tab_widget.count()):
+            tab_tooltip_path = self.tab_widget.tabToolTip(i)
+            if tab_tooltip_path in abs_paths_to_check_for_closing:
+                tabs_to_close_indices.append(i)
+
+        # Close tabs in reverse order to avoid index shifting issues
+        for i in sorted(tabs_to_close_indices, reverse=True):
+            rel_path_of_closed_tab = Path(self.tab_widget.tabToolTip(i)).relative_to(
+                self.project_manager.active_project_path).as_posix()
+            self.close_tab(i, force_close=True)
+            print(f"[EditorTabManager] Closed tab for deleted item: {rel_path_of_closed_tab}")
+
+    def _handle_items_moved(self, moved_item_infos: List[Dict[str, str]]):
+        """Handles items moved within the project tree."""
+        if not self.project_manager or not self.project_manager.active_project_path:
+            return
+
+        for move_info in moved_item_infos:
+            old_rel_path = move_info.get("old")
+            new_rel_path = move_info.get("new")
+            if not old_rel_path or not new_rel_path:
+                continue
+
+            old_abs_path_str = str((self.project_manager.active_project_path / old_rel_path).resolve())
+            new_abs_path_str = str((self.project_manager.active_project_path / new_rel_path).resolve())
+
+            # If the moved item itself was an open tab
+            if old_abs_path_str in self.editors:
+                editor = self.editors.pop(old_abs_path_str)
+                self.editors[new_abs_path_str] = editor
                 for i in range(self.tab_widget.count()):
-                    if self.tab_widget.tabToolTip(i) == abs_path_str:
-                        self.close_tab(i, force_close=True)  # Force close without save prompt
-                        print(f"[EditorTabManager] Closed tab for deleted file: {rel_path_str}")
+                    if self.tab_widget.tabToolTip(i) == old_abs_path_str:
+                        new_tab_name = Path(new_abs_path_str).name
+                        self.tab_widget.setTabText(i, new_tab_name + ("*" if editor.is_dirty() else ""))
+                        self.tab_widget.setTabToolTip(i, new_abs_path_str)
+                        print(f"[EditorTabManager] Updated tab for moved file: {old_rel_path} -> {new_rel_path}")
                         break
             else:
-                # Check if any open tabs are *within* a deleted directory
-                keys_to_remove = []
-                for open_abs_path_str in self.editors.keys():
-                    if Path(abs_path_str).is_dir() and Path(open_abs_path_str).is_relative_to(Path(abs_path_str)):
+                # Check if any open files were *inside* a moved directory
+                # This requires iterating through open tabs and checking if their old path
+                # was relative to the old_abs_path_str (if it was a directory).
+                # Then, construct their new absolute path based on new_abs_path_str.
+                for open_abs_path_str in list(self.editors.keys()):  # Iterate on copy
+                    open_path_obj = Path(open_abs_path_str)
+                    old_dir_abs_path_obj = Path(old_abs_path_str)
+
+                    if old_dir_abs_path_obj.is_dir() and open_path_obj.is_relative_to(old_dir_abs_path_obj):
+                        # This open file was inside the moved directory
+                        relative_to_moved_dir = open_path_obj.relative_to(old_dir_abs_path_obj)
+                        new_file_abs_path_str = str((Path(new_abs_path_str) / relative_to_moved_dir).resolve())
+
+                        editor = self.editors.pop(open_abs_path_str)
+                        self.editors[new_file_abs_path_str] = editor
                         for i in range(self.tab_widget.count()):
                             if self.tab_widget.tabToolTip(i) == open_abs_path_str:
-                                self.close_tab(i, force_close=True)
-                                keys_to_remove.append(open_abs_path_str)
+                                new_tab_name = Path(new_file_abs_path_str).name
+                                self.tab_widget.setTabText(i, new_tab_name + ("*" if editor.is_dirty() else ""))
+                                self.tab_widget.setTabToolTip(i, new_file_abs_path_str)
                                 print(
-                                    f"[EditorTabManager] Closed tab for file in deleted directory: {open_abs_path_str}")
+                                    f"[EditorTabManager] Updated tab for file within moved directory: {open_abs_path_str} -> {new_file_abs_path_str}")
                                 break
-                for key in keys_to_remove:  # Remove from self.editors after iteration
-                    if key in self.editors:
-                        del self.editors[key]
+
+    def _handle_items_added(self, added_item_infos: List[Dict[str, str]]):
+        """Handles items added to the project (e.g., by external drop)."""
+        if not self.project_manager or not self.project_manager.active_project_path:
+            return
+
+        for add_info in added_item_infos:
+            new_rel_path = add_info.get("new_project_rel_path")
+            if new_rel_path:
+                new_abs_path = (self.project_manager.active_project_path / new_rel_path).resolve()
+                print(f"[EditorTabManager] File added to project: {new_rel_path}. Absolute: {new_abs_path}")
+                # Optionally, automatically open newly added files:
+                # if new_abs_path.is_file():
+                #    self.open_file_in_tab(new_abs_path)
