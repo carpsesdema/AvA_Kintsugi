@@ -84,3 +84,4 @@ yarn-error.log*
 src/ava/config/role_assignments.json
 !/rag_db/
 /rag_db/
+!/src/ava/workspace/Genesis_Vestigea_0.3.3/
