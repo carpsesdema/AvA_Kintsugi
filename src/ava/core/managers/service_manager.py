@@ -9,27 +9,19 @@ from src.ava.core.project_manager import ProjectManager
 from src.ava.core.execution_engine import ExecutionEngine
 from src.ava.core.plugins.plugin_manager import PluginManager
 
-# --- THIS IS THE FIX: Import each service directly from its module ---
-# This breaks the import cycle by making dependencies explicit and linear,
-# bypassing the services/__init__.py file completely.
-from src.ava.services.action_service import ActionService
-from src.ava.services.app_state_service import AppStateService
-from src.ava.services.terminal_service import TerminalService
-from src.ava.services.architect_service import ArchitectService
-from src.ava.services.reviewer_service import ReviewerService
-from src.ava.services.validation_service import ValidationService
-from src.ava.services.project_indexer_service import ProjectIndexerService
-from src.ava.services.import_fixer_service import ImportFixerService
-from src.ava.services.generation_coordinator import GenerationCoordinator
-from src.ava.services.context_manager import ContextManager
-from src.ava.services.dependency_planner import DependencyPlanner
-from src.ava.services.integration_validator import IntegrationValidator
-from src.ava.services.rag_manager import RAGManager
-# --- END OF FIX ---
+# --- THIS IS THE FIX: Comment out the direct import of RAGManager ---
+# We will still import it for type hinting, which is safe.
+# from src.ava.services.rag_manager import RAGManager
+
+from src.ava.services import (
+    ActionService, AppStateService, TerminalService, ArchitectService, ReviewerService,
+    ValidationService, ProjectIndexerService, ImportFixerService,
+    GenerationCoordinator, ContextManager, DependencyPlanner, IntegrationValidator, RAGService
+)
 
 if TYPE_CHECKING:
-    # This block is for type checkers only and doesn't run, so it's safe.
     from src.ava.services.action_service import ActionService
+    # This is for type hints only and does not affect the build.
     from src.ava.services.rag_manager import RAGManager
 
 
@@ -83,6 +75,10 @@ class ServiceManager:
         """Initialize services with proper dependency order."""
         print("[ServiceManager] Initializing services...")
 
+        # --- THIS IS THE STRATEGIC CHANGE: Temporarily disable RAG ---
+        # from src.ava.services.rag_manager import RAGManager
+        # ---
+
         self.app_state_service = AppStateService(self.event_bus)
         self.project_indexer_service = ProjectIndexerService()
         self.import_fixer_service = ImportFixerService()
@@ -90,17 +86,22 @@ class ServiceManager:
         self.dependency_planner = DependencyPlanner(self)
         self.integration_validator = IntegrationValidator(self)
 
-        self.rag_manager = RAGManager(self.event_bus, self.project_root)
-        if self.project_manager:
-            self.rag_manager.set_project_manager(self.project_manager)
+        # --- THIS IS THE STRATEGIC CHANGE: Temporarily disable RAG ---
+        # self.rag_manager = RAGManager(self.event_bus, self.project_root)
+        # if self.project_manager:
+        #     self.rag_manager.set_project_manager(self.project_manager)
 
         self.generation_coordinator = GenerationCoordinator(
             self, self.event_bus, self.context_manager,
             self.dependency_planner, self.integration_validator
         )
+        # We need to handle the fact that rag_manager might not exist.
+        # For now, we pass a dummy RAGService instance.
+        rag_service_instance = self.rag_manager.rag_service if self.rag_manager else RAGService()
+
         self.architect_service = ArchitectService(
             self, self.event_bus, self.llm_client, self.project_manager,
-            self.rag_manager.rag_service, self.project_indexer_service, self.import_fixer_service
+            rag_service_instance, self.project_indexer_service, self.import_fixer_service
         )
         self.reviewer_service = ReviewerService(self.event_bus, self.llm_client)
         self.validation_service = ValidationService(self.event_bus, self.project_manager, self.reviewer_service)
@@ -116,7 +117,7 @@ class ServiceManager:
     def get_project_manager(self) -> ProjectManager: return self.project_manager
     def get_execution_engine(self) -> ExecutionEngine: return self.execution_engine
     def get_terminal_service(self) -> TerminalService: return self.terminal_service
-    def get_rag_manager(self) -> RAGManager: return self.rag_manager
+    def get_rag_manager(self) -> "RAGManager": return self.rag_manager
     def get_architect_service(self) -> ArchitectService: return self.architect_service
     def get_reviewer_service(self) -> ReviewerService: return self.reviewer_service
     def get_validation_service(self) -> ValidationService: return self.validation_service
@@ -129,9 +130,10 @@ class ServiceManager:
     def get_plugin_manager(self) -> PluginManager: return self.plugin_manager
 
     def is_fully_initialized(self) -> bool:
+        # RAG Manager is no longer required for initialization
         return all([
             self.app_state_service, self.llm_client, self.project_manager, self.execution_engine,
-            self.terminal_service, self.rag_manager, self.architect_service, self.reviewer_service,
+            self.terminal_service, self.architect_service, self.reviewer_service,
             self.validation_service, self.project_indexer_service, self.import_fixer_service,
             self.context_manager, self.dependency_planner, self.integration_validator,
             self.generation_coordinator, self.plugin_manager, self.action_service

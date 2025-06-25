@@ -2,14 +2,12 @@
 import asyncio
 import os
 import sys
-import threading
+import subprocess
 from pathlib import Path
-import uvicorn
 
 from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtWidgets import QFileDialog
 
-from src.ava.rag_server import rag_app, HOST, PORT
 from src.ava.services.rag_service import RAGService
 from src.ava.services.directory_scanner_service import DirectoryScannerService
 from src.ava.services.chunking_service import ChunkingService
@@ -17,8 +15,8 @@ from src.ava.services.chunking_service import ChunkingService
 
 class RAGManager(QObject):
     """
-    Manages the RAG pipeline by running the Uvicorn server in a separate thread,
-    with its own dedicated asyncio event loop to prevent conflicts with qasync.
+    Manages the RAG pipeline by launching a python script using a private,
+    embedded Python environment that is shipped with the application.
     """
     log_message = Signal(str, str, str)
 
@@ -27,13 +25,10 @@ class RAGManager(QObject):
         self.event_bus = event_bus
         self.project_root = project_root
         self.project_manager = None
-
         self.rag_service = RAGService()
         self.scanner = DirectoryScannerService()
         self.chunker = ChunkingService()
-
-        self.server_thread = None
-        self.uvicorn_server = None
+        self.rag_server_process = None
         self._last_connection_status = None
 
         self.status_check_timer = QTimer()
@@ -43,104 +38,82 @@ class RAGManager(QObject):
         self.log_message.connect(
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
         )
-        self.event_bus.subscribe("application_shutdown", lambda: asyncio.create_task(self.terminate_rag_server()))
-        print("[RAGManager] Initialized for threaded server management.")
+        self.event_bus.subscribe("application_shutdown", self.terminate_rag_server)
+        print("[RAGManager] Initialized for embedded environment process management.")
 
     def set_project_manager(self, project_manager):
         self.project_manager = project_manager
 
-    def _run_server_in_thread(self, server: uvicorn.Server):
-        """
-        Runs the uvicorn server in a dedicated thread with its own event loop,
-        explicitly setting a standard policy to avoid qasync conflicts.
-        """
-        # --- THIS IS THE FIX ---
-        try:
-            # On Windows, we must set a specific policy to avoid conflicts.
-            if sys.platform == "win32":
-                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            # Ensure the server knows it should be running
-            server.should_exit = False
-            loop.run_until_complete(server.serve())
-        except Exception as e:
-            self.log_message.emit("RAGManager", "error", f"RAG server thread error: {e}")
-        finally:
-            self.log_message.emit("RAGManager", "info", "RAG server thread has exited.")
-        # --- END OF FIX ---
-
     async def launch_rag_server(self):
-        """Launches the Uvicorn server in a background thread."""
-        if self.server_thread and self.server_thread.is_alive():
-            self.log_message.emit("RAGManager", "info", "RAG server thread is already running.")
+        if self.rag_server_process and self.rag_server_process.poll() is None:
+            self.log_message.emit("RAGManager", "info", "RAG server process is already running.")
             return
 
-        self.log_message.emit("RAGManager", "info", "Starting RAG server in a background thread...")
-        try:
-            db_parent_dir = self._get_db_parent_directory()
-            if not self._check_database_permissions(db_parent_dir):
-                return
+        self.log_message.emit("RAGManager", "info", "Attempting to launch RAG server from embedded environment...")
 
-            config = uvicorn.Config("src.ava.rag_server:rag_app", host=HOST, port=PORT, log_level="info",
-                                    loop="asyncio")
-            self.uvicorn_server = uvicorn.Server(config)
+        # When bundled, project_root is the exe's directory.
+        # This is where we expect to find our private venv.
+        base_path = self.project_root
 
-            original_cwd = os.getcwd()
-            os.chdir(db_parent_dir)
+        # Determine the path to the private python and the script to run
+        private_python_exe = base_path / ".venv" / "Scripts" / "python.exe"
+        server_script = base_path / "ava" / "rag_server.py"
 
-            self.server_thread = threading.Thread(target=self._run_server_in_thread, args=(self.uvicorn_server,),
-                                                  daemon=True)
-            self.server_thread.start()
+        # If running from source, use the system's python for development ease.
+        command = [sys.executable, str(server_script)]
 
-            os.chdir(original_cwd)
-
-            self.log_message.emit("RAGManager", "info", f"RAG server thread started in CWD: {db_parent_dir}")
-            await asyncio.sleep(2)
-            await self._check_and_log_status()
-
-        except Exception as e:
-            self.log_message.emit("RAGManager", "error", f"Failed to launch RAG server thread: {e}")
-            import traceback
-            traceback.print_exc()
-
-    def _get_db_parent_directory(self) -> Path:
+        # If bundled, use the private python environment.
         if getattr(sys, 'frozen', False):
-            return self.project_root
-        else:
-            return self.project_root.parent
+            if not private_python_exe.exists():
+                self.log_message.emit("RAGManager", "error",
+                                      f"Private Python not found at {private_python_exe}. Cannot start RAG server.")
+                return
+            command = [str(private_python_exe), str(server_script)]
 
-    def _check_database_permissions(self, db_base_path: Path) -> bool:
         try:
-            rag_db_path = db_base_path / "rag_db"
-            rag_db_path.mkdir(exist_ok=True, parents=True)
-            test_file = rag_db_path / "test_permissions.tmp"
-            test_file.write_text("test")
-            test_file.unlink()
-            return True
-        except Exception as e:
-            self.log_message.emit("RAGManager", "error", f"Cannot write to rag_db directory ({rag_db_path}): {e}")
-            return False
+            cwd = base_path if getattr(sys, 'frozen', False) else self.project_root.parent
 
-    async def terminate_rag_server(self):
-        """Gracefully shuts down the running Uvicorn server."""
+            creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            self.rag_server_process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                creationflags=creation_flags,
+            )
+            self.log_message.emit("RAGManager", "info",
+                                  f"RAG server process launched with PID: {self.rag_server_process.pid}")
+        except Exception as e:
+            self.log_message.emit("RAGManager", "error", f"Failed to launch RAG server process: {e}")
+
+    def terminate_rag_server(self):
         if self.status_check_timer.isActive():
             self.status_check_timer.stop()
+        if self.rag_server_process and self.rag_server_process.poll() is None:
+            self.log_message.emit("RAGManager", "info",
+                                  f"Terminating RAG server (PID: {self.rag_server_process.pid})...")
+            self.rag_server_process.terminate()
+            try:
+                self.rag_server_process.wait(timeout=5)
+                self.log_message.emit("RAGManager", "success", "RAG server terminated.")
+            except subprocess.TimeoutExpired:
+                self.log_message.emit("RAGManager", "warning", "RAG server did not terminate gracefully. Killing.")
+                self.rag_server_process.kill()
+        self.rag_server_process = None
 
-        if self.uvicorn_server and not self.uvicorn_server.should_exit:
-            self.log_message.emit("RAGManager", "info", "Sending shutdown signal to RAG server...")
-            self.uvicorn_server.should_exit = True
+    def check_server_status_async(self):
+        try:
+            main_loop = asyncio.get_event_loop()
+            if main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(self._check_and_log_status(), main_loop)
+        except RuntimeError:
+            pass
 
-        if self.server_thread and self.server_thread.is_alive():
-            self.server_thread.join(timeout=5)
-            if self.server_thread.is_alive():
-                self.log_message.emit("RAGManager", "warning", "RAG server thread did not exit gracefully.")
-            else:
-                self.log_message.emit("RAGManager", "success", "RAG server thread terminated.")
-
-        self.server_thread = None
-        self.uvicorn_server = None
-        self._last_connection_status = None
+    async def _check_and_log_status(self):
+        is_now_connected = await self.rag_service.check_connection()
+        if self._last_connection_status != is_now_connected:
+            msg, level = ("RAG service is running.", "success") if is_now_connected else (
+                "RAG service is offline or starting...", "info")
+            self.log_message.emit("RAGManager", level, msg)
+            self._last_connection_status = is_now_connected
 
     def open_scan_directory_dialog(self, parent_widget=None):
         directory = QFileDialog.getExistingDirectory(parent_widget, "Select Directory to Add to Knowledge Base",
@@ -185,33 +158,3 @@ class RAGManager(QObject):
                 self.log_message.emit("RAGManager", "error", f"Ingestion failed. {message}")
         except Exception as e:
             self.log_message.emit("RAGManager", "error", f"Ingestion process failed: {e}")
-
-    def check_server_status_async(self):
-        try:
-            main_loop = asyncio.get_event_loop()
-            if main_loop.is_running():
-                asyncio.run_coroutine_threadsafe(self._check_and_log_status(), main_loop)
-        except RuntimeError:
-            pass
-
-    async def _check_and_log_status(self):
-        """Checks the connection to the RAG service and updates status."""
-        server_is_supposed_to_be_running = (self.uvicorn_server is not None and not self.uvicorn_server.should_exit)
-
-        if not server_is_supposed_to_be_running:
-            if self._last_connection_status is not False:
-                self.log_message.emit("RAGManager", "info", "RAG service is offline.")
-                self._last_connection_status = False
-            return
-
-        is_now_connected = await self.rag_service.check_connection()
-
-        if self._last_connection_status != is_now_connected:
-            msg, level = ("RAG service is running.", "success") if is_now_connected else (
-                "RAG service is starting or not responding...", "info")
-            self.log_message.emit("RAGManager", level, msg)
-            self._last_connection_status = is_now_connected
-
-        if self.server_thread and not self.server_thread.is_alive() and server_is_supposed_to_be_running:
-            self.log_message.emit("RAGManager", "error", "RAG server thread terminated unexpectedly.")
-            self.uvicorn_server.should_exit = True
