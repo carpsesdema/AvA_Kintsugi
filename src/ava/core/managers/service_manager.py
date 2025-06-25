@@ -4,7 +4,7 @@ import sys
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
-import traceback # NEW: For detailed error logging
+import traceback  # For detailed error logging
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
@@ -109,7 +109,7 @@ class ServiceManager:
 
     def launch_background_servers(self):
         """Launches the RAG and LLM servers as separate processes."""
-        python_executable_str: str
+        python_executable_to_use: str
         cwd_for_servers: Path
         log_dir_for_servers: Path
 
@@ -118,28 +118,50 @@ class ServiceManager:
             base_path_for_bundle = self.project_root
             self.log_to_event_bus("info", f"Running in bundled mode. Base path: {base_path_for_bundle}")
 
-            private_python_exe = base_path_for_bundle / ".venv" / "Scripts" / "python.exe"
-            if not private_python_exe.exists():
-                error_msg = f"CRITICAL: Private Python executable not found at {private_python_exe}. Cannot start servers."
-                self.log_to_event_bus("error", error_msg)
-                self.event_bus.emit("log_message_received", "ServiceManager", "error", "Private Python for servers not found. AI features will be unavailable.")
-                return
-            python_executable_str = str(private_python_exe)
+            private_python_scripts_dir = base_path_for_bundle / ".venv" / "Scripts"
+
+            # --- MODIFICATION: Try pythonw.exe first on Windows for bundled app ---
+            if sys.platform == "win32":
+                pythonw_exe = private_python_scripts_dir / "pythonw.exe"
+                if pythonw_exe.exists():
+                    python_executable_to_use = str(pythonw_exe)
+                    self.log_to_event_bus("info", f"Using pythonw.exe for bundled server: {python_executable_to_use}")
+                else:
+                    python_exe = private_python_scripts_dir / "python.exe"
+                    if not python_exe.exists():
+                        error_msg = f"CRITICAL: Private Python executable (python.exe or pythonw.exe) not found in {private_python_scripts_dir}. Cannot start servers."
+                        self.log_to_event_bus("error", error_msg)
+                        return
+                    python_executable_to_use = str(python_exe)
+                    self.log_to_event_bus("info",
+                                          f"pythonw.exe not found, using python.exe for bundled server: {python_executable_to_use}")
+            else:  # For other platforms (Linux, macOS)
+                python_exe = private_python_scripts_dir.parent / "bin" / "python"  # venv/bin/python
+                if not python_exe.exists():
+                    error_msg = f"CRITICAL: Private Python executable not found at {python_exe}. Cannot start servers."
+                    self.log_to_event_bus("error", error_msg)
+                    return
+                python_executable_to_use = str(python_exe)
+            # --- END MODIFICATION ---
+
             cwd_for_servers = base_path_for_bundle
             log_dir_for_servers = base_path_for_bundle
-            self.log_to_event_bus("info", f"Bundled mode - Python: {python_executable_str}, CWD: {cwd_for_servers}, SubprocessLogDir: {log_dir_for_servers}")
+            self.log_to_event_bus("info",
+                                  f"Bundled mode - Python: {python_executable_to_use}, CWD: {cwd_for_servers}, SubprocessLogDir: {log_dir_for_servers}")
         else:
             source_repo_root = self.project_root.parent
             self.log_to_event_bus("info", f"Running from source. Repo root: {source_repo_root}")
-            python_executable_str = sys.executable
+            python_executable_to_use = sys.executable
             cwd_for_servers = source_repo_root
             log_dir_for_servers = source_repo_root
-            self.log_to_event_bus("info", f"Source mode - Python: {python_executable_str}, CWD: {cwd_for_servers}, SubprocessLogDir: {log_dir_for_servers}")
+            self.log_to_event_bus("info",
+                                  f"Source mode - Python: {python_executable_to_use}, CWD: {cwd_for_servers}, SubprocessLogDir: {log_dir_for_servers}")
 
         try:
             log_dir_for_servers.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            self.log_to_event_bus("error", f"Failed to create log directory {log_dir_for_servers} for server subprocesses: {e}")
+            self.log_to_event_bus("error",
+                                  f"Failed to create log directory {log_dir_for_servers} for server subprocesses: {e}")
 
         server_script_base_dir = self.project_root / "ava"
         llm_script_path = server_script_base_dir / "llm_server.py"
@@ -148,26 +170,27 @@ class ServiceManager:
         llm_subprocess_log_file = log_dir_for_servers / "llm_server_subprocess.log"
         rag_subprocess_log_file = log_dir_for_servers / "rag_server_subprocess.log"
 
-        # --- Setup for hiding console windows (Windows specific) ---
         startupinfo = None
-        if sys.platform == "win32":
+        # If we are NOT using pythonw.exe (i.e., we are using python.exe), then try to hide its window.
+        # If pythonw.exe is used, startupinfo for hiding is not strictly necessary as pythonw doesn't create a window.
+        if sys.platform == "win32" and not python_executable_to_use.endswith("pythonw.exe"):
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE  # Value 0: Hides the window
+            startupinfo.wShowWindow = subprocess.SW_HIDE
 
         # --- Launch LLM Server ---
         if self.llm_server_process is None or self.llm_server_process.poll() is not None:
             self.log_to_event_bus("info", "Attempting to launch LLM server...")
             self.log_to_event_bus("info", f"  LLM Script: {llm_script_path}")
-            self.log_to_event_bus("info", f"  LLM Python: {python_executable_str}")
+            self.log_to_event_bus("info", f"  LLM Python: {python_executable_to_use}")
             self.log_to_event_bus("info", f"  LLM CWD: {cwd_for_servers}")
             self.log_to_event_bus("info", f"  LLM Subprocess Log: {llm_subprocess_log_file}")
             try:
                 with open(llm_subprocess_log_file, "w", encoding="utf-8") as llm_log_handle:
                     self.llm_server_process = subprocess.Popen(
-                        [python_executable_str, str(llm_script_path)], cwd=str(cwd_for_servers),
+                        [python_executable_to_use, str(llm_script_path)], cwd=str(cwd_for_servers),
                         stdout=llm_log_handle, stderr=subprocess.STDOUT,
-                        startupinfo=startupinfo # MODIFIED: Use startupinfo for window hiding
+                        startupinfo=startupinfo
                     )
                 pid = self.llm_server_process.pid if self.llm_server_process else 'N/A'
                 self.log_to_event_bus("info", f"LLM Server process started with PID: {pid}")
@@ -181,15 +204,15 @@ class ServiceManager:
         if self.rag_server_process is None or self.rag_server_process.poll() is not None:
             self.log_to_event_bus("info", "Attempting to launch RAG server...")
             self.log_to_event_bus("info", f"  RAG Script: {rag_script_path}")
-            self.log_to_event_bus("info", f"  RAG Python: {python_executable_str}")
+            self.log_to_event_bus("info", f"  RAG Python: {python_executable_to_use}")
             self.log_to_event_bus("info", f"  RAG CWD: {cwd_for_servers}")
             self.log_to_event_bus("info", f"  RAG Subprocess Log: {rag_subprocess_log_file}")
             try:
                 with open(rag_subprocess_log_file, "w", encoding="utf-8") as rag_log_handle:
                     self.rag_server_process = subprocess.Popen(
-                        [python_executable_str, str(rag_script_path)], cwd=str(cwd_for_servers),
+                        [python_executable_to_use, str(rag_script_path)], cwd=str(cwd_for_servers),
                         stdout=rag_log_handle, stderr=subprocess.STDOUT,
-                        startupinfo=startupinfo # MODIFIED: Use startupinfo for window hiding
+                        startupinfo=startupinfo
                     )
                 pid = self.rag_server_process.pid if self.rag_server_process else 'N/A'
                 self.log_to_event_bus("info", f"RAG Server process started with PID: {pid}")
@@ -211,7 +234,8 @@ class ServiceManager:
                     process.wait(timeout=5)
                     self.log_to_event_bus("info", f"[ServiceManager] {name} server terminated.")
                 except subprocess.TimeoutExpired:
-                    self.log_to_event_bus("warning", f"[ServiceManager] {name} server did not terminate gracefully. Killing.")
+                    self.log_to_event_bus("warning",
+                                          f"[ServiceManager] {name} server did not terminate gracefully. Killing.")
                     process.kill()
                 except Exception as e:
                     self.log_to_event_bus("error", f"[ServiceManager] Error during {name} server termination: {e}")
@@ -219,7 +243,6 @@ class ServiceManager:
         self.llm_server_process = None
         self.rag_server_process = None
         self.log_to_event_bus("info", "[ServiceManager] Background server processes set to None.")
-
 
     async def shutdown(self):
         """Async shutdown method to correctly shut down all services."""

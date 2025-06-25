@@ -30,32 +30,61 @@ PLANNER_PROMPT = textwrap.dedent("""
     """)
 
 HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent("""
-    You are an expert software architect. Your task is to design a robust and modular file structure for a new Python application based on the user's request.
+    You are an expert software architect. Your primary skill is to accurately interpret a user's request and design the most appropriate and efficient Python application structure. Prioritize simplicity and minimalism unless the request explicitly demands complex features, GUIs, or frameworks.
 
     **USER REQUEST:** "{prompt}"
 
-    **ADDITIONAL CONTEXT FROM KNOWLEDGE BASE:**
+    **ADDITIONAL CONTEXT FROM KNOWLEDGE BASE (Consider this, but the user's direct request and the principle of least complexity are paramount):**
     {rag_context}
 
-    **CRITICAL INSTRUCTIONS:**
-    1.  Deconstruct the user's request into a logical, multi-file Python project.
-    2.  For each file, provide a concise, one-sentence "purpose" describing its role.
-    3.  **A utility module for setting up consistent logging MUST be created at `utils/logging_config.py`**.
-    4.  The main executable script **MUST be named `main.py`** and it **MUST call the logging setup function from `utils/logging_config.py` at the very beginning.**
-    5.  Identify all necessary pip installable dependencies.
-    6.  Your response **MUST** be ONLY a valid JSON object. Do not include any other text, explanations, or markdown.
-    7.  **DO NOT write any implementation code.** Focus ONLY on the structure.
+    **CRITICAL DESIGN PRINCIPLES & INSTRUCTIONS:**
 
-    **EXAMPLE RESPONSE:**
+    1.  **Interpret User Intent with a Bias Towards Simplicity:**
+        *   **Analyze the core need:** What is the fundamental problem the user is trying to solve?
+        *   **Default to Minimalism:** For requests that do not explicitly specify a complex GUI (e.g., "game," "desktop app with many features"), a web interface, or advanced graphical capabilities, your **default design MUST be a simple command-line interface (CLI) application or a basic script.**
+        *   **GUI Escalation:** Only introduce a GUI library if:
+            *   The user *explicitly* asks for a "GUI," "graphical interface," "visual tool," or similar. For very simple GUI needs (e.g., "a GUI for my calculator"), prefer lightweight options like `tkinter`.
+            *   The task inherently requires visual interaction that a CLI cannot provide (e.g., "image editor," "drawing tool").
+        *   **Framework Escalation:** Only introduce web frameworks (Flask, FastAPI, Django) or game engines (Pygame, Ursina) if the user's request *unambiguously* describes a web application or a game.
+        *   **Single File for Trivial Tasks:** If the request describes a very small, self-contained utility (e.g., "a script to rename files with a specific pattern," "a script to output 'hello world'"), a single `main.py` file is often the most appropriate solution.
+
+    2.  **Modular Design (When Appropiate):** If the interpreted complexity warrants multiple files (i.e., it's not a trivial single-file script), deconstruct the request into a logical, multi-file Python project. For each file, provide a concise, one-sentence "purpose" describing its role.
+
+    3.  **Logging Module (For Multi-File Projects):** If your design includes more than one Python file, you **MUST** create a utility module for consistent logging at `utils/logging_config.py`. Its purpose should be: "Configures a centralized logging system for the application."
+
+    4.  **Main Script (`main.py`):**
+        *   The main executable script **MUST be named `main.py`**.
+        *   If `utils/logging_config.py` is part of your design, `main.py` **MUST import and call the logging setup function from `utils/logging_config.py` at the very beginning of its execution.**
+
+    5.  **Dependencies:** Identify all necessary pip installable dependencies. For simple CLI scripts or single-file utilities, this list may be empty.
+
+    6.  **JSON Output ONLY:** Your response **MUST** be ONLY a valid JSON object. Do not include any other text, explanations, or markdown.
+
+    7.  **No Implementation Code:** Focus ONLY on the file structure, purposes, and dependencies.
+
+    **EXAMPLE (User requests: "a Python app with one button that says hello when you click it"):**
+    Since this is a very simple GUI request, `tkinter` is appropriate.
+    ```json
     {{
       "files": [
-        {{ "filename": "utils/logging_config.py", "purpose": "Configures a centralized logging system (e.g., using logging.basicConfig) for the entire application." }},
-        {{ "filename": "main.py", "purpose": "Main application entry point, calls the logging setup, initializes the Flask app and database." }},
-        {{ "filename": "models.py", "purpose": "Defines the database models, such as the User table." }},
-        {{ "filename": "routes.py", "purpose": "Contains all Flask routes for authentication and core features." }}
+        {{ "filename": "utils/logging_config.py", "purpose": "Configures a centralized logging system for the application." }},
+        {{ "filename": "main.py", "purpose": "Main application entry point, creates a simple Tkinter GUI with a button that prints 'Hello'." }}
       ],
-      "dependencies": ["Flask", "Flask-SQLAlchemy", "Flask-Login"]
+      "dependencies": []
     }}
+    ```
+
+    **EXAMPLE (User requests: "a script to count words in a text file"):**
+    This is a simple CLI task.
+    ```json
+    {{
+      "files": [
+        {{ "filename": "utils/logging_config.py", "purpose": "Configures a centralized logging system for the application." }},
+        {{ "filename": "main.py", "purpose": "Command-line utility to count words in a user-specified text file." }}
+      ],
+      "dependencies": ["click"]
+    }}
+    ```
     """)
 
 MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
