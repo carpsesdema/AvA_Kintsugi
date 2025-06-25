@@ -1,0 +1,8 @@
+# Core GUI application requirements
+PySide6
+qasync
+qtawesome
+Pygments
+unidiff
+aiohttp
+GitPython

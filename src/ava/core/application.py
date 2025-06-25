@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 from src.ava.core.event_bus import EventBus
-# --- THIS IS THE FIX: Only import from the 'managers' package ---
 from src.ava.core.managers import (
     ServiceManager,
     WindowManager,
@@ -59,10 +58,8 @@ class Application:
             await self.service_manager.initialize_plugins()
             self.service_manager.initialize_services()
 
-            rag_manager = self.service_manager.get_rag_manager()
-            if rag_manager:
-                print("[Application] Triggering automatic RAG server launch...")
-                asyncio.create_task(rag_manager.launch_rag_server())
+            # Launch all background servers
+            self.service_manager.launch_background_servers()
 
             self.window_manager.initialize_windows(
                 self.service_manager.get_llm_client(),

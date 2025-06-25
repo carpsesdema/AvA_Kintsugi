@@ -1,0 +1,22 @@
+# This file contains all AI-related dependencies for the private venv.
+
+# LLM Providers
+openai
+anthropic
+google-generativeai
+googleapis-common-protos
+proto-plus
+protobuf
+grpcio
+Pillow # <-- ADDED: Dependency for google-generativeai
+
+# RAG & Vector DB
+chromadb
+sentence-transformers
+langchain-community
+
+# Web Server for local APIs
+fastapi
+uvicorn[standard]
+python-dotenv
+aiohttp

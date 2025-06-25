@@ -4,7 +4,7 @@ import subprocess
 import shutil
 from pathlib import Path
 from datetime import datetime
-from dotenv import load_dotenv
+# REMOVED: from dotenv import load_dotenv
 from typing import List, Optional, Dict
 
 try:
@@ -22,7 +22,7 @@ class ProjectManager:
     """
 
     def __init__(self, workspace_path: str = "workspace"):
-        load_dotenv()
+        # REMOVED: load_dotenv()
         if not GIT_AVAILABLE:
             raise ImportError("GitPython not installed. Run 'pip install GitPython'.")
 

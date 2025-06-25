@@ -8,8 +8,8 @@ from pathlib import Path
 # --- Configuration ---
 DIST_DIR_NAME = "Avakin_Dist"
 CORE_SETUP_SCRIPT = "setup_core.py"
-REQUIREMENTS_FILE = "src/ava/requirements.txt"
-RAG_REQUIREMENTS_FILE = "src/ava/requirements_rag.txt"
+# --- FIX: Point to the new, consolidated AI requirements file ---
+AI_REQUIREMENTS_FILE = "requirements_ai.txt"
 
 # --- Main Build Logic ---
 def run_command(command):
@@ -53,10 +53,16 @@ def main():
     private_venv_path = dist_path / ".venv"
     run_command([sys.executable, "-m", "venv", str(private_venv_path)])
 
-    # 6. Install RAG dependencies into the private venv
+    # 6. Install ALL AI dependencies into the private venv
     private_pip_exe = str(private_venv_path / "Scripts" / "pip.exe")
-    rag_reqs = str(project_root / RAG_REQUIREMENTS_FILE)
-    run_command([private_pip_exe, "install", "-r", rag_reqs, "--no-cache-dir"])
+    ai_reqs = str(project_root / AI_REQUIREMENTS_FILE)
+    run_command([private_pip_exe, "install", "-r", ai_reqs, "--no-cache-dir"])
+
+    # 7. Copy the .env file if it exists, for user convenience
+    if (project_root / ".env").exists():
+        print("Copying .env file to distribution.")
+        shutil.copy(project_root / ".env", dist_path / ".env")
+
 
     print("\n\n==============================================")
     print(" BUILD COMPLETE!")

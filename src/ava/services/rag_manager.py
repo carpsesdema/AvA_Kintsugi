@@ -15,8 +15,7 @@ from src.ava.services.chunking_service import ChunkingService
 
 class RAGManager(QObject):
     """
-    Manages the RAG pipeline by launching a python script using a private,
-    embedded Python environment that is shipped with the application.
+    Manages RAG pipeline interactions. Process lifecycle is now handled by ServiceManager.
     """
     log_message = Signal(str, str, str)
 
@@ -28,7 +27,6 @@ class RAGManager(QObject):
         self.rag_service = RAGService()
         self.scanner = DirectoryScannerService()
         self.chunker = ChunkingService()
-        self.rag_server_process = None
         self._last_connection_status = None
 
         self.status_check_timer = QTimer()
@@ -38,66 +36,10 @@ class RAGManager(QObject):
         self.log_message.connect(
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
         )
-        self.event_bus.subscribe("application_shutdown", self.terminate_rag_server)
-        print("[RAGManager] Initialized for embedded environment process management.")
+        print("[RAGManager] Initialized for RAG service communication.")
 
     def set_project_manager(self, project_manager):
         self.project_manager = project_manager
-
-    async def launch_rag_server(self):
-        if self.rag_server_process and self.rag_server_process.poll() is None:
-            self.log_message.emit("RAGManager", "info", "RAG server process is already running.")
-            return
-
-        self.log_message.emit("RAGManager", "info", "Attempting to launch RAG server from embedded environment...")
-
-        # When bundled, project_root is the exe's directory.
-        # This is where we expect to find our private venv.
-        base_path = self.project_root
-
-        # Determine the path to the private python and the script to run
-        private_python_exe = base_path / ".venv" / "Scripts" / "python.exe"
-        server_script = base_path / "ava" / "rag_server.py"
-
-        # If running from source, use the system's python for development ease.
-        command = [sys.executable, str(server_script)]
-
-        # If bundled, use the private python environment.
-        if getattr(sys, 'frozen', False):
-            if not private_python_exe.exists():
-                self.log_message.emit("RAGManager", "error",
-                                      f"Private Python not found at {private_python_exe}. Cannot start RAG server.")
-                return
-            command = [str(private_python_exe), str(server_script)]
-
-        try:
-            cwd = base_path if getattr(sys, 'frozen', False) else self.project_root.parent
-
-            creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            self.rag_server_process = subprocess.Popen(
-                command,
-                cwd=cwd,
-                creationflags=creation_flags,
-            )
-            self.log_message.emit("RAGManager", "info",
-                                  f"RAG server process launched with PID: {self.rag_server_process.pid}")
-        except Exception as e:
-            self.log_message.emit("RAGManager", "error", f"Failed to launch RAG server process: {e}")
-
-    def terminate_rag_server(self):
-        if self.status_check_timer.isActive():
-            self.status_check_timer.stop()
-        if self.rag_server_process and self.rag_server_process.poll() is None:
-            self.log_message.emit("RAGManager", "info",
-                                  f"Terminating RAG server (PID: {self.rag_server_process.pid})...")
-            self.rag_server_process.terminate()
-            try:
-                self.rag_server_process.wait(timeout=5)
-                self.log_message.emit("RAGManager", "success", "RAG server terminated.")
-            except subprocess.TimeoutExpired:
-                self.log_message.emit("RAGManager", "warning", "RAG server did not terminate gracefully. Killing.")
-                self.rag_server_process.kill()
-        self.rag_server_process = None
 
     def check_server_status_async(self):
         try:

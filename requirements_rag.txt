@@ -5,3 +5,4 @@ uvicorn[standard]
 sentence-transformers
 chromadb
 python-multipart
+google-generativeai # <-- ADD THIS LINE
