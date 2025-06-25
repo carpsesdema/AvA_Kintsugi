@@ -19,17 +19,23 @@
 
 Tired of the endless cycle of expensive API calls, context window limitations, and AI tools that don't truly understand your project's architecture?
 
-Avakin is a complete, AI powered development environment that runs entirely on your local machine. It's not just a chatbot; it's a team of specialized AI agents—an Architect, a Coder, a Reviewer, and a Validator—working together to bring your ideas to life. From a single prompt, Avakin can scaffold an entire multi-file application, surgically modify existing codebases, and intelligently debug errors with a single click.
+Avakin is a complete, AI powered development environment that runs entirely on your local machine. It's not just a chatbot, it's a team of specialized AI agents. An Architect, a Coder, a Reviewer, and a Validator. Working together to bring your ideas to life. From a single prompt, Avakin can scaffold an entire multi-file application, surgically modify existing codebases, and intelligently debug errors with a single click.
 
 ## Core Features
 
--   ⚡️ **Instant Project Scaffolding:** Go from a single sentence to a complete, runnable, multi-file Python project in seconds. Avakin designs the architecture, plans the files, and writes the code.
--   ✍️ **Surgical Code Modification:** Make complex, context-aware changes to existing codebases using natural language.
--   🪄 **One-Click Debugging:** When your code fails, a "Review & Fix" button appears. Avakin analyzes the full project context, git history, and error traceback to provide a precise, intelligent fix.
--   🧠 **Your Personal RAG:** Augment Avakin's knowledge by connecting it to a local RAG (Retrieval-Augmented Generation) server. Feed it your documentation, existing projects, or any text-based knowledge to improve its context-awareness.
--   🔌 **Extensible Plugin System:** Avakin is built on a robust plugin architecture. Extend its capabilities, add new agents, or integrate with other tools.
--   🔐 **100% Local & Private:** Your code and your API keys never leave your machine. Avakin uses a local-first approach, giving you complete control and privacy without sacrificing power.
--   🤖 **Customizable AI Team:** Configure which LLM (local or cloud-based) you want for each role. Use a massive model for architecture and a fast, cheap model for chat. You are in control.
+   ⚡️ **Instant Project Scaffolding:** Go from a single sentence to a complete, runnable, multi-file Python project in seconds. Avakin designs the architecture, plans the files, and writes the code.
+   
+   ✍️ **Surgical Code Modification:** Make complex, context-aware changes to existing codebases using natural language.
+   
+   🪄 **One-Click Debugging:** When your code fails, a "Review & Fix" button appears. Avakin analyzes the full project context, git history, and error traceback to provide a precise, intelligent fix.
+   
+   🧠 **Your Personal RAG:** Augment Avakin's knowledge by connecting it to a local RAG (Retrieval-Augmented Generation) server. Feed it your documentation, existing projects, or any text-based knowledge to improve its context-awareness.
+   
+   🔌 **Extensible Plugin System:** Avakin is built on a robust plugin architecture. Extend its capabilities, add new agents, or integrate with other tools.
+   
+   🔐 **100% Local & Private:** Your code and your API keys never leave your machine. Avakin uses a local-first approach, giving you complete control and privacy without sacrificing power.
+   
+   🤖 **Customizable AI Team:** Configure which LLM (local or cloud-based) you want for each role. Use a massive model for architecture and a fast, cheap model for chat. You are in control.
 
 ## Why Avakin Exists
 
