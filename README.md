@@ -19,7 +19,7 @@
 
 Tired of the endless cycle of expensive API calls, context window limitations, and AI tools that don't truly understand your project's architecture?
 
-Avakin is a complete, AI-powered development environment that runs entirely on your local machine. It's not just a chatbot; it's a team of specialized AI agents—an Architect, a Coder, a Reviewer, and a Validator—working together to bring your ideas to life. From a single prompt, Avakin can scaffold an entire multi-file application, surgically modify existing codebases, and intelligently debug errors with a single click.
+Avakin is a complete, AI powered development environment that runs entirely on your local machine. It's not just a chatbot; it's a team of specialized AI agents—an Architect, a Coder, a Reviewer, and a Validator—working together to bring your ideas to life. From a single prompt, Avakin can scaffold an entire multi-file application, surgically modify existing codebases, and intelligently debug errors with a single click.
 
 ## Core Features
 
@@ -87,4 +87,3 @@ Avakin is licensed under the MIT License.
 <p align="center">
 <em>Now, go build something incredible.</em>
 </p>
-```
