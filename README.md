@@ -39,13 +39,9 @@ Avakin is a complete, AI powered development environment that runs entirely on y
 
 ## Why Avakin Exists
 
-I built Avakin out of necessity. After a decade of teaching myself to code while working physically demanding jobs, I hit the same walls so many other self-taught developers face: the tools were too expensive, the industry was too exclusive, and the path to turning a passion into a profession felt impossible.
+I built Avakin out of necessity. After a decade of teaching myself to code I wanted something I could use in my everyday workflow. Something that didnt cost a subscription, on top of API calls. 
 
-Avakin is my answer.
-
-It's a tool forged in fire, designed to give individual developers and small teams the power of an entire AI workforce without the crippling cost. It's for the talented developer grinding after hours, the student with a brilliant idea but no budget, and anyone who believes that your talent shouldn't be limited by your wallet.
-
-This is a tool for the underdog, by an underdog. It's my hope that it gives you the freedom to build your escape, your masterpiece, your future.
+With Avakin, I can build clients efficient, secure, robust python applications in a fraction of the time it would take with traditional methods.
 
 ## Getting Started (Running from Source)
 
