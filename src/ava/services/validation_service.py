@@ -58,7 +58,6 @@ class ValidationService:
 
         self.update_status("reviewer", "working", f"Analyzing error in {crashing_file or 'unknown file'}...")
 
-        # --- NEW: Create focused context for the LLM ---
         relevant_filenames = self._find_relevant_files_for_fix(error_report, all_project_files, crashing_file)
         self.log("info", f"Sending focused context with {len(relevant_filenames)} files to reviewer.")
 
@@ -74,14 +73,12 @@ class ValidationService:
         full_code_context_str = "\n\n".join(full_code_context_list)
         summaries_context_str = "\n\n".join(summaries_context_list)
 
-        # 2. Ask the reviewer for the fix with the new, smaller context
         changes_json_str = await self.reviewer_service.review_and_correct_code(
             full_code_context=full_code_context_str,
             file_summaries_string=summaries_context_str,
             error_report=error_report,
             git_diff=git_diff
         )
-        # --- END OF NEW CONTEXT LOGIC ---
 
         if not changes_json_str:
             self.handle_error("reviewer", "Did not generate a response for the error fix.")
@@ -91,6 +88,14 @@ class ValidationService:
             files_to_commit = self._robustly_parse_json_from_llm_response(changes_json_str)
             if not isinstance(files_to_commit, dict) or not files_to_commit:
                 raise ValueError("AI response was not a valid, non-empty dictionary of file changes.")
+
+            # --- CRITICAL SAFETY CHECK ---
+            for filename, content in files_to_commit.items():
+                if not content or content.isspace():
+                    self.handle_error("reviewer", f"AI proposed an empty fix for '{filename}', which would wipe the file. Aborting fix to prevent data loss.")
+                    return False
+            # --- END SAFETY CHECK ---
+
         except (json.JSONDecodeError, ValueError) as e:
             self.handle_error("reviewer", f"Failed to parse AI's fix response: {e}")
             return False

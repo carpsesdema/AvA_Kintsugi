@@ -1,50 +1,44 @@
-# --- Python ---
-# Virtual Environments
+# --- Python Virtual Environments ---
+# Standard names for virtual environments
 .venv/
 venv/
 env/
 ENV/
-*.pyc
 
-# Caches
+# --- Python Caches & Artifacts ---
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
 .pytest_cache/
 .mypy_cache/
+.coverage
 
-# Distribution / packaging
-.Python
+# --- Build & Distribution Artifacts ---
+# Directories created by setup.py, cx_Freeze, etc.
 build/
-develop-eggs/
 dist/
+sdist/
+develop-eggs/
 downloads/
 eggs/
 .eggs/
 lib/
 lib64/
 parts/
-sdist/
 var/
 wheels/
 share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 MANIFEST
 
-# Notebooks
-.ipynb_checkpoints
-
-# --- Application Specific ---
-# AvA generated workspace and logs
-workspace/
-logs/
-src/ava/rag_db/
-*.db
-*.db-journal
-
-# Secrets and local configurations
-.env
-secrets.json
+# Avakin-specific build outputs
+Avakin_Dist/
+final_builds/
+*.zip
 
 # --- IDEs and Editors ---
 # VSCode
@@ -62,7 +56,7 @@ secrets.json
 *.swp
 *.swo
 
-# --- Operating System ---
+# --- Operating System Files ---
 # macOS
 .DS_Store
 # Windows
@@ -72,23 +66,29 @@ Desktop.ini
 # Linux
 .directory
 
-# --- Build and Dependency Management ---
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# --- Application Runtime Data & Logs ---
+# Avakin generated workspace. This is user data and should almost always be ignored.
+workspace/
 
-# --- Other ---
-# ZIP files (often used for updates or temporary archives)
-*.zip!/config/
-src/ava/config/role_assignments.json
-!/rag_db/
-/rag_db/
-!/src/ava/workspace/Genesis_Vestigea_0.3.3/
-/llm_server.log
-/rag_server.log
-/src/ava/rag_server_debug.log
-/llm_server_subprocess.log
-/rag_server_subprocess.log
+# All log files
+*.log
+*.log.*
+
+# Project-specific RAG databases (inside the workspace)
+# This is covered by 'workspace/', but can be explicit if needed
+# workspace/*/rag_db/
+
+# --- Local Configuration ---
+# Secrets and local configurations
+.env
+.env.*
+secrets.json
+
+# --- Project Build & Configuration Scripts ---
+# Excluding these as they are part of the build machine setup, not the runtime source.
 /release_helper.py
-!/setup_launcher.py
+/setup_core.py
+/setup_launcher.py
+/setup_rag.py
+/build_dist.py
+/src/ava/config/role_assignments.json

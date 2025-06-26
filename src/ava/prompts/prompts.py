@@ -1,7 +1,4 @@
 # src/ava/prompts/prompts.py
-# prompts/prompts.py
-# UPDATED: Infused with "Observability-First" logging requirements.
-
 import textwrap
 
 PLANNER_PROMPT = textwrap.dedent("""
@@ -199,7 +196,6 @@ CODER_PROMPT = textwrap.dedent("""
     Write the complete, integration-ready code for `{filename}` now:
     """)
 
-# --- THIS IS THE FIX: The prompt now takes focused context instead of the whole project ---
 INTELLIGENT_FIXER_PROMPT = textwrap.dedent("""
     You are an expert debugging system. Your task is to analyze the provided diagnostic bundle and return a JSON object containing the full, corrected code for only the file(s) that need to be fixed.
 
@@ -225,10 +221,11 @@ INTELLIGENT_FIXER_PROMPT = textwrap.dedent("""
     {file_summaries_string}
     ```
 
-    --- YOUR TASK ---
+    --- YOUR TASK & CRITICAL RULES ---
     1.  **Analyze:** Determine the root cause by examining the error report and the recent changes.
     2.  **Identify:** Pinpoint the specific file(s) that need to be changed. This will almost always be one of the files from the "FULL CODE OF RELEVANT FILES" section.
     3.  **Correct:** Generate the complete, corrected source code for the identified file(s).
+    4.  **DO NOT RETURN EMPTY CONTENT:** The corrected source code for a file MUST NOT be empty. If you think a file should be deleted, do not include it in your response at all. Returning an empty string for a file is strictly forbidden.
 
     --- OUTPUT REQUIREMENTS ---
     - Your response MUST be ONLY a valid JSON object.
@@ -237,9 +234,7 @@ INTELLIGENT_FIXER_PROMPT = textwrap.dedent("""
 
     Begin.
     """)
-# --- END OF FIX ---
 
-# This is the prompt for the recursive loop, to be used when the first fix fails.
 RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
     You are an expert debugging system in a recursive analysis loop. Your previous attempt to fix an error failed and produced a new error. Your task is to analyze the entire context and provide a more accurate fix.
 
@@ -265,10 +260,11 @@ RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
     {project_source_json}
     ```
 
-    --- YOUR TASK ---
+    --- YOUR TASK & CRITICAL RULES ---
     1.  **Analyze the Failure:** The key is to understand *why* the `PREVIOUS FIX ATTEMPT` failed. Did it misunderstand the original error? Did it introduce a new bug by mistake?
     2.  **Deeper Root Cause:** Compare the original error, the attempted fix, and the new error to find the true, underlying root cause of the problem.
     3.  **Formulate a New Fix:** Generate a new, more accurate correction. Only modify the file(s) necessary to resolve the issue.
+    4.  **DO NOT RETURN EMPTY CONTENT:** The corrected source code for a file MUST NOT be empty. If you think a file should be deleted, do not include it in your response at all. Returning an empty string for a file is strictly forbidden.
 
     --- OUTPUT REQUIREMENTS ---
     - Your response MUST be ONLY a valid JSON object.
@@ -279,7 +275,6 @@ RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
     """)
 
 
-# REFINEMENT_PROMPT is now an alias for the new intelligent fixer for backward compatibility
 REFINEMENT_PROMPT = INTELLIGENT_FIXER_PROMPT
 
 
