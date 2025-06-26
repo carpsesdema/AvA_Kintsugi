@@ -90,3 +90,4 @@ src/ava/config/role_assignments.json
 /src/ava/rag_server_debug.log
 /llm_server_subprocess.log
 /rag_server_subprocess.log
+/release_helper.py
