@@ -1,5 +1,7 @@
 # src/ava/core/managers/workflow_manager.py
 import asyncio
+from pathlib import Path
+
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from typing import Optional, Dict
 
@@ -35,7 +37,6 @@ class WorkflowManager:
         self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
 
-
     def handle_user_request(self, prompt: str, conversation_history: list,
                             image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None,
                             code_context: Optional[Dict[str, str]] = None):
@@ -59,7 +60,8 @@ class WorkflowManager:
         workflow_coroutine = None
         if interaction_mode == InteractionMode.CHAT:
             print("[WorkflowManager] Mode is CHAT. Starting general chat workflow...")
-            workflow_coroutine = self._run_chat_workflow(prompt, conversation_history, image_bytes, image_media_type, code_context)
+            workflow_coroutine = self._run_chat_workflow(prompt, conversation_history, image_bytes, image_media_type,
+                                                         code_context)
         elif interaction_mode == InteractionMode.BUILD:
             if app_state == AppState.BOOTSTRAP:
                 print("[WorkflowManager] Mode is BUILD, State is BOOTSTRAP. Starting new project workflow...")
@@ -111,41 +113,53 @@ class WorkflowManager:
             self.event_bus.emit("streaming_chunk", "Sorry, no 'chat' model is configured.")
             return
 
-        # --- NEW: Build a comprehensive prompt with multiple contexts ---
         final_prompt_parts = []
         if code_context:
             filename, content = list(code_context.items())[0]
-            final_prompt_parts.append(f"Please analyze the following code from the file `{filename}`.\n--- CODE ---\n```python\n{content}\n```\n--- END CODE ---")
+            final_prompt_parts.append(
+                f"Please analyze the following code from the file `{filename}`.\n--- CODE ---\n```python\n{content}\n```\n--- END CODE ---")
 
         rag_manager = self.service_manager.get_rag_manager()
-        if rag_manager:
-            rag_query = prompt or "Summarize the attached code based on the GDD."
-            rag_context = await rag_manager.rag_service.query(rag_query)
-            if rag_context and "No relevant documents" not in rag_context:
-                final_prompt_parts.append(f"Use the following context from the knowledge base to inform your answer.\n--- CONTEXT ---\n{rag_context}\n--- END CONTEXT ---")
+        if rag_manager and rag_manager.rag_service:  # Ensure rag_service is available
+            rag_query = prompt or "Summarize the attached code based on project documents or general knowledge."
+
+            # Query project-specific RAG
+            project_rag_context = await rag_manager.rag_service.query(rag_query, target_collection="project")
+            if project_rag_context and "no relevant documents found" not in project_rag_context.lower() and "not running or is unreachable" not in project_rag_context.lower():
+                final_prompt_parts.append(
+                    f"USE THE FOLLOWING PROJECT-SPECIFIC CONTEXT TO INFORM YOUR ANSWER:\n--- PROJECT CONTEXT ---\n{project_rag_context}\n--- END PROJECT CONTEXT ---")
+
+            # Query global RAG
+            global_rag_context = await rag_manager.rag_service.query(rag_query, target_collection="global")
+            if global_rag_context and "no relevant documents found" not in global_rag_context.lower() and "not running or is unreachable" not in global_rag_context.lower():
+                final_prompt_parts.append(
+                    f"USE THE FOLLOWING GENERAL PYTHON EXAMPLES & BEST PRACTICES (GLOBAL CONTEXT) TO INFORM YOUR ANSWER:\n--- GLOBAL CONTEXT ---\n{global_rag_context}\n--- END GLOBAL CONTEXT ---")
+
+        else:
+            self.log("warning", "RAGManager or RAGService not available for chat workflow.")
 
         final_prompt_parts.append(f"User's Question: {prompt if prompt else 'Please review the attached code.'}")
-
         final_prompt = "\n\n".join(final_prompt_parts)
-        # --- END NEW ---
 
-        chat_prompt = final_prompt
-        if not prompt and image_bytes and not code_context:
-            chat_prompt = "Describe this image in detail."
+        chat_prompt_for_llm = final_prompt
+        if not prompt and image_bytes and not code_context:  # If only an image is provided
+            chat_prompt_for_llm = "Describe this image in detail."
+        elif not prompt and not image_bytes and code_context:  # If only code context is provided
+            chat_prompt_for_llm = final_prompt  # The prompt already includes the code
 
         self.event_bus.emit("streaming_start", "Kintsugi AvA")
         try:
             stream = llm_client.stream_chat(
-                provider, model, chat_prompt, "chat",
+                provider, model, chat_prompt_for_llm, "chat",
                 image_bytes, image_media_type, history=conversation_history
             )
             async for chunk in stream:
                 self.event_bus.emit("streaming_chunk", chunk)
         except Exception as e:
             self.event_bus.emit("streaming_chunk", f"\n\nAn error occurred: {e}")
+            self.log("error", f"Error during chat streaming: {e}")  # Log the error
         finally:
             self.event_bus.emit("streaming_end")
-
 
     async def _run_bootstrap_workflow(self, prompt: str, image_bytes: Optional[bytes] = None):
         """Runs the workflow to create a new project from a prompt or an image description."""
@@ -174,7 +188,13 @@ class WorkflowManager:
             QMessageBox.critical(None, "Project Creation Failed", "Could not create temporary project directory.")
             return
 
+        # Switch RAG context to this new project (it will be empty initially)
+        rag_manager = self.service_manager.get_rag_manager()
+        if rag_manager:
+            await rag_manager.switch_project_context(Path(project_path))
+
         architect_service = self.service_manager.get_architect_service()
+        # generate_or_modify in ArchitectService will now handle querying both RAGs
         generation_success = await architect_service.generate_or_modify(final_prompt, existing_files=None)
 
         if generation_success:
@@ -206,6 +226,7 @@ class WorkflowManager:
 
         existing_files = project_manager.get_project_files()
         architect_service = self.service_manager.get_architect_service()
+        # generate_or_modify in ArchitectService will now handle querying both RAGs
         await architect_service.generate_or_modify(final_prompt, existing_files)
 
     def _handle_slash_command(self, command: str, app_state_service):

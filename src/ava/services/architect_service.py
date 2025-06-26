@@ -47,20 +47,47 @@ class ArchitectService:
             self.dependency_planner, self.integration_validator
         )
 
+    async def _get_combined_rag_context(self, prompt: str) -> str:
+        """Queries both project and global RAG and combines them."""
+        project_rag_context = await self.rag_service.query(prompt, target_collection="project")
+        global_rag_context = await self.rag_service.query(prompt, target_collection="global")
+
+        # Filter out "not found" or "unreachable" messages to avoid cluttering the LLM prompt
+        valid_project_context = project_rag_context if "no relevant documents found" not in project_rag_context.lower() and "not running or is unreachable" not in project_rag_context.lower() else ""
+        valid_global_context = global_rag_context if "no relevant documents found" not in global_rag_context.lower() and "not running or is unreachable" not in global_rag_context.lower() else ""
+
+        combined_context_parts = []
+        if valid_project_context:
+            combined_context_parts.append(
+                f"PROJECT-SPECIFIC CONTEXT (e.g., GDD, existing project files):\n{valid_project_context}")
+        if valid_global_context:
+            combined_context_parts.append(
+                f"GENERAL PYTHON EXAMPLES & BEST PRACTICES (GLOBAL CONTEXT):\n{valid_global_context}")
+
+        if not combined_context_parts:
+            return "No specific RAG context found for this query."
+
+        return "\n\n---\n\n".join(combined_context_parts)
+
     async def generate_or_modify(self, prompt: str, existing_files: dict | None) -> bool:
-        self.log("info", f"Task received: '{prompt}'")
+        self.log("info", f"Architect task received: '{prompt}'")
         plan = None
-        rag_context = await self.rag_service.query(prompt)
+
+        self.log("info", "Fetching combined RAG context (project & global)...")
+        combined_rag_context = await self._get_combined_rag_context(prompt)
+        self.log("info", f"Combined RAG context length: {len(combined_rag_context)} chars.")
 
         if not existing_files:
             self.log("info", "No existing project detected. Generating new project plan...")
-            plan = await self._generate_hierarchical_plan(prompt, rag_context)
+            plan = await self._generate_hierarchical_plan(prompt, combined_rag_context)
         else:
             self.log("info", "Existing project detected. Generating modification plan...")
-            plan = await self._generate_modification_plan(prompt, existing_files)
+            plan = await self._generate_modification_plan(prompt, existing_files,
+                                                          combined_rag_context)  # Pass combined_rag_context here too
 
         if plan:
-            success = await self._execute_coordinated_generation(plan, rag_context, existing_files)
+            # Pass combined_rag_context to the coordinator as well, it might use it for initial context building.
+            success = await self._execute_coordinated_generation(plan, combined_rag_context, existing_files)
         else:
             self.log("error", "Failed to generate a valid plan. Aborting generation.")
             success = False
@@ -94,17 +121,17 @@ class ArchitectService:
 
         scored_files.sort(key=lambda x: x[0], reverse=True)
 
-        # Always include main.py if it exists, as it's critical for project-level context
         relevant_set = {filename for score, filename in scored_files[:top_n]}
         if 'main.py' in existing_files:
             relevant_set.add('main.py')
         return list(relevant_set)
 
-    async def _generate_modification_plan(self, prompt: str, existing_files: dict) -> dict | None:
+    async def _generate_modification_plan(self, prompt: str, existing_files: dict,
+                                          rag_context: str) -> dict | None:  # Added rag_context
         self.log("info", "Analyzing existing files to create a modification plan...")
         try:
             relevant_filenames = self._find_relevant_files(prompt, existing_files)
-            self.log("info", f"Identified most relevant files for full context: {relevant_filenames}")
+            self.log("info", f"Identified most relevant files for full code context: {relevant_filenames}")
 
             full_code_context_list = []
             summaries_context_list = []
@@ -119,8 +146,16 @@ class ArchitectService:
             full_code_context_str = "\n\n".join(full_code_context_list)
             summaries_context_str = "\n\n".join(summaries_context_list)
 
+            # Include RAG context in the modification planner prompt if it exists
+            # The MODIFICATION_PLANNER_PROMPT doesn't have a placeholder for rag_context yet.
+            # We might need to adjust the prompt or append rag_context to the user's prompt.
+            # For now, let's assume the main `prompt` to the LLM might already be enhanced by the user if they used RAG.
+            # Or, we can add it to the "CONTEXT ON EXISTING PROJECT" section.
+            # Let's add it to the main prompt for now for simplicity.
+            enhanced_prompt_for_llm = f"{prompt}\n\nADDITIONAL CONTEXT FROM KNOWLEDGE BASE:\n{rag_context}"
+
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
-                prompt=prompt,
+                prompt=enhanced_prompt_for_llm,  # Use the enhanced prompt
                 full_code_context=full_code_context_str,
                 file_summaries_string=summaries_context_str
             )
@@ -160,6 +195,7 @@ class ArchitectService:
 
     async def _generate_hierarchical_plan(self, prompt: str, rag_context: str) -> dict | None:
         self.log("info", "Designing project structure...")
+        # HIERARCHICAL_PLANNER_PROMPT already has {rag_context} placeholder
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
         return await self._get_plan_from_llm(plan_prompt)
 
@@ -195,6 +231,7 @@ class ArchitectService:
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
+            # GenerationCoordinator will use the combined rag_context passed here for its initial context build
             generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
             if not generated_files or len(generated_files) < len(all_filenames):
                 self.log("error",
