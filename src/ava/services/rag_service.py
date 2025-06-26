@@ -18,34 +18,41 @@ class RAGService:
     async def check_connection(self) -> bool:
         """
         Performs a quick check to see if the RAG server is running and responding.
-
-        Returns:
-            bool: True if the server is connected, False otherwise.
         """
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as session:
                 async with session.get(self.server_url) as response:
-                    if response.status == 200:
-                        self.is_connected = True
-                        return True
+                    self.is_connected = response.status == 200
+                    return self.is_connected
         except (aiohttp.ClientConnectorError, asyncio.TimeoutError):
-            pass
+            self.is_connected = False
+            return False
         except Exception as e:
             print(f"[RAGService] Unexpected error checking connection: {e}")
+            self.is_connected = False
+            return False
 
-        self.is_connected = False
-        return False
+    async def set_project_db(self, project_path: str) -> tuple[bool, str]:
+        """Tells the RAG server to switch its database context to the specified project."""
+        if not await self.check_connection():
+            return False, "RAG Service is not running or is unreachable."
 
-    # --- FIX: New method to send document chunks to the RAG server ---
+        print(f"[RAGService] Asking server to switch context to: {project_path}")
+        payload = {"project_path": project_path}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{self.server_url}/set_collection", json=payload, timeout=20) as response:
+                    if response.status == 200:
+                        return True, "RAG context switched successfully."
+                    else:
+                        error_detail = await response.text()
+                        return False, f"Server error on context switch: {error_detail}"
+        except Exception as e:
+            return False, f"Failed to switch RAG context: {e}"
+
     async def add(self, chunks: list) -> tuple[bool, str]:
         """
         Sends a list of document chunks to the RAG server for ingestion.
-
-        Args:
-            chunks: A list of chunk dictionaries, as prepared by the ChunkingService.
-
-        Returns:
-            A tuple (success: bool, message: str).
         """
         if not await self.check_connection():
             return False, "RAG Service is not running or is unreachable."
@@ -71,16 +78,12 @@ class RAGService:
             print(f"[RAGService] {message}")
             return False, message
 
-    # --- END FIX ---
-
     async def query(self, query_text: str, n_results: int = 5) -> str:
         """
         Queries the external RAG server and returns a formatted string of context.
-        This is a fast, non-blocking network operation.
         """
-        if not self.is_connected:
-            if not await self.check_connection():
-                return "RAG Service is not running or is unreachable. Please launch it from the sidebar."
+        if not await self.check_connection():
+            return "RAG Service is not running or is unreachable."
 
         print(f"[RAGService] Sending query to RAG server: '{query_text[:50]}...'")
         query_payload = {"query_text": query_text, "n_results": n_results}

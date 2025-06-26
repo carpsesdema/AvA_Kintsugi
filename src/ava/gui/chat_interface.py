@@ -8,7 +8,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QScrollArea, QHBoxLayout, QFileDialog, QMessageBox, QMenu
 from PySide6.QtCore import Qt, QTimer, QPoint
-from PySide6.QtGui import QPalette, QPixmap, QImage, QAction
+from PySide6.QtGui import QPalette, QPixmap, QImage, QAction, QDragEnterEvent, QDropEvent
+
 import qtawesome as qta
 
 from src.ava.gui.components import Colors, Typography
@@ -18,7 +19,7 @@ from src.ava.gui.loading_indicator import LoadingIndicator
 from src.ava.core.event_bus import EventBus
 from src.ava.core.app_state import AppState
 from src.ava.core.interaction_mode import InteractionMode
-from typing import Optional
+from typing import Optional, Dict
 
 
 class ChatBubble(QFrame):
@@ -122,6 +123,8 @@ class ChatInterface(QWidget):
         self.streaming_message_widget = None
         self.streaming_sender = "Kintsugi AvA"  # Default sender
 
+        self.setAcceptDrops(True) # --- NEW: Enable drop events ---
+
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, Colors.PRIMARY_BG)
@@ -130,10 +133,8 @@ class ChatInterface(QWidget):
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(10)
 
-        # --- NEW: AI Thinking Indicator Panel ---
         self.thinking_panel = self._create_thinking_panel()
         main_layout.addWidget(self.thinking_panel)
-        # --- END NEW ---
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -154,8 +155,33 @@ class ChatInterface(QWidget):
         self._add_message({"role": "assistant", "text": "Hello! Let's build something amazing from scratch."},
                           is_feedback=True)
 
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+
+        file_path = Path(urls[0].toLocalFile())
+        if file_path.is_file():
+            try:
+                # Limit file size to prevent loading huge files
+                if file_path.stat().st_size > 500 * 1024: # 500 KB limit
+                    QMessageBox.warning(self, "File Too Large", "Cannot use files larger than 500 KB as context.")
+                    return
+
+                content = file_path.read_text(encoding='utf-8')
+                self.input_widget.set_code_context(file_path.name, content)
+                self.event_bus.emit("log_message_received", "ChatInterface", "info", f"Attached {file_path.name} as code context.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error Reading File", f"Could not read file:\n{e}")
+                self.event_bus.emit("log_message_received", "ChatInterface", "error", f"Failed to read dropped file {file_path.name}: {e}")
+
     def _create_thinking_panel(self) -> QFrame:
-        """Creates the panel that shows when the AI is working."""
         panel = QFrame()
         panel.setObjectName("thinking_panel")
         panel.setFixedHeight(50)
@@ -170,7 +196,6 @@ class ChatInterface(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
 
-        # MODIFIED: Pass self.project_root to LoadingIndicator
         loading_indicator = LoadingIndicator(self.project_root)
         loading_indicator.setFixedSize(38, 38)
         layout.addWidget(loading_indicator)
@@ -181,7 +206,7 @@ class ChatInterface(QWidget):
         layout.addWidget(label)
         layout.addStretch()
 
-        panel.hide()  # Hide it by default
+        panel.hide()
         return panel
 
     def _create_header_controls(self, layout: QVBoxLayout):
@@ -202,32 +227,25 @@ class ChatInterface(QWidget):
         self.event_bus.subscribe("streaming_chunk", self.on_streaming_chunk)
         self.event_bus.subscribe("streaming_end", self.on_streaming_end)
         self.event_bus.subscribe("chat_cleared", self.clear_chat)
-
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
-
         self.event_bus.subscribe("user_request_submitted", self.show_thinking_indicator)
         self.event_bus.subscribe("streaming_end", self.hide_thinking_indicator)
         self.event_bus.subscribe("ai_fix_workflow_complete", self.hide_thinking_indicator)
 
     def show_thinking_indicator(self, *args):
-        """Shows the AI thinking panel."""
         self.thinking_panel.show()
 
     def hide_thinking_indicator(self, *args):
-        """Hides the AI thinking panel."""
         self.thinking_panel.hide()
 
     def _scroll_to_bottom(self, min_val, max_val):
         self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
 
     def _on_app_state_changed(self, new_state: AppState, project_name: str = None):
-        """Listens for the authoritative state change and updates the UI."""
         if new_state == AppState.BOOTSTRAP:
             self.input_widget.setPlaceholderText("Describe the new application you want to build...")
         elif new_state == AppState.MODIFY:
             self.input_widget.setPlaceholderText(f"What changes for '{project_name}'? Paste an image of an error!")
-
-        # Ensure the mode toggle reflects the current interaction mode
         current_mode = self.mode_toggle._current_mode
         self._on_interaction_mode_changed(current_mode, is_state_change=True)
 
@@ -238,18 +256,15 @@ class ChatInterface(QWidget):
             self._add_message(message, is_feedback=True)
 
     def _on_mode_change_requested(self, new_mode: InteractionMode):
-        """Requests a change to the interaction mode."""
         self.event_bus.emit("interaction_mode_change_requested", new_mode)
 
     def _on_interaction_mode_changed(self, new_mode: InteractionMode, is_state_change: bool = False):
-        """Listens for the authoritative mode change and updates the UI."""
         self.mode_toggle.setMode(new_mode)
         if new_mode == InteractionMode.CHAT:
             self.input_widget.setPlaceholderText("Ask a question, brainstorm ideas, or paste an image...")
             if not is_state_change: self._add_message(
                 message_data={"role": "assistant", "text": "Switched to Chat mode."}, is_feedback=True)
         elif new_mode == InteractionMode.BUILD:
-            # The placeholder for build mode is now handled by _on_app_state_changed
             pass
             if not is_state_change: self._add_message(
                 message_data={"role": "assistant", "text": "Switched to Build mode. Ready to code."}, is_feedback=True)
@@ -259,11 +274,11 @@ class ChatInterface(QWidget):
         input_widget.message_sent.connect(self._on_user_message_sent)
         return input_widget
 
-    def _on_user_message_sent(self, text: str, image_bytes: Optional[bytes], image_media_type: Optional[str]):
+    def _on_user_message_sent(self, text: str, image_bytes: Optional[bytes], image_media_type: Optional[str], code_context: Optional[Dict[str, str]]):
         image_b64 = base64.b64encode(image_bytes).decode('utf-8') if image_bytes else None
-        history_entry = {"role": "user", "text": text, "image_b64": image_b64, "media_type": image_media_type}
+        history_entry = {"role": "user", "text": text, "image_b64": image_b64, "media_type": image_media_type, "code_context": code_context}
         self._add_message(history_entry)
-        self.event_bus.emit("user_request_submitted", text, self.conversation_history, image_bytes, image_media_type)
+        self.event_bus.emit("user_request_submitted", text, self.conversation_history, image_bytes, image_media_type, code_context)
 
     def _add_message(self, message_data: dict, is_feedback: bool = False):
         role = message_data.get("role", "assistant")

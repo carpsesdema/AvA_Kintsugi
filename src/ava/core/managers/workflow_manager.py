@@ -1,7 +1,7 @@
 # src/ava/core/managers/workflow_manager.py
 import asyncio
 from PySide6.QtWidgets import QFileDialog, QMessageBox
-from typing import Optional
+from typing import Optional, Dict
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.app_state import AppState
@@ -37,10 +37,11 @@ class WorkflowManager:
 
 
     def handle_user_request(self, prompt: str, conversation_history: list,
-                            image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None):
-        """The central router for all user chat input, now with multimodal support."""
+                            image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None,
+                            code_context: Optional[Dict[str, str]] = None):
+        """The central router for all user chat input, now with multimodal and code context support."""
         stripped_prompt = prompt.strip()
-        if not stripped_prompt and not image_bytes:
+        if not stripped_prompt and not image_bytes and not code_context:
             return
 
         app_state_service = self.service_manager.get_app_state_service()
@@ -58,7 +59,7 @@ class WorkflowManager:
         workflow_coroutine = None
         if interaction_mode == InteractionMode.CHAT:
             print("[WorkflowManager] Mode is CHAT. Starting general chat workflow...")
-            workflow_coroutine = self._run_chat_workflow(prompt, conversation_history, image_bytes, image_media_type)
+            workflow_coroutine = self._run_chat_workflow(prompt, conversation_history, image_bytes, image_media_type, code_context)
         elif interaction_mode == InteractionMode.BUILD:
             if app_state == AppState.BOOTSTRAP:
                 print("[WorkflowManager] Mode is BUILD, State is BOOTSTRAP. Starting new project workflow...")
@@ -99,8 +100,9 @@ class WorkflowManager:
             return ""
 
     async def _run_chat_workflow(self, prompt: str, conversation_history: list,
-                                 image_bytes: Optional[bytes], image_media_type: Optional[str]):
-        """Runs a simple, streaming chat interaction with the LLM, now with history and image support."""
+                                 image_bytes: Optional[bytes], image_media_type: Optional[str],
+                                 code_context: Optional[Dict[str, str]]):
+        """Runs a simple, streaming chat interaction with the LLM, now with history, RAG, and image support."""
         if not self.service_manager: return
         llm_client = self.service_manager.get_llm_client()
         provider, model = llm_client.get_model_for_role("chat")
@@ -109,12 +111,30 @@ class WorkflowManager:
             self.event_bus.emit("streaming_chunk", "Sorry, no 'chat' model is configured.")
             return
 
-        # If there's an image but no text, create a default prompt.
-        chat_prompt = prompt if prompt else "Describe this image in detail."
+        # --- NEW: Build a comprehensive prompt with multiple contexts ---
+        final_prompt_parts = []
+        if code_context:
+            filename, content = list(code_context.items())[0]
+            final_prompt_parts.append(f"Please analyze the following code from the file `{filename}`.\n--- CODE ---\n```python\n{content}\n```\n--- END CODE ---")
+
+        rag_manager = self.service_manager.get_rag_manager()
+        if rag_manager:
+            rag_query = prompt or "Summarize the attached code based on the GDD."
+            rag_context = await rag_manager.rag_service.query(rag_query)
+            if rag_context and "No relevant documents" not in rag_context:
+                final_prompt_parts.append(f"Use the following context from the knowledge base to inform your answer.\n--- CONTEXT ---\n{rag_context}\n--- END CONTEXT ---")
+
+        final_prompt_parts.append(f"User's Question: {prompt if prompt else 'Please review the attached code.'}")
+
+        final_prompt = "\n\n".join(final_prompt_parts)
+        # --- END NEW ---
+
+        chat_prompt = final_prompt
+        if not prompt and image_bytes and not code_context:
+            chat_prompt = "Describe this image in detail."
 
         self.event_bus.emit("streaming_start", "Kintsugi AvA")
         try:
-            # Pass the conversation history to the LLM client
             stream = llm_client.stream_chat(
                 provider, model, chat_prompt, "chat",
                 image_bytes, image_media_type, history=conversation_history
@@ -125,6 +145,7 @@ class WorkflowManager:
             self.event_bus.emit("streaming_chunk", f"\n\nAn error occurred: {e}")
         finally:
             self.event_bus.emit("streaming_end")
+
 
     async def _run_bootstrap_workflow(self, prompt: str, image_bytes: Optional[bytes] = None):
         """Runs the workflow to create a new project from a prompt or an image description."""
@@ -146,7 +167,6 @@ class WorkflowManager:
         project_manager.clear_active_project()
 
         app_state_service = self.service_manager.get_app_state_service()
-        # Ensure we are in bootstrap state before creating the project directory
         app_state_service.set_app_state(AppState.BOOTSTRAP)
 
         project_path = project_manager.new_project("New_AI_Project")
@@ -154,7 +174,6 @@ class WorkflowManager:
             QMessageBox.critical(None, "Project Creation Failed", "Could not create temporary project directory.")
             return
 
-        # The Architect is called with `existing_files=None`, indicating a bootstrap operation.
         architect_service = self.service_manager.get_architect_service()
         generation_success = await architect_service.generate_or_modify(final_prompt, existing_files=None)
 
@@ -229,26 +248,19 @@ class WorkflowManager:
         else:
             self.log("warning", "Received an empty error report to fix.")
 
-    # --- THIS IS THE FIX ---
     def handle_highlighted_error_fix_request(self, highlighted_text: str):
-        """Handles a fix request from the user highlighting text in the terminal."""
         if not highlighted_text.strip():
             self.log("warning", "Fix requested for empty highlighted text.")
-            # Optionally, notify the user via chat interface or status bar if desired
-            # self.event_bus.emit("ai_response_ready", "Please highlight some text to fix.")
             return
 
         error_context_for_fix: str
-
         if self._last_error_report:
-            # If a previous full error report exists, combine them, making highlighted text prominent.
             error_context_for_fix = (
                 f"User highlighted the following from the terminal output:\n--- HIGHLIGHTED TEXT ---\n{highlighted_text}\n--- END HIGHLIGHTED TEXT ---\n\n"
                 f"This may be related to the last full error report from a failed command execution:\n--- LAST FULL ERROR ---\n{self._last_error_report}\n--- END LAST FULL ERROR ---"
             )
             self.log("info", "Fixing highlighted text with context from last full error report.")
         else:
-            # No previous full error report, use only the highlighted text.
             error_context_for_fix = (
                 f"User highlighted the following error/text from the terminal output. This is the primary context for the fix:\n"
                 f"--- HIGHLIGHTED TEXT ---\n{highlighted_text}\n--- END HIGHLIGHTED TEXT ---"
@@ -256,13 +268,8 @@ class WorkflowManager:
             self.log("info", "Fixing highlighted text (no previous full error report stored).")
 
         self._initiate_fix_workflow(error_context_for_fix)
-    # --- END OF FIX ---
 
     def _initiate_fix_workflow(self, error_report: str):
-        """
-        Prepares and starts the single AI task for fixing an error.
-        This is now a synchronous method that creates the async task.
-        """
         if not (self.service_manager and self.task_manager):
             self.log("error", "Cannot initiate fix: Core services not available.")
             return
@@ -272,14 +279,12 @@ class WorkflowManager:
 
         validation_service = self.service_manager.get_validation_service()
         if validation_service:
-            # Get the coroutine object from the service
             fix_coroutine = validation_service.review_and_fix_file(error_report)
-            # Start the one and only task for this workflow
             self.task_manager.start_ai_workflow_task(fix_coroutine)
         else:
             self.log("error", "ValidationService not available to initiate fix.")
             if self.window_manager and self.window_manager.get_code_viewer():
-                self.window_manager.get_code_viewer().terminal.hide_fix_button() # Reset UI if it was shown
+                self.window_manager.get_code_viewer().terminal.hide_fix_button()
 
     def log(self, level, message):
         self.event_bus.emit("log_message_received", "WorkflowManager", level, message)

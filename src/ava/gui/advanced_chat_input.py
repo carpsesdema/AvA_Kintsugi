@@ -1,9 +1,10 @@
 import io
-from typing import Optional
+from typing import Optional, Dict
 
 from PySide6.QtCore import Qt, Signal, QBuffer, QIODevice
 from PySide6.QtGui import QImage, QKeySequence, QTextCursor, QPixmap
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLabel, QPushButton, QFrame
+import qtawesome as qta
 
 from .components import Colors, Typography, ModernButton
 
@@ -41,12 +42,13 @@ class _PasteableTextEdit(QTextEdit):
 
 class AdvancedChatInput(QWidget):
     """The main chat input widget, coordinating text, image attachments, and sending."""
-    message_sent = Signal(str, object, object)
+    message_sent = Signal(str, object, object, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._attached_image: Optional[QImage] = None
         self._attached_media_type: Optional[str] = None
+        self._code_context: Optional[Dict[str, str]] = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -54,10 +56,15 @@ class AdvancedChatInput(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(8)
 
+        # --- Code Context Preview (hidden by default) ---
+        self.code_context_preview = self._create_context_widget("code_context", "fa5s.file-code", "Code Context Attached")
+        main_layout.addWidget(self.code_context_preview)
+        self.code_context_preview.hide()
+
         # --- Image Thumbnail Preview (hidden by default) ---
-        self.thumbnail_preview = self._create_thumbnail_widget()
-        main_layout.addWidget(self.thumbnail_preview)
-        self.thumbnail_preview.hide()
+        self.image_preview = self._create_context_widget("image", "fa5s.image", "Image Attached")
+        main_layout.addWidget(self.image_preview)
+        self.image_preview.hide()
 
         # --- Input Frame ---
         input_frame = QFrame()
@@ -94,24 +101,29 @@ class AdvancedChatInput(QWidget):
         frame_layout.addLayout(bottom_bar_layout)
         main_layout.addWidget(input_frame)
 
-    def _create_thumbnail_widget(self) -> QWidget:
+    def _create_context_widget(self, widget_type: str, icon_name: str, default_text: str) -> QFrame:
         widget = QFrame()
-        widget.setObjectName("thumbnail_frame")
-        widget.setFixedHeight(80)
+        widget.setObjectName(f"{widget_type}_frame")
+        widget.setFixedHeight(50)
         widget.setStyleSheet(f"""
-            #thumbnail_frame {{
+            #""" + widget.objectName() + f""" {{
                 background-color: {Colors.SECONDARY_BG.name()};
                 border-radius: 8px;
                 border: 1px solid {Colors.BORDER_DEFAULT.name()};
             }}
         """)
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(10, 5, 10, 5)
 
-        self.thumbnail_label = QLabel("Image Attached")
-        self.thumbnail_label.setScaledContents(False)
-        self.thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.thumbnail_label)
+        icon_label = QLabel()
+        icon_label.setPixmap(qta.icon(icon_name, color=Colors.TEXT_SECONDARY).pixmap(24, 24))
+        layout.addWidget(icon_label)
+
+        text_label = QLabel(default_text)
+        text_label.setFont(Typography.body())
+        text_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
+        widget.setProperty("text_label", text_label)
+        layout.addWidget(text_label)
 
         layout.addStretch()
 
@@ -120,44 +132,46 @@ class AdvancedChatInput(QWidget):
         remove_button.setCursor(Qt.PointingHandCursor)
         remove_button.setStyleSheet(f"""
             QPushButton {{
-                font-size: 20px;
-                color: {Colors.TEXT_SECONDARY.name()};
-                border: none;
-                background-color: {Colors.ELEVATED_BG.name()};
-                border-radius: 12px;
+                font-size: 20px; color: {Colors.TEXT_SECONDARY.name()}; border: none;
+                background-color: {Colors.ELEVATED_BG.name()}; border-radius: 12px;
             }}
-            QPushButton:hover {{
-                background-color: {Colors.ACCENT_RED.name()};
-                color: white;
-            }}
+            QPushButton:hover {{ background-color: {Colors.ACCENT_RED.name()}; color: white; }}
         """)
-        remove_button.clicked.connect(self._clear_attachment)
+        if widget_type == "image":
+            remove_button.clicked.connect(self._clear_image_attachment)
+        elif widget_type == "code_context":
+            remove_button.clicked.connect(self._clear_code_context)
         layout.addWidget(remove_button, alignment=Qt.AlignmentFlag.AlignTop)
         return widget
 
     def _adjust_input_height(self):
         doc_height = self.text_input.document().size().height()
-        # Clamp height between 40 and 150
         new_height = max(40, min(int(doc_height) + 10, 150))
         self.text_input.setFixedHeight(new_height)
 
     def _on_image_pasted(self, image: QImage):
         self._attached_image = image
-        self._attached_media_type = "image/png" # Assume PNG for clipboard ops
-
-        # Convert the QImage to a QPixmap before setting it on the label.
-        thumbnail_pixmap = QPixmap.fromImage(image.scaled(
-            60, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-        ))
-        self.thumbnail_label.setPixmap(thumbnail_pixmap)
-
-        self.thumbnail_preview.show()
+        self._attached_media_type = "image/png"
+        self.image_preview.show()
         self.text_input.setFocus()
 
-    def _clear_attachment(self):
+    def set_code_context(self, filename: str, content: str):
+        self._code_context = {filename: content}
+        text_label = self.code_context_preview.property("text_label")
+        if text_label:
+            text_label.setText(f"Context: {filename}")
+        self.code_context_preview.show()
+        self.text_input.setFocus()
+
+    def _clear_image_attachment(self):
         self._attached_image = None
         self._attached_media_type = None
-        self.thumbnail_preview.hide()
+        self.image_preview.hide()
+        self.text_input.setFocus()
+
+    def _clear_code_context(self):
+        self._code_context = None
+        self.code_context_preview.hide()
         self.text_input.setFocus()
 
     def _on_send(self):
@@ -165,27 +179,24 @@ class AdvancedChatInput(QWidget):
         image_bytes = None
 
         if self._attached_image:
-            # Convert QImage to bytes
             buffer = QBuffer()
             buffer.open(QIODevice.OpenModeFlag.WriteOnly)
             self._attached_image.save(buffer, "PNG")
-            # Explicitly convert QByteArray from buffer.data() to Python bytes
             image_bytes = bytes(buffer.data())
 
-        if text or image_bytes:
-            self.message_sent.emit(text, image_bytes, self._attached_media_type)
+        if text or image_bytes or self._code_context:
+            self.message_sent.emit(text, image_bytes, self._attached_media_type, self._code_context)
             self.text_input.clear()
-            self._clear_attachment()
-            self.text_input.setFixedHeight(40) # Reset height
+            self._clear_image_attachment()
+            self._clear_code_context()
+            self.text_input.setFixedHeight(40)
 
     def setPlaceholderText(self, text: str):
         self.text_input.setPlaceholderText(text)
 
     def set_text_and_focus(self, text: str):
-        """Sets the text of the input box and gives it focus."""
         self.text_input.setPlainText(text)
         self.text_input.setFocus()
-        # Move cursor to the end
         cursor = self.text_input.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self.text_input.setTextCursor(cursor)

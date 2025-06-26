@@ -41,6 +41,15 @@ class RAGManager(QObject):
     def set_project_manager(self, project_manager):
         self.project_manager = project_manager
 
+    async def switch_project_context(self, project_path: Path):
+        """Tells the RAG service to switch its database to the new project path."""
+        self.log_message.emit("RAGManager", "info", f"Switching RAG context to project: {project_path.name}")
+        success, msg = await self.rag_service.set_project_db(str(project_path))
+        if success:
+            self.log_message.emit("RAGManager", "success", "RAG context switched successfully.")
+        else:
+            self.log_message.emit("RAGManager", "error", f"Failed to switch RAG context: {msg}")
+
     def check_server_status_async(self):
         try:
             main_loop = asyncio.get_event_loop()
