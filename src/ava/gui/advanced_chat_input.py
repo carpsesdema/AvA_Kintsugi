@@ -180,3 +180,12 @@ class AdvancedChatInput(QWidget):
 
     def setPlaceholderText(self, text: str):
         self.text_input.setPlaceholderText(text)
+
+    def set_text_and_focus(self, text: str):
+        """Sets the text of the input box and gives it focus."""
+        self.text_input.setPlainText(text)
+        self.text_input.setFocus()
+        # Move cursor to the end
+        cursor = self.text_input.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.text_input.setTextCursor(cursor)

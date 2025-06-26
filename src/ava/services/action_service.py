@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.app_state import AppState
+from src.ava.core.interaction_mode import InteractionMode
 
 if TYPE_CHECKING:
     from src.ava.core.managers.service_manager import ServiceManager
@@ -24,6 +25,21 @@ class ActionService:
         self.window_manager = window_manager
         self.task_manager = task_manager
         print("[ActionService] Initialized")
+
+    def handle_build_prompt_from_chat(self, prompt_text: str):
+        """Switches to Build mode and populates the chat input with the given text."""
+        self.log("info", "Switching to Build mode from chat context.")
+        # 1. Switch mode
+        app_state_service = self.service_manager.get_app_state_service()
+        if app_state_service:
+            app_state_service.set_interaction_mode(InteractionMode.BUILD)
+
+        # 2. Populate input and focus
+        if self.window_manager:
+            main_window = self.window_manager.get_main_window()
+            if main_window and hasattr(main_window, 'chat_interface'):
+                chat_input = main_window.chat_interface.input_widget
+                chat_input.set_text_and_focus(prompt_text)
 
     def handle_new_project(self):
         """Handles the 'New Project' button click."""

@@ -5,7 +5,7 @@ import base64
 import asyncio
 import json
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -48,6 +48,7 @@ class StreamChatRequest(BaseModel):
     temperature: float
     image_b64: Optional[str] = None
     media_type: Optional[str] = None
+    history: Optional[List[Dict[str, Any]]] = None
 
 
 # --- Global State ---
@@ -97,47 +98,105 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Avakin LLM Service", lifespan=lifespan)
 
 
-# --- Helper Functions (copied from old LLMClient) ---
-async def _stream_openai_compatible(client, model, prompt, temp, image_b64, media_type):
-    content = [{"type": "text", "text": prompt}] if prompt else []
+def _prepare_messages(history: List[Dict[str, Any]], prompt: str, image_b64: str, media_type: str) -> List[Dict[str, Any]]:
+    """Constructs a message list for the LLM, handling history and the current prompt."""
+    messages = []
+    # Process history first
+    if history:
+        for msg in history[:-1]:  # Process all but the last message (which is the current user turn)
+            role = msg.get("role", "user")
+            text = msg.get("text", "")
+            img = msg.get("image_b64")
+            m_type = msg.get("media_type")
+
+            content = []
+            if text:
+                content.append({"type": "text", "text": text})
+            if img and m_type:
+                content.append({"type": "image_url", "image_url": {"url": f"data:{m_type};base64,{img}"}})
+
+            if content:
+                messages.append({"role": role, "content": content})
+
+    # Process the current prompt (which is the last item in the history list from the GUI)
+    current_content = []
+    if prompt:
+        current_content.append({"type": "text", "text": prompt})
     if image_b64 and media_type:
-        content.append({"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}})
-    stream = await client.chat.completions.create(model=model, messages=[{"role": "user", "content": content}],
-                                                  stream=True, temperature=temp, max_tokens=4096)
+        current_content.append({"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}})
+
+    if current_content:
+        messages.append({"role": "user", "content": current_content})
+
+    return messages
+
+
+async def _stream_openai_compatible(client, model, prompt, temp, image_b64, media_type, history):
+    messages = _prepare_messages(history, prompt, image_b64, media_type)
+    stream = await client.chat.completions.create(
+        model=model, messages=messages, stream=True, temperature=temp, max_tokens=4096
+    )
     async for chunk in stream:
         if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content
 
 
-async def _stream_google(client, model, prompt, temp, image_b64, media_type):
+async def _stream_google(client, model, prompt, temp, image_b64, media_type, history):
+    # Google's API has a different format for history
     model_instance = genai.GenerativeModel(f'models/{model}')
+    chat_session = model_instance.start_chat(history=[]) # History needs to be adapted
     content_parts = []
     if prompt: content_parts.append(prompt)
     if image_b64: content_parts.append(Image.open(io.BytesIO(base64.b64decode(image_b64))))
-    response_stream = await model_instance.generate_content_async(content_parts, stream=True,
-                                                                  generation_config=genai.types.GenerationConfig(
-                                                                      temperature=temp))
+
+    response_stream = await chat_session.send_message_async(content_parts, stream=True,
+                                                            generation_config=genai.types.GenerationConfig(temperature=temp))
     async for chunk in response_stream:
         if chunk.text: yield chunk.text
 
 
-async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type):
-    content = []
-    if image_b64 and media_type: content.append(
-        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}})
-    if prompt: content.append({"type": "text", "text": prompt})
-    async with client.messages.stream(max_tokens=4096, model=model, messages=[{"role": "user", "content": content}],
+async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, history):
+    messages = _prepare_messages(history, prompt, image_b64, media_type)
+    # Anthropic uses a slightly different format for image content, let's adapt
+    anthropic_messages = []
+    for msg in messages:
+        anthropic_content = []
+        for part in msg['content']:
+            if part['type'] == 'text':
+                anthropic_content.append(part)
+            elif part['type'] == 'image_url':
+                # Convert from OpenAI format to Anthropic
+                b64_data = part['image_url']['url'].split(',')[-1]
+                m_type = part['image_url']['url'].split(';')[0].split(':')[-1]
+                anthropic_content.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": m_type, "data": b64_data}
+                })
+        anthropic_messages.append({"role": msg['role'], "content": anthropic_content})
+
+    async with client.messages.stream(max_tokens=4096, model=model, messages=anthropic_messages,
                                       temperature=temp) as stream:
         async for event in stream:
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
                 yield event.delta.text
 
 
-async def _stream_ollama(client, model, prompt, temp, image_b64, media_type):
+async def _stream_ollama(client, model, prompt, temp, image_b64, media_type, history):
+    # Ollama's format is also different, especially for history and multimodal
+    messages = []
+    if history:
+        for msg in history[:-1]:
+            messages.append({"role": msg.get("role"), "content": msg.get("text")}) # Ollama history is simpler
+
+    # Current prompt
+    current_message = {"role": "user", "content": prompt}
+    if image_b64:
+        current_message["images"] = [image_b64]
+    messages.append(current_message)
+
     ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/chat"
-    payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True,
-               "options": {"temperature": temp}}
-    if image_b64: payload["messages"][0]["images"] = [image_b64]
+    payload = {"model": model, "messages": messages, "stream": True, "options": {"temperature": temp}}
+
     async with aiohttp.ClientSession() as session:
         async with session.post(ollama_url, json=payload) as resp:
             async for line in resp.content:
@@ -168,7 +227,7 @@ async def stream_chat_endpoint(request: StreamChatRequest):
     async def generator():
         try:
             async for chunk in stream_func(client, request.model, request.prompt, request.temperature,
-                                           request.image_b64, request.media_type):
+                                           request.image_b64, request.media_type, request.history):
                 yield chunk
         except Exception as e:
             print(f"Error streaming from {request.provider}: {e}", file=sys.stderr)

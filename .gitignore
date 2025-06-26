@@ -87,3 +87,6 @@ src/ava/config/role_assignments.json
 !/src/ava/workspace/Genesis_Vestigea_0.3.3/
 /llm_server.log
 /rag_server.log
+/src/ava/rag_server_debug.log
+/llm_server_subprocess.log
+/rag_server_subprocess.log

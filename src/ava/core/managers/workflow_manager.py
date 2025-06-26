@@ -58,7 +58,7 @@ class WorkflowManager:
         workflow_coroutine = None
         if interaction_mode == InteractionMode.CHAT:
             print("[WorkflowManager] Mode is CHAT. Starting general chat workflow...")
-            workflow_coroutine = self._run_chat_workflow(prompt, image_bytes, image_media_type)
+            workflow_coroutine = self._run_chat_workflow(prompt, conversation_history, image_bytes, image_media_type)
         elif interaction_mode == InteractionMode.BUILD:
             if app_state == AppState.BOOTSTRAP:
                 print("[WorkflowManager] Mode is BUILD, State is BOOTSTRAP. Starting new project workflow...")
@@ -98,8 +98,9 @@ class WorkflowManager:
             self.log("error", f"Failed to get description from image: {e}")
             return ""
 
-    async def _run_chat_workflow(self, prompt: str, image_bytes: Optional[bytes], image_media_type: Optional[str]):
-        """Runs a simple, streaming chat interaction with the LLM, now with image support."""
+    async def _run_chat_workflow(self, prompt: str, conversation_history: list,
+                                 image_bytes: Optional[bytes], image_media_type: Optional[str]):
+        """Runs a simple, streaming chat interaction with the LLM, now with history and image support."""
         if not self.service_manager: return
         llm_client = self.service_manager.get_llm_client()
         provider, model = llm_client.get_model_for_role("chat")
@@ -113,7 +114,11 @@ class WorkflowManager:
 
         self.event_bus.emit("streaming_start", "Kintsugi AvA")
         try:
-            stream = llm_client.stream_chat(provider, model, chat_prompt, "chat", image_bytes, image_media_type)
+            # Pass the conversation history to the LLM client
+            stream = llm_client.stream_chat(
+                provider, model, chat_prompt, "chat",
+                image_bytes, image_media_type, history=conversation_history
+            )
             async for chunk in stream:
                 self.event_bus.emit("streaming_chunk", chunk)
         except Exception as e:

@@ -67,6 +67,7 @@ class EventCoordinator:
             self.event_bus.subscribe("new_project_requested", action_service.handle_new_project)
             self.event_bus.subscribe("load_project_requested", action_service.handle_load_project)
             self.event_bus.subscribe("new_session_requested", action_service.handle_new_session)
+            self.event_bus.subscribe("build_prompt_from_chat_requested", action_service.handle_build_prompt_from_chat)
 
         app_state_service = self.service_manager.get_app_state_service()
         if app_state_service:

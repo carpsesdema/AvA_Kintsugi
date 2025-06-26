@@ -6,9 +6,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QScrollArea, QHBoxLayout, QFileDialog, QMessageBox
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPalette, QPixmap, QImage
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QScrollArea, QHBoxLayout, QFileDialog, QMessageBox, QMenu
+from PySide6.QtCore import Qt, QTimer, QPoint
+from PySide6.QtGui import QPalette, QPixmap, QImage, QAction
 import qtawesome as qta
 
 from src.ava.gui.components import Colors, Typography
@@ -71,8 +71,10 @@ class ChatBubble(QFrame):
 
 
 class ChatMessageWidget(QWidget):
-    def __init__(self, text: str, sender: str, is_user: bool, image: Optional[QImage] = None):
+    def __init__(self, text: str, sender: str, is_user: bool, event_bus: EventBus, image: Optional[QImage] = None):
         super().__init__()
+        self.event_bus = event_bus
+        self.is_user = is_user
         layout = QHBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(10, 5, 10, 5)
@@ -87,8 +89,27 @@ class ChatMessageWidget(QWidget):
             layout.addWidget(self.bubble)
             layout.addStretch()
 
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+
     def append_text(self, chunk: str):
         self.bubble.append_text(chunk)
+
+    def _show_context_menu(self, pos: QPoint):
+        # Only show context menu for non-user messages with text content
+        if self.is_user or not self.bubble.message_label:
+            return
+
+        menu = QMenu(self)
+        use_as_prompt_action = QAction("Use as Build Prompt", self)
+        use_as_prompt_action.triggered.connect(self._on_use_as_prompt)
+        menu.addAction(use_as_prompt_action)
+        menu.exec(self.mapToGlobal(pos))
+
+    def _on_use_as_prompt(self):
+        if self.bubble.message_label:
+            prompt_text = self.bubble.message_label.text()
+            self.event_bus.emit("build_prompt_from_chat_requested", prompt_text)
 
 
 class ChatInterface(QWidget):
@@ -257,7 +278,7 @@ class ChatInterface(QWidget):
         sender_name = "You" if is_user else message_data.get("sender", "Kintsugi AvA")
 
         stretch_item = self.bubble_layout.takeAt(self.bubble_layout.count() - 1)
-        message_widget = ChatMessageWidget(text, sender_name, is_user, image=q_image)
+        message_widget = ChatMessageWidget(text, sender_name, is_user, self.event_bus, image=q_image)
         self.bubble_layout.addWidget(message_widget)
         self.bubble_layout.addStretch()
 

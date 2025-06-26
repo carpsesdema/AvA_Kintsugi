@@ -3,7 +3,7 @@ import os
 import json
 import base64
 import sys
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 
 import aiohttp
 import asyncio
@@ -91,7 +91,8 @@ class LLMClient:
         return provider, model_name
 
     async def stream_chat(self, provider: str, model: str, prompt: str, role: str = None,
-                          image_bytes: Optional[bytes] = None, image_media_type: str = "image/png"):
+                          image_bytes: Optional[bytes] = None, image_media_type: str = "image/png",
+                          history: Optional[List[Dict[str, Any]]] = None):
         """Streams a chat response from the LLM server."""
         temperature = self.get_role_temperature(role) if role else 0.7
         image_b64 = base64.b64encode(image_bytes).decode('utf-8') if image_bytes else None
@@ -102,7 +103,8 @@ class LLMClient:
             "prompt": prompt,
             "temperature": temperature,
             "image_b64": image_b64,
-            "media_type": image_media_type
+            "media_type": image_media_type,
+            "history": history or []
         }
 
         try:
