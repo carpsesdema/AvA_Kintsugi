@@ -1,16 +1,15 @@
 # src/ava/services/rag_manager.py
 import asyncio
-import os
-import sys
-import subprocess
 from pathlib import Path
+from typing import List, Dict, Any  # Added for type hinting
 
-from PySide6.QtCore import QObject, Signal, QTimer
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from src.ava.services.rag_service import RAGService
 from src.ava.services.directory_scanner_service import DirectoryScannerService
 from src.ava.services.chunking_service import ChunkingService
+from src.ava.core.event_bus import EventBus  # Added EventBus import
 
 
 class RAGManager(QObject):
@@ -19,93 +18,136 @@ class RAGManager(QObject):
     """
     log_message = Signal(str, str, str)
 
-    def __init__(self, event_bus, project_root: Path):
+    def __init__(self, event_bus: EventBus, project_root: Path):  # Added EventBus type hint
         super().__init__()
         self.event_bus = event_bus
         self.project_root = project_root
-        self.project_manager = None
+        self.project_manager = None  # Should be type hinted: Optional[ProjectManager]
         self.rag_service = RAGService()
         self.scanner = DirectoryScannerService()
         self.chunker = ChunkingService()
-        self._last_connection_status = None
-
-        self.status_check_timer = QTimer()
-        self.status_check_timer.timeout.connect(self.check_server_status_async)
-        self.status_check_timer.start(5000)
 
         self.log_message.connect(
             lambda src, type, msg: self.event_bus.emit("log_message_received", src, type, msg)
         )
         print("[RAGManager] Initialized for RAG service communication.")
 
-    def set_project_manager(self, project_manager):
+    def set_project_manager(self, project_manager):  # Add type hint: project_manager: ProjectManager
         self.project_manager = project_manager
 
     async def switch_project_context(self, project_path: Path):
         """Tells the RAG service to switch its database to the new project path."""
-        self.log_message.emit("RAGManager", "info", f"Switching RAG context to project: {project_path.name}")
+        self.log_message.emit("RAGManager", "info", f"Switching RAG PROJECT context to project: {project_path.name}")
         success, msg = await self.rag_service.set_project_db(str(project_path))
         if success:
-            self.log_message.emit("RAGManager", "success", "RAG context switched successfully.")
+            self.log_message.emit("RAGManager", "success", "RAG project context switched successfully.")
         else:
-            self.log_message.emit("RAGManager", "error", f"Failed to switch RAG context: {msg}")
+            self.log_message.emit("RAGManager", "error", f"Failed to switch RAG project context: {msg}")
 
-    def check_server_status_async(self):
-        try:
-            main_loop = asyncio.get_event_loop()
-            if main_loop.is_running():
-                asyncio.run_coroutine_threadsafe(self._check_and_log_status(), main_loop)
-        except RuntimeError:
-            pass
+    def open_add_knowledge_dialog(self, parent_widget=None):
+        """
+        Opens a file dialog to select one or more files to add to the
+        CURRENT PROJECT'S knowledge base.
+        """
+        if not self.project_manager or not self.project_manager.active_project_path:
+            QMessageBox.warning(parent_widget, "No Project Loaded", "Please load a project before adding knowledge.")
+            return
 
-    async def _check_and_log_status(self):
-        is_now_connected = await self.rag_service.check_connection()
-        if self._last_connection_status != is_now_connected:
-            msg, level = ("RAG service is running.", "success") if is_now_connected else (
-                "RAG service is offline or starting...", "info")
-            self.log_message.emit("RAGManager", level, msg)
-            self._last_connection_status = is_now_connected
-
-    def open_scan_directory_dialog(self, parent_widget=None):
-        directory = QFileDialog.getExistingDirectory(parent_widget, "Select Directory to Add to Knowledge Base",
-                                                     str(Path.home()))
-        if directory:
-            self.log_message.emit("RAGManager", "info", f"User selected directory: {directory}")
-            asyncio.create_task(self.ingest_from_directory(directory))
+        file_paths_str, _ = QFileDialog.getOpenFileNames(
+            parent_widget,
+            "Add File(s) to Project Knowledge Base",
+            str(Path.home()),  # Start at user's home directory
+            "All Files (*);;Text Files (*.txt);;Markdown (*.md);;Python Files (*.py)"  # Added Python
+        )
+        if file_paths_str:
+            self.log_message.emit("RAGManager", "info",
+                                  f"User selected {len(file_paths_str)} file(s) to add to project KB.")
+            path_objects = [Path(fp) for fp in file_paths_str]
+            # Explicitly target "project" collection
+            asyncio.create_task(self.ingest_files(path_objects, target_collection="project"))
 
     def ingest_active_project(self):
-        if not hasattr(self,
-                       'project_manager') or not self.project_manager or not self.project_manager.active_project_path:
-            self.log_message.emit("RAGManager", "error", "No active project to ingest.")
+        """Ingests all source files from the currently active project into the PROJECT knowledge base."""
+        if not self.project_manager or not self.project_manager.active_project_path:
+            self.log_message.emit("RAGManager", "error", "No active project to ingest into project KB.")
             return
         project_path = self.project_manager.active_project_path
-        self.log_message.emit("RAGManager", "info", f"Ingesting active project: {project_path}")
-        asyncio.create_task(self.ingest_from_directory(str(project_path)))
+        self.log_message.emit("RAGManager", "info",
+                              f"Ingesting all source files from active project '{project_path.name}' into PROJECT KB.")
+        files_to_ingest = self.scanner.scan(str(project_path))
+        if files_to_ingest:
+            # Explicitly target "project" collection
+            asyncio.create_task(self.ingest_files(files_to_ingest, target_collection="project"))
+        else:
+            self.log_message.emit("RAGManager", "warning", "No supported source files found in the project to ingest.")
 
-    async def ingest_from_directory(self, directory_path: str):
+    async def ingest_files(self, file_paths: List[Path], target_collection: str):
+        """
+        Chunks and ingests a list of files into the specified RAG collection.
+
+        Args:
+            file_paths: List of Path objects for the files to ingest.
+            target_collection: "project" or "global".
+        """
         try:
-            self.log_message.emit("RAGManager", "info", f"Starting ingestion from: {directory_path}")
-            scanned_files = self.scanner.scan(directory_path)
-            if not scanned_files:
-                self.log_message.emit("RAGManager", "warning", "No supported files found.")
-                return
-            self.log_message.emit("RAGManager", "info", f"Found {len(scanned_files)} files.")
-            all_chunks = []
-            for file_path in scanned_files:
+            self.log_message.emit("RAGManager", "info",
+                                  f"Starting ingestion for {len(file_paths)} file(s) into '{target_collection}' KB...")
+            all_chunks: List[Dict[str, Any]] = []  # Ensure all_chunks is typed
+            for file_path in file_paths:
                 try:
                     content = file_path.read_text(encoding='utf-8', errors='ignore')
                     chunks = self.chunker.chunk_document(content, str(file_path))
                     all_chunks.extend(chunks)
                 except Exception as e:
-                    self.log_message.emit("RAGManager", "warning", f"Failed to chunk {file_path.name}: {e}")
+                    self.log_message.emit("RAGManager", "warning",
+                                          f"Failed to chunk {file_path.name} for '{target_collection}' KB: {e}")
+
             if not all_chunks:
-                self.log_message.emit("RAGManager", "warning", "No chunks generated.")
+                self.log_message.emit("RAGManager", "warning",
+                                      f"No content to ingest for '{target_collection}' KB after chunking.")
                 return
-            self.log_message.emit("RAGManager", "info", f"Ingesting {len(all_chunks)} chunks...")
-            success, message = await self.rag_service.add(all_chunks)
+
+            self.log_message.emit("RAGManager", "info",
+                                  f"Ingesting {len(all_chunks)} chunks into '{target_collection}' knowledge base...")
+            success, message = await self.rag_service.add(all_chunks, target_collection=target_collection)
             if success:
-                self.log_message.emit("RAGManager", "success", f"Ingestion complete. {message}")
+                self.log_message.emit("RAGManager", "success",
+                                      f"Ingestion into '{target_collection}' KB complete. {message}")
             else:
-                self.log_message.emit("RAGManager", "error", f"Ingestion failed. {message}")
+                self.log_message.emit("RAGManager", "error",
+                                      f"Ingestion into '{target_collection}' KB failed. {message}")
         except Exception as e:
-            self.log_message.emit("RAGManager", "error", f"Ingestion process failed: {e}")
+            self.log_message.emit("RAGManager", "error", f"Ingestion process for '{target_collection}' KB failed: {e}")
+
+    # --- NEW METHOD for Global Knowledge ---
+    def open_add_global_knowledge_dialog(self, parent_widget=None):
+        """
+        Opens a directory dialog to select a root directory of code examples
+        to add to the GLOBAL knowledge base.
+        """
+        dir_path_str = QFileDialog.getExistingDirectory(
+            parent_widget,
+            "Select Directory for Global Knowledge Base (e.g., Python Code Examples)",
+            str(Path.home())  # Start at user's home directory
+        )
+
+        if dir_path_str:
+            directory_path = Path(dir_path_str)
+            self.log_message.emit("RAGManager", "info",
+                                  f"User selected directory '{directory_path.name}' to add to GLOBAL KB.")
+
+            # Inform user this might take time
+            QMessageBox.information(parent_widget, "Global Ingestion Started",
+                                    f"Scanning and ingesting '{directory_path.name}' into the global knowledge base. "
+                                    "This may take some time depending on the size. "
+                                    "Check logs for progress.")
+
+            files_to_ingest = self.scanner.scan(str(directory_path))
+            if files_to_ingest:
+                # Explicitly target "global" collection
+                asyncio.create_task(self.ingest_files(files_to_ingest, target_collection="global"))
+            else:
+                self.log_message.emit("RAGManager", "warning",
+                                      f"No supported files found in '{directory_path.name}' for GLOBAL KB.")
+                QMessageBox.warning(parent_widget, "No Files Found",
+                                    f"No supported files found in '{directory_path.name}' to add to the global knowledge base.")

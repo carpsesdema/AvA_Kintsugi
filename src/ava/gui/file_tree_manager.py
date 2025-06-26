@@ -4,13 +4,14 @@ from typing import Optional, Callable, Set, List
 
 from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QMenu, QInputDialog, QMessageBox, QAbstractItemView, QApplication,
-    QTreeWidgetItemIterator, QStyle, QWidget
+    QTreeWidgetItemIterator, QStyle, QWidget, QVBoxLayout, QHBoxLayout
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QMimeData, QByteArray, QUrl, QObject
 from PySide6.QtGui import QFont, QAction, QDragEnterEvent, QDropEvent, QDrag, QMouseEvent, QPixmap, \
-    QDragMoveEvent  # Added QPixmap
+    QDragMoveEvent
+import qtawesome as qta
 
-from .components import Colors
+from .components import Colors, ModernButton
 from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
 
@@ -83,15 +84,14 @@ class CustomFileTreeWidget(QTreeWidget):
 
         if selected_items:
             item_icon = selected_items[0].icon(0)
-            pixmap = QPixmap()  # Default empty pixmap
+            pixmap = QPixmap()
             if not item_icon.isNull():
-                # Try to get pixmap from item's icon first
                 temp_pixmap = item_icon.pixmap(32, 32)
                 if not temp_pixmap.isNull():
                     pixmap = temp_pixmap
 
-            if pixmap.isNull():  # If item had no icon or it was null, use a standard file icon
-                pixmap = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon).pixmap(32, 32)  # Corrected
+            if pixmap.isNull():
+                pixmap = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon).pixmap(32, 32)
 
             if not pixmap.isNull():
                 drag.setPixmap(pixmap)
@@ -182,9 +182,6 @@ class FileTreeManager(QObject):
 
     def __init__(self, tree_widget_parent: QWidget, project_manager: ProjectManager, event_bus: EventBus):
         super().__init__()
-        self.tree_widget = CustomFileTreeWidget(tree_widget_parent)
-        self.tree_widget.set_project_manager(project_manager)
-
         self.project_manager = project_manager
         self.event_bus = event_bus
         self.on_file_selected_callback: Optional[Callable[[Path], None]] = None
@@ -195,9 +192,38 @@ class FileTreeManager(QObject):
         self._collapse_dirs: Set[str] = {
             '.venv', 'venv', '.git', '.tox', 'build', 'dist'
         }
+
+        # Main widget and layout for this manager
+        self.container_widget = QWidget(tree_widget_parent)
+        self.container_layout = QVBoxLayout(self.container_widget)
+        self.container_layout.setContentsMargins(0, 5, 0, 0)
+        self.container_layout.setSpacing(5)
+
+        # Action bar at the top
+        self._create_action_bar()
+
+        # The tree widget itself
+        self.tree_widget = CustomFileTreeWidget(self.container_widget)
+        self.tree_widget.set_project_manager(project_manager)
+        self.container_layout.addWidget(self.tree_widget)
+
         self._setup_tree_widget_appearance()
         self._connect_custom_tree_signals()
         self._connect_event_bus_signals()
+
+    def _create_action_bar(self):
+        action_bar = QWidget()
+        action_layout = QHBoxLayout(action_bar)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+
+        add_to_rag_btn = ModernButton("Add All to RAG", "secondary")
+        add_to_rag_btn.setIcon(qta.icon("fa5s.brain", color=Colors.TEXT_PRIMARY.name()))
+        add_to_rag_btn.setToolTip("Adds all current project source files to the knowledge base.")
+        add_to_rag_btn.clicked.connect(lambda: self.event_bus.emit("add_active_project_to_rag_requested"))
+
+        action_layout.addWidget(add_to_rag_btn)
+        action_layout.addStretch()
+        self.container_layout.addWidget(action_bar)
 
     def _connect_event_bus_signals(self):
         self.items_renamed_internally.connect(lambda old, new: self.event_bus.emit("file_renamed", old, new))
@@ -237,8 +263,8 @@ class FileTreeManager(QObject):
         self.tree_widget.items_dropped_internally.connect(self.handle_internal_drop)
         self.tree_widget.external_files_dropped.connect(self.handle_external_drop)
 
-    def get_widget(self) -> QTreeWidget:
-        return self.tree_widget
+    def get_widget(self) -> QWidget:
+        return self.container_widget
 
     def set_file_selection_callback(self, callback: Callable[[Path], None]):
         self.on_file_selected_callback = callback
@@ -315,7 +341,7 @@ class FileTreeManager(QObject):
     def _restore_selected_items(self, selected_paths: List[str]):
         if not self.project_manager.active_project_path: return
         for path_str in selected_paths:
-            if path_str is None: continue  # Skip if path resolution failed
+            if path_str is None: continue
             if path_str == ".":
                 item = self.tree_widget.topLevelItem(0)
             else:
@@ -342,7 +368,6 @@ class FileTreeManager(QObject):
         font = root_item.font(0)
         font.setBold(True)
         root_item.setFont(0, font)
-        # --- Corrected Icon Usage ---
         root_icon = self.tree_widget.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         root_item.setIcon(0, root_icon)
         return root_item
@@ -373,7 +398,6 @@ class FileTreeManager(QObject):
             font = dir_item.font(0)
             font.setItalic(True)
             dir_item.setFont(0, font)
-        # --- Corrected Icon Usage ---
         dir_icon = self.tree_widget.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         dir_item.setIcon(0, dir_icon)
         return dir_item
@@ -382,7 +406,6 @@ class FileTreeManager(QObject):
         file_item = QTreeWidgetItem([f"{filename}"])
         file_item.setData(0, Qt.ItemDataRole.UserRole, str(file_path.resolve()))
         file_item.setData(0, Qt.ItemDataRole.UserRole + 1, False)
-        # --- Corrected Icon Usage ---
         file_icon = self.tree_widget.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
         file_item.setIcon(0, file_icon)
         return file_item

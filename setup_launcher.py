@@ -28,7 +28,7 @@ executables = [
 
 setup(
     name="AvakinLauncher",
-    version="1.0.0",
+    version="1.0.1",
     description="Avakin Launcher/Updater",
     options={"build_exe": build_exe_options},
     executables=executables,

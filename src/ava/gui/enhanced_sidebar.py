@@ -8,6 +8,10 @@ from src.ava.gui.components import Colors, Typography, ModernButton, StatusIndic
 from src.ava.core.event_bus import EventBus
 
 
+# REMOVE THE FOLLOWING LINE:
+# from src.ava.core.managers.window_manager import WindowManager
+
+
 class EnhancedSidebar(QWidget):
     def __init__(self, event_bus: EventBus):
         super().__init__()
@@ -68,14 +72,28 @@ class EnhancedSidebar(QWidget):
 
     def _create_knowledge_panel(self) -> QFrame:
         panel, layout = self._create_styled_panel("Knowledge Base (RAG)")
-        scan_btn = ModernButton("Scan Directory", "secondary")
-        scan_btn.setIcon(qta.icon("fa5s.search", color=Colors.TEXT_PRIMARY.name()))
-        scan_btn.clicked.connect(lambda: self.event_bus.emit("scan_directory_requested"))
-        add_files_btn = ModernButton("Add Project Files", "secondary")
-        add_files_btn.setIcon(qta.icon("fa5s.file-medical", color=Colors.TEXT_PRIMARY.name()))
-        add_files_btn.clicked.connect(lambda: self.event_bus.emit("add_active_project_to_rag_requested"))
-        layout.addWidget(scan_btn)
-        layout.addWidget(add_files_btn)
+
+        add_project_files_btn = ModernButton("Add Project Files to RAG", "secondary")
+        add_project_files_btn.setIcon(qta.icon("fa5s.folder-plus", color=Colors.TEXT_PRIMARY.name()))
+        add_project_files_btn.setToolTip(
+            "Scans all source files in the current project and adds them to this project's knowledge base.")
+        add_project_files_btn.clicked.connect(lambda: self.event_bus.emit("add_active_project_to_rag_requested"))
+        layout.addWidget(add_project_files_btn)
+
+        add_external_file_btn = ModernButton("Add External File to Project", "secondary")
+        add_external_file_btn.setIcon(qta.icon("fa5s.file-import", color=Colors.TEXT_PRIMARY.name()))
+        add_external_file_btn.setToolTip(
+            "Add specific external files (like a GDD) to the current project's knowledge base.")
+        add_external_file_btn.clicked.connect(lambda: self.event_bus.emit("add_knowledge_requested"))
+        layout.addWidget(add_external_file_btn)
+
+        add_global_docs_btn = ModernButton("Add Global Docs", "secondary")
+        add_global_docs_btn.setIcon(qta.icon("fa5s.globe", color=Colors.TEXT_PRIMARY.name()))
+        add_global_docs_btn.setToolTip(
+            "Add a directory of documents (e.g., code examples) to the global, shared knowledge base.")
+        add_global_docs_btn.clicked.connect(lambda: self.event_bus.emit("add_global_knowledge_requested"))
+        layout.addWidget(add_global_docs_btn)
+
         return panel
 
     def _create_plugin_panel(self) -> QFrame:
@@ -155,5 +173,5 @@ class EnhancedSidebar(QWidget):
     def update_project_display(self, project_name: str):
         self.project_name_label.setText(f"Project: {project_name}")
 
-    def update_plugin_status(self, status: str):
+    def update_plugin_status(self, status: str):  # This method is called by EventCoordinator/Application
         self.plugin_status_dot.setStatus(status)
