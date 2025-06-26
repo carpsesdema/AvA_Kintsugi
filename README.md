@@ -103,7 +103,7 @@ If GLOBAL_RAG_DB_PATH is not set, the global RAG features will be less effective
 4. Launch!
 Run the main application script from the root directory of the project:
 ```bash
-python src/ava/main.py
+python -m src/ava/main.py
 ```
 You're ready to go! Configure your Ollama models in Avakin's settings if you haven't already.
 Quick Usage
