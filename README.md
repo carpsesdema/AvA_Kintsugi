@@ -36,8 +36,8 @@ Avakin is a complete, AI powered development environment that runs entirely on y
    🔌 **Using Local LLMs with Ollama:**
         *   **Full Local Control:** Run powerful open-source models (like Llama 3, Mistral, CodeLlama, Phi, etc.) directly on your machine using [Ollama](https://ollama.com/).
         *   **Easy Setup:**
-            1. Install Ollama and ensure it's running.
-            2. Pull the models you want: `ollama pull llama3`, `ollama pull codellama`, etc.
+            1. Install Ollama(https://ollama.com/) and ensure it's running.
+            2. Pull the models you want in your terminal of preference: `ollama pull llama3`, `ollama pull codellama`, etc.
             3. Avakin automatically discovers your running Ollama models.
             4. In Avakin's "Configure AI Models" dialog, select your desired Ollama models for each AI agent role (Architect, Coder, Chat, Reviewer).
         *   **Privacy & Offline:** Your prompts and code are processed locally, never leaving your system when using Ollama models.
