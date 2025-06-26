@@ -5,6 +5,8 @@ from pathlib import Path
 from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
 from src.ava.services.reviewer_service import ReviewerService
+from src.ava.prompts.prompts import REFINEMENT_PROMPT
+from src.ava.utils.code_summarizer import CodeSummarizer
 
 
 class ValidationService:
@@ -14,44 +16,77 @@ class ValidationService:
         self.project_manager = project_manager
         self.reviewer_service = reviewer_service
 
-    async def review_and_fix_file(self, error_report: str) -> bool:
-        """
-        Performs a one-shot intelligent fix without automated re-validation.
-        The user remains in control of the execution loop.
-        """
-        self.log("info", "Starting one-shot surgical fix...")
+    def _find_relevant_files_for_fix(self, error_report: str, all_project_files: dict, crashing_file: str,
+                                     top_n: int = 4) -> list[str]:
+        """Finds the most relevant files based on an error report."""
+        prompt_keywords = set(re.findall(r'\b\w+\b', error_report.lower()))
+        if not prompt_keywords:
+            return list(all_project_files.keys())[:top_n]
 
-        # 1. Get current project state and context
+        scored_files = []
+        for filename, content in all_project_files.items():
+            score = 0
+            if any(keyword in filename.lower() for keyword in prompt_keywords):
+                score += 10
+            content_lower = content.lower()
+            for keyword in prompt_keywords:
+                score += content_lower.count(keyword)
+            scored_files.append((score, filename))
+
+        scored_files.sort(key=lambda x: x[0], reverse=True)
+        relevant_set = {filename for score, filename in scored_files[:top_n]}
+        if crashing_file:
+            relevant_set.add(crashing_file)
+        if 'main.py' in all_project_files:
+            relevant_set.add('main.py')
+        return list(relevant_set)
+
+    async def review_and_fix_file(self, error_report: str) -> bool:
+        """Performs a one-shot intelligent fix using focused context."""
+        self.log("info", "Starting one-shot surgical fix...")
         all_project_files = self.project_manager.get_project_files()
         if not all_project_files:
             self.handle_error("executor", "Cannot initiate fix: No project files found.")
             return False
 
         git_diff = self.project_manager.get_git_diff()
-
         crashing_file, line_number = self._parse_error_traceback(error_report)
-        if not crashing_file:
-            self.handle_error("executor", "Could not identify the source file of the error.")
-            return False
 
-        if self.project_manager.active_project_path and line_number > 0:
-            full_path = self.project_manager.active_project_path / crashing_file
-            self.event_bus.emit("error_highlight_requested", full_path, line_number)
+        if crashing_file and self.project_manager.active_project_path and line_number > 0:
+            self.event_bus.emit("error_highlight_requested", self.project_manager.active_project_path / crashing_file,
+                                line_number)
 
-        self.update_status("reviewer", "working", f"Analyzing error in {crashing_file}...")
+        self.update_status("reviewer", "working", f"Analyzing error in {crashing_file or 'unknown file'}...")
 
-        # 2. Ask the reviewer for the fix
+        # --- NEW: Create focused context for the LLM ---
+        relevant_filenames = self._find_relevant_files_for_fix(error_report, all_project_files, crashing_file)
+        self.log("info", f"Sending focused context with {len(relevant_filenames)} files to reviewer.")
+
+        full_code_context_list = []
+        summaries_context_list = []
+        for filename, content in sorted(all_project_files.items()):
+            if filename in relevant_filenames:
+                full_code_context_list.append(f"--- File: {filename} ---\n```python\n{content}\n```")
+            else:
+                summary = CodeSummarizer(content).summarize() if filename.endswith('.py') else f"// Non-Python file ({Path(filename).suffix})"
+                summaries_context_list.append(f"### File: `{filename}`\n```\n{summary}\n```")
+
+        full_code_context_str = "\n\n".join(full_code_context_list)
+        summaries_context_str = "\n\n".join(summaries_context_list)
+
+        # 2. Ask the reviewer for the fix with the new, smaller context
         changes_json_str = await self.reviewer_service.review_and_correct_code(
-            project_source=all_project_files,
+            full_code_context=full_code_context_str,
+            file_summaries_string=summaries_context_str,
             error_report=error_report,
             git_diff=git_diff
         )
+        # --- END OF NEW CONTEXT LOGIC ---
 
         if not changes_json_str:
             self.handle_error("reviewer", "Did not generate a response for the error fix.")
             return False
 
-        # 3. Process and apply the fix
         try:
             files_to_commit = self._robustly_parse_json_from_llm_response(changes_json_str)
             if not isinstance(files_to_commit, dict) or not files_to_commit:
@@ -61,19 +96,15 @@ class ValidationService:
             return False
 
         filenames_changed = ", ".join(files_to_commit.keys())
-        fix_commit_message = f"fix: AI rewrite for error in {crashing_file}\n\nChanged files: {filenames_changed}"
+        fix_commit_message = f"fix: AI rewrite for error in {crashing_file or 'project'}\n\nChanged files: {filenames_changed}"
         self.project_manager.save_and_commit_files(files_to_commit, fix_commit_message)
 
-        # 4. Notify the system that the fix is applied and finish.
         self.event_bus.emit("code_generation_complete", files_to_commit)
         self.update_status("reviewer", "success", f"Fix applied to {len(files_to_commit)} file(s).")
         self.log("success", "Successfully applied fix. Please try running the code again.")
         return True
 
     def _robustly_parse_json_from_llm_response(self, response_text: str) -> dict:
-        """
-        A highly robust function to find and parse a JSON object from an LLM's text response.
-        """
         match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
         if match:
             json_str = match.group(1)
@@ -95,10 +126,6 @@ class ValidationService:
         raise ValueError("Could not find a valid JSON object in the LLM response.")
 
     def _parse_error_traceback(self, error_str: str) -> tuple[str | None, int]:
-        """
-        Parses a traceback string to find the last file mentioned that is part
-        of the user's project, not a system or venv library.
-        """
         project_root = self.project_manager.active_project_path
         if not project_root:
             self.log("error", "Cannot parse traceback without an active project root.")
@@ -106,34 +133,20 @@ class ValidationService:
 
         traceback_pattern = re.compile(r'File "((?:[a-zA-Z]:)?[^"]+)", line (\d+)')
         matches = traceback_pattern.findall(error_str)
-
         if not matches:
             fallback_pattern = re.compile(r'((?:[a-zA-Z]:)?[^:]+\.py):(\d+):')
             matches = [(m[0], m[1]) for m in fallback_pattern.findall(error_str)]
-
         if not matches:
             self.log("warning", "Could not find any file paths in the error report using known patterns.")
             return None, -1
 
         for file_path_from_trace, line_num_str in reversed(matches):
-            if not file_path_from_trace or not line_num_str:
-                continue
+            if not file_path_from_trace or not line_num_str: continue
             try:
                 path_obj = Path(file_path_from_trace)
-                if path_obj.is_absolute():
-                    # Check if the file is within the project directory
-                    if project_root in path_obj.parents:
-                        path_to_check = path_obj
-                    else:  # If not, it's a system file or from another location.
-                        continue
-                else:  # if relative, resolve it against the project root
-                    path_to_check = (project_root / path_obj).resolve()
-
-                if path_to_check.is_file():
-                    # Final check to exclude venv files
-                    if ".venv" in path_to_check.parts or "site-packages" in path_to_check.parts:
-                        continue
-
+                path_to_check = (project_root / path_obj).resolve() if not path_obj.is_absolute() else path_obj.resolve()
+                if path_to_check.is_file() and project_root in path_to_check.parents:
+                    if ".venv" in path_to_check.parts or "site-packages" in path_to_check.parts: continue
                     relative_path = path_to_check.relative_to(project_root)
                     posix_path_str = relative_path.as_posix()
                     self.log("info", f"Pinpointed error origin: {posix_path_str} at line {line_num_str}")

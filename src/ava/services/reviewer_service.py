@@ -10,14 +10,15 @@ class ReviewerService:
         self.llm_client = llm_client
 
     async def review_and_correct_code(
-            self, project_source: dict, error_report: str, git_diff: str
+            self, error_report: str, git_diff: str, full_code_context: str, file_summaries_string: str
     ) -> str | None:
         """
-        Uses an LLM with full project context and git diff for the first fix attempt.
+        Uses an LLM with FOCUSED project context and git diff for the first fix attempt.
         """
-        self.log("info", "Reviewer analyzing error with git diff context.")
+        self.log("info", "Reviewer analyzing error with focused context.")
         prompt = REFINEMENT_PROMPT.format(
-            project_source_json=json.dumps(project_source, indent=2),
+            full_code_context=full_code_context,
+            file_summaries_string=file_summaries_string,
             error_report=error_report,
             git_diff=git_diff
         )

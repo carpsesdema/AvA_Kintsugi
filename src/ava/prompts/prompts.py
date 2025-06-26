@@ -111,7 +111,7 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
     **CRITICAL INSTRUCTIONS - READ CAREFULLY:**
     1.  **STRICT ADHERENCE:** Your plan MUST conform to the patterns, libraries (e.g., ursina, PySide6), and structure demonstrated in the **FULL SOURCE** provided above. Do NOT introduce incompatible libraries or architectural patterns.
     2.  **EXISTING FILENAMES ONLY:** When modifying a file, you MUST use its exact path. Do not invent new paths for existing files.
-    3.  **JSON OUTPUT ONLY:** Your response MUST be ONLY a valid JSON object. Do not add any other text, explanations, or markdown.
+    3.  **JSON OUTPUT ONLY:** Your response **MUST** be ONLY a valid JSON object. Do not add any other text, explanations, or markdown.
     4.  **CONCISE PURPOSE:** For each file in your plan, write a clear, one-sentence "purpose" explaining the high-level goal of the changes. Do not write implementation details in the purpose.
 
     ---
@@ -199,40 +199,45 @@ CODER_PROMPT = textwrap.dedent("""
     Write the complete, integration-ready code for `{filename}` now:
     """)
 
-# This is the new "One-Shot Surgical Fix" prompt. It replaces the old refinement prompt.
+# --- THIS IS THE FIX: The prompt now takes focused context instead of the whole project ---
 INTELLIGENT_FIXER_PROMPT = textwrap.dedent("""
     You are an expert debugging system. Your task is to analyze the provided diagnostic bundle and return a JSON object containing the full, corrected code for only the file(s) that need to be fixed.
 
     --- DIAGNOSTIC BUNDLE ---
 
-    1. GIT DIFF (Recent changes that likely caused the error):
-    ```diff
-    {git_diff}
-    ```
-
-    2. FULL PROJECT SOURCE:
-    ```json
-    {project_source_json}
-    ```
-
-    3. ERROR REPORT:
+    1. ERROR REPORT:
     ```
     {error_report}
     ```
 
+    2. RECENT CHANGES (git diff that likely caused the error):
+    ```diff
+    {git_diff}
+    ```
+
+    3. FULL CODE OF RELEVANT FILES (focus your fix on these):
+    ```
+    {full_code_context}
+    ```
+
+    4. SUMMARIES OF OTHER PROJECT FILES (for general awareness):
+    ```
+    {file_summaries_string}
+    ```
+
     --- YOUR TASK ---
-    1.  **Analyze:** Internally, determine the root cause by examining the git diff and the error report. This is your most important step.
-    2.  **Identify:** Pinpoint the specific file(s) that need to be changed to fix the bug.
-    3.  **Correct:** Generate the complete, corrected source code for those files.
+    1.  **Analyze:** Determine the root cause by examining the error report and the recent changes.
+    2.  **Identify:** Pinpoint the specific file(s) that need to be changed. This will almost always be one of the files from the "FULL CODE OF RELEVANT FILES" section.
+    3.  **Correct:** Generate the complete, corrected source code for the identified file(s).
 
     --- OUTPUT REQUIREMENTS ---
     - Your response MUST be ONLY a valid JSON object.
     - The keys must be the file paths, and the values must be the complete corrected source code.
     - Do NOT add any explanations, apologies, or conversational text.
-    - Do NOT output your internal analysis. Just the final JSON.
 
     Begin.
     """)
+# --- END OF FIX ---
 
 # This is the prompt for the recursive loop, to be used when the first fix fails.
 RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
