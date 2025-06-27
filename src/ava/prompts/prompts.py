@@ -1,6 +1,53 @@
 # src/ava/prompts/prompts.py
 import textwrap
 
+# REVERTING TO A MORE DIRECT, FULL-CONTEXT FIXER PROMPT
+INTELLIGENT_FIXER_PROMPT = textwrap.dedent("""
+    You are an expert AI software engineer specializing in debugging Python code. Your task is to analyze a diagnostic bundle and provide a precise, surgical fix.
+
+    **DIAGNOSTIC BUNDLE:**
+
+    1.  **ERROR TRACEBACK:** This is the error that occurred.
+        ```
+        {error_report}
+        ```
+
+    2.  **RECENT CODE CHANGES (GIT DIFF):** These are the changes that most likely introduced the bug.
+        ```diff
+        {git_diff}
+        ```
+
+    3.  **FULL PROJECT SOURCE CODE:** The complete source code for all files in the project is provided below.
+        ```json
+        {full_code_context}
+        ```
+
+    **YOUR TASK:**
+
+    1.  **Analyze:** Determine the root cause by examining the error traceback, recent changes, and the full project source.
+    2.  **Formulate the Fix:** Determine the minimal set of changes needed to correct the root cause. This may involve modifying one or more files.
+
+    **CRITICAL RULES & OUTPUT FORMAT:**
+
+    *   **JSON ONLY:** Your entire response MUST be a single, valid JSON object and nothing else. Do not add any conversational text, explanations, or markdown. Your response must begin with `{{` and end with `}}`.
+    *   **COMPLETE FILES:** The JSON object's values must be the FULL, corrected source code for every file you modify.
+    *   **DO NOT RETURN EMPTY CONTENT:** Returning an empty string for a file is strictly forbidden.
+
+    **EXAMPLE OF A CORRECT RESPONSE:**
+    ```json
+    {{
+      "game/world.py": "import time\\n\\nclass World:\\n    def __init__(self):\\n        # ... entire corrected file content ...\\n        pass\\n",
+      "main.py": "from game.world import World\\n\\n# ... entire corrected main.py content ...\\n"
+    }}
+    ```
+
+    Begin.
+    """)
+
+REFINEMENT_PROMPT = INTELLIGENT_FIXER_PROMPT
+
+# --- Other prompts remain below this line. They are unchanged. ---
+
 PLANNER_PROMPT = textwrap.dedent("""
     You are an expert software architect who specializes in creating plans for Python applications.
 
@@ -196,45 +243,6 @@ CODER_PROMPT = textwrap.dedent("""
     Write the complete, integration-ready code for `{filename}` now:
     """)
 
-INTELLIGENT_FIXER_PROMPT = textwrap.dedent("""
-    You are an expert debugging system. Your task is to analyze the provided diagnostic bundle and return a JSON object containing the full, corrected code for only the file(s) that need to be fixed.
-
-    --- DIAGNOSTIC BUNDLE ---
-
-    1. ERROR REPORT:
-    ```
-    {error_report}
-    ```
-
-    2. RECENT CHANGES (git diff that likely caused the error):
-    ```diff
-    {git_diff}
-    ```
-
-    3. FULL CODE OF RELEVANT FILES (focus your fix on these):
-    ```
-    {full_code_context}
-    ```
-
-    4. SUMMARIES OF OTHER PROJECT FILES (for general awareness):
-    ```
-    {file_summaries_string}
-    ```
-
-    --- YOUR TASK & CRITICAL RULES ---
-    1.  **Analyze:** Determine the root cause by examining the error report and the recent changes.
-    2.  **Identify:** Pinpoint the specific file(s) that need to be changed. This will almost always be one of the files from the "FULL CODE OF RELEVANT FILES" section.
-    3.  **Correct:** Generate the complete, corrected source code for the identified file(s).
-    4.  **DO NOT RETURN EMPTY CONTENT:** The corrected source code for a file MUST NOT be empty. If you think a file should be deleted, do not include it in your response at all. Returning an empty string for a file is strictly forbidden.
-
-    --- OUTPUT REQUIREMENTS ---
-    - Your response MUST be ONLY a valid JSON object.
-    - The keys must be the file paths, and the values must be the complete corrected source code.
-    - Do NOT add any explanations, apologies, or conversational text.
-
-    Begin.
-    """)
-
 RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
     You are an expert debugging system in a recursive analysis loop. Your previous attempt to fix an error failed and produced a new error. Your task is to analyze the entire context and provide a more accurate fix.
 
@@ -264,7 +272,8 @@ RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
     1.  **Analyze the Failure:** The key is to understand *why* the `PREVIOUS FIX ATTEMPT` failed. Did it misunderstand the original error? Did it introduce a new bug by mistake?
     2.  **Deeper Root Cause:** Compare the original error, the attempted fix, and the new error to find the true, underlying root cause of the problem.
     3.  **Formulate a New Fix:** Generate a new, more accurate correction. Only modify the file(s) necessary to resolve the issue.
-    4.  **DO NOT RETURN EMPTY CONTENT:** The corrected source code for a file MUST NOT be empty. If you think a file should be deleted, do not include it in your response at all. Returning an empty string for a file is strictly forbidden.
+    4.  **JSON ONLY:** Your entire response MUST be a single, valid JSON object and nothing else. Your response must begin with `{{` and end with `}}`.
+    5.  **DO NOT RETURN EMPTY CONTENT:** The corrected source code for a file MUST NOT be empty. If you think a file should be deleted, do not include it in your response at all.
 
     --- OUTPUT REQUIREMENTS ---
     - Your response MUST be ONLY a valid JSON object.
@@ -273,10 +282,6 @@ RECURSIVE_FIXER_PROMPT = textwrap.dedent("""
 
     Begin analysis.
     """)
-
-
-REFINEMENT_PROMPT = INTELLIGENT_FIXER_PROMPT
-
 
 SURGICAL_MODIFICATION_PROMPT = textwrap.dedent("""
     You are an expert developer specializing in precise, surgical code modifications. You are given the original source code for a file and a clear instruction on what to change.
@@ -319,5 +324,6 @@ __all__ = [
     'REFINEMENT_PROMPT',
     'INTELLIGENT_FIXER_PROMPT',
     'RECURSIVE_FIXER_PROMPT',
-    'SURGICAL_MODIFICATION_PROMPT'
+    'SURGICAL_MODIFICATION_PROMPT',
+    # Removed TRIAGE_PROMPT and other experimental ones to go back to what worked.
 ]

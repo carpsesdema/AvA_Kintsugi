@@ -261,8 +261,7 @@ class ProjectManager:
             except (ValueError, GitCommandError):  # Handles empty repo or repo with no commits
                 print("[ProjectManager] Loaded repo has no commits. Creating initial baseline commit.")
                 self._create_gitignore_if_needed()
-                if (self.active_project_path / ".gitignore").exists():
-                    self.repo.git.add(A=True)  # Stage .gitignore and any other existing files
+                self.repo.git.add(A=True)  # Stage .gitignore and any other existing files
                 if self.repo.index.entries:  # Check if there's anything to commit
                     self.repo.index.commit("Baseline commit for existing files by Kintsugi AvA")
                     print("[ProjectManager] Created baseline commit for existing files.")
@@ -344,16 +343,18 @@ class ProjectManager:
         }
         try:
             for item in self.active_project_path.rglob('*'):
-                # Check if any part of the path is in ignore_dirs
                 if any(part in ignore_dirs for part in item.relative_to(self.active_project_path).parts):
                     continue
                 if item.is_file():
                     if item.suffix.lower() not in allowed_extensions:
-                        # print(f"[ProjectManager] Skipping file with unallowed extension: {item.name}")
                         continue
                     try:
                         relative_path = item.relative_to(self.active_project_path)
+                        # --- THIS IS THE FIX ---
+                        # Always store the dictionary key with POSIX-style forward slashes
+                        # for cross-platform consistency.
                         project_files[relative_path.as_posix()] = item.read_text(encoding='utf-8', errors='ignore')
+                        # --- END OF FIX ---
                     except (IOError, UnicodeDecodeError) as e:
                         print(f"[ProjectManager] Skipping unreadable file {item}: {e}")
             return project_files
@@ -365,25 +366,22 @@ class ProjectManager:
         if not self.repo:
             return "No Git repository available."
         try:
-            if not self.repo.head.is_valid():  # Check if HEAD is valid (e.g., repo might be empty)
-                # If no valid HEAD, diff against cached (staged) changes
+            if not self.repo.head.is_valid():
                 return self.repo.git.diff('--cached')
-            # Diff working directory against HEAD
             return self.repo.git.diff('HEAD')
         except (GitCommandError, ValueError) as e:
             print(f"[ProjectManager] Warning: Could not get git diff (might be a new repo or other issue): {e}")
-            # Attempt to diff staged changes if HEAD diff fails
             try:
                 return self.repo.git.diff('--cached')
             except Exception as e_cached:
                 print(f"[ProjectManager] Warning: Could not get cached git diff either: {e_cached}")
                 return "Could not retrieve git diff. Repository might be in an empty or unusual state."
-        except Exception as e:  # Catch-all for other unexpected errors
+        except Exception as e:
             print(f"[ProjectManager] An unexpected error occurred while getting git diff: {e}")
             return "An unexpected error occurred while getting the git diff."
 
     def _create_gitignore_if_needed(self):
-        if not self.repo:  # Check if repo object exists
+        if not self.repo:
             print("[ProjectManager] Cannot create .gitignore: No Git repository.")
             return
         gitignore_path = Path(self.repo.working_dir) / ".gitignore"
@@ -391,7 +389,7 @@ class ProjectManager:
         if not gitignore_path.exists():
             gitignore_path.write_text(default_ignore_content)
             print(f"[ProjectManager] Created default .gitignore file at {gitignore_path}")
-        else:  # Ensure essential lines are present
+        else:
             current_content = gitignore_path.read_text()
             missing_lines = []
             for line in default_ignore_content.splitlines():
@@ -410,22 +408,19 @@ class ProjectManager:
         venv_path = self.active_project_path / ".venv"
         print(f"[ProjectManager] Attempting to create virtual environment at: {venv_path}")
         try:
-            base_python = self._get_base_python_executable()  # This now raises RuntimeError if no suitable python is found
+            base_python = self._get_base_python_executable()
             print(f"[ProjectManager] Creating virtual environment using: {base_python}")
 
-            # --- MODIFICATION: Add startupinfo for Windows ---
             startupinfo = None
             if sys.platform == "win32":
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
-            # --- END MODIFICATION ---
 
-            # Using subprocess.run to create the venv
             result = subprocess.run(
                 [base_python, "-m", "venv", str(venv_path)],
-                check=True, capture_output=True, text=True, timeout=180,  # Increased timeout
-                startupinfo=startupinfo  # MODIFIED: Pass startupinfo
+                check=True, capture_output=True, text=True, timeout=180,
+                startupinfo=startupinfo
             )
             print(f"[ProjectManager] Virtual environment creation stdout: {result.stdout}")
             if result.stderr:
@@ -433,7 +428,6 @@ class ProjectManager:
 
             print(f"[ProjectManager] Virtual environment created successfully in {venv_path}.")
 
-            # Verify venv creation
             expected_python = self.venv_python_path
             if not expected_python or not expected_python.exists():
                 error_msg = f"Virtual environment creation appeared to succeed, but Python executable not found at expected location: {expected_python}. This can happen if the base Python used ('{base_python}') is incompatible or has issues with venv creation."
@@ -449,10 +443,10 @@ class ProjectManager:
             error_details = f"Command: {' '.join(e.cmd)}\nReturn code: {e.returncode}\nStdout: {e.stdout}\nStderr: {e.stderr}"
             print(f"[ProjectManager] ERROR: Virtual environment creation failed.\n{error_details}")
             raise RuntimeError(f"Virtual environment creation failed: {e.stderr or e.stdout or 'Unknown error'}")
-        except RuntimeError as e:  # Catch RuntimeError from _get_base_python_executable or verification
+        except RuntimeError as e:
             print(f"[ProjectManager] ERROR: Critical issue during venv setup: {e}")
-            raise  # Re-raise to be caught by new_project
-        except Exception as e:  # Catch any other unexpected errors
+            raise
+        except Exception as e:
             print(f"[ProjectManager] ERROR: Unexpected error during venv creation: {e}\n{traceback.format_exc()}")
             raise RuntimeError(f"Unexpected error during venv creation: {e}")
 
@@ -478,7 +472,7 @@ class ProjectManager:
             try:
                 old_abs_path.rename(new_abs_path)
                 self.repo.index.add([str(new_abs_path)])
-                if old_abs_path.is_dir():  # If renaming a dir, git needs explicit rm for old path contents
+                if old_abs_path.is_dir():
                     self.repo.index.remove([relative_item_path_str], r=True, f=True)
                 else:
                     self.repo.index.remove([relative_item_path_str])
