@@ -1,5 +1,6 @@
 # src/ava/core/managers/workflow_manager.py
 import asyncio
+import json
 from pathlib import Path
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -11,7 +12,7 @@ from src.ava.core.interaction_mode import InteractionMode
 from src.ava.core.managers.service_manager import ServiceManager
 from src.ava.core.managers.window_manager import WindowManager
 from src.ava.core.managers.task_manager import TaskManager
-from src.ava.prompts import CREATIVE_ASSISTANT_PROMPT
+from src.ava.prompts import CREATIVE_ASSISTANT_PROMPT, AURA_REFINEMENT_PROMPT
 
 
 class WorkflowManager:
@@ -26,6 +27,7 @@ class WorkflowManager:
         self.window_manager: WindowManager = None
         self.task_manager: TaskManager = None
         self._last_error_report = None
+        self._last_generated_code: Optional[Dict[str, str]] = None
         print("[WorkflowManager] Initialized")
 
     def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager, task_manager: TaskManager):
@@ -38,27 +40,45 @@ class WorkflowManager:
         self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
         self.event_bus.subscribe("aura_request_submitted", self.handle_aura_request)
+        self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
 
-    def handle_aura_request(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes], image_media_type: Optional[str]):
+    def _on_code_generation_complete(self, generated_files: Dict[str, str]):
+        """Catches the generated code after a build to be used by Aura."""
+        self.log("info", f"WorkflowManager captured {len(generated_files)} generated files for Aura's context.")
+        self._last_generated_code = generated_files
+
+    def handle_aura_request(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes],
+                            image_media_type: Optional[str]):
         """Handles a request for the Aura creative assistant."""
         workflow_coroutine = self._run_aura_workflow(user_idea, conversation_history, image_bytes, image_media_type)
         self.task_manager.start_ai_workflow_task(workflow_coroutine)
 
-    async def _run_aura_workflow(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes], image_media_type: Optional[str]):
+    async def _run_aura_workflow(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes],
+                                 image_media_type: Optional[str]):
         """Runs the Aura persona workflow."""
         self.log("info", f"Aura is processing: '{user_idea[:50]}...'")
 
-        # Format history for the prompt
-        formatted_history = "\n".join([f"{msg['role'].title()}: {msg['content']}" for msg in conversation_history])
+        formatted_history = "\n".join(
+            [f"{msg['role'].title()}: {msg.get('content', '')}" for msg in conversation_history])
 
-        # Prepare the full prompt for the LLM
-        aura_prompt = CREATIVE_ASSISTANT_PROMPT.format(
-            conversation_history=formatted_history,
-            user_idea=user_idea
-        )
+        # Determine which prompt to use: initial creation or refinement
+        if self._last_generated_code:
+            self.log("info", "Aura is in REFINEMENT mode with existing code context.")
+            code_context_json = json.dumps(self._last_generated_code, indent=2)
+            aura_prompt = AURA_REFINEMENT_PROMPT.format(
+                conversation_history=formatted_history,
+                user_idea=user_idea,
+                code_context=code_context_json
+            )
+        else:
+            self.log("info", "Aura is in CREATION mode.")
+            aura_prompt = CREATIVE_ASSISTANT_PROMPT.format(
+                conversation_history=formatted_history,
+                user_idea=user_idea
+            )
 
         llm_client = self.service_manager.get_llm_client()
-        provider, model = llm_client.get_model_for_role("chat") # Aura uses the chat model
+        provider, model = llm_client.get_model_for_role("chat")
 
         if not provider or not model:
             self.event_bus.emit("streaming_chunk", "Sorry, no 'chat' model is configured for Aura.")
@@ -78,7 +98,7 @@ class WorkflowManager:
     def handle_user_request(self, prompt: str, conversation_history: list,
                             image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None,
                             code_context: Optional[Dict[str, str]] = None):
-        """The central router for all user chat input, now with multimodal and code context support."""
+        """The central router for all user chat input."""
         stripped_prompt = prompt.strip()
         if not stripped_prompt and not image_bytes and not code_context:
             return
@@ -97,6 +117,7 @@ class WorkflowManager:
                                                          code_context)
         elif interaction_mode == InteractionMode.BUILD:
             if app_state == AppState.BOOTSTRAP:
+                self._last_generated_code = None  # Clear old code for new project
                 workflow_coroutine = self._run_bootstrap_workflow(prompt, image_bytes)
             elif app_state == AppState.MODIFY:
                 workflow_coroutine = self._run_modification_workflow(prompt, image_bytes)
@@ -135,7 +156,7 @@ class WorkflowManager:
     async def _run_chat_workflow(self, prompt: str, conversation_history: list,
                                  image_bytes: Optional[bytes], image_media_type: Optional[str],
                                  code_context: Optional[Dict[str, str]]):
-        """Runs a simple, streaming chat interaction with the LLM, now with history, RAG, and image support."""
+        """Runs a simple, streaming chat interaction with the LLM."""
         if not self.service_manager: return
         llm_client = self.service_manager.get_llm_client()
         provider, model = llm_client.get_model_for_role("chat")
@@ -151,7 +172,7 @@ class WorkflowManager:
                 f"Please analyze the following code from the file `{filename}`.\n--- CODE ---\n```python\n{content}\n```\n--- END CODE ---")
 
         rag_manager = self.service_manager.get_rag_manager()
-        if rag_manager and rag_manager.rag_service:  # Ensure rag_service is available
+        if rag_manager and rag_manager.rag_service:
             rag_query = prompt or "Summarize the attached code based on project documents or general knowledge."
 
             project_rag_context = await rag_manager.rag_service.query(rag_query, target_collection="project")
@@ -256,8 +277,8 @@ class WorkflowManager:
         await architect_service.generate_or_modify(final_prompt, existing_files)
 
     def _on_session_cleared(self):
-        """Resets the state of this manager when a new session is started."""
         self._last_error_report = None
+        self._last_generated_code = None
 
     def handle_execution_failed(self, error_report: str):
         self._last_error_report = error_report
@@ -265,14 +286,12 @@ class WorkflowManager:
             self.window_manager.get_code_viewer().show_fix_button()
 
     def handle_review_and_fix_button(self):
-        """Handles the "Review & Fix" button click from the UI."""
         if self._last_error_report:
             self._initiate_fix_workflow(self._last_error_report)
         else:
             self.log("warning", "Fix button clicked but no error report was available.")
 
     def handle_review_and_fix_request(self, error_report: str):
-        """Handles a fix request from a plugin or other internal service."""
         if error_report:
             self._initiate_fix_workflow(error_report)
         else:

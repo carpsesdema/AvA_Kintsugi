@@ -98,27 +98,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Avakin LLM Service", lifespan=lifespan)
 
 
-def _prepare_messages(history: List[Dict[str, Any]], prompt: str, image_b64: str, media_type: str) -> List[Dict[str, Any]]:
-    """Constructs a message list for the LLM, handling history and the current prompt."""
+def _prepare_openai_messages(history: List[Dict[str, Any]], prompt: str, image_b64: str, media_type: str) -> List[
+    Dict[str, Any]]:
+    """Constructs a message list for OpenAI-compatible APIs."""
     messages = []
-    # Process history first
     if history:
-        for msg in history[:-1]:  # Process all but the last message (which is the current user turn)
+        for msg in history[:-1]:
             role = msg.get("role", "user")
-            text = msg.get("text", "")
-            img = msg.get("image_b64")
-            m_type = msg.get("media_type")
-
             content = []
-            if text:
+            if text := msg.get("text"):
                 content.append({"type": "text", "text": text})
-            if img and m_type:
+            if img := msg.get("image_b64"):
+                m_type = msg.get("media_type", "image/png")
                 content.append({"type": "image_url", "image_url": {"url": f"data:{m_type};base64,{img}"}})
-
             if content:
                 messages.append({"role": role, "content": content})
 
-    # Process the current prompt (which is the last item in the history list from the GUI)
     current_content = []
     if prompt:
         current_content.append({"type": "text", "text": prompt})
@@ -127,12 +122,51 @@ def _prepare_messages(history: List[Dict[str, Any]], prompt: str, image_b64: str
 
     if current_content:
         messages.append({"role": "user", "content": current_content})
+    return messages
+
+
+def _prepare_deepseek_messages(history: List[Dict[str, Any]], prompt: str, image_b64: str, media_type: str) -> List[
+    Dict[str, Any]]:
+    """Constructs a message list specifically for DeepSeek's API quirks."""
+    # Deepseek is mostly OpenAI compatible, but let's be explicit.
+    # The key difference is ensuring the payload structure is exactly what it expects.
+    # It has been sensitive to the exact format of the 'content' list.
+    messages = []
+
+    # Process history
+    if history:
+        for msg in history[:-1]:  # All but the last message
+            role = msg.get("role", "user")
+            content_parts = []
+            if text := msg.get("text"):
+                content_parts.append({"type": "text", "text": text})
+            if img := msg.get("image_b64"):
+                m_type = msg.get("media_type", "image/png")
+                content_parts.append({"type": "image_url", "image_url": {"url": f"data:{m_type};base64,{img}"}})
+
+            if content_parts:
+                messages.append({"role": role, "content": content_parts})
+
+    # Process current prompt
+    current_content_parts = []
+    if prompt:
+        current_content_parts.append({"type": "text", "text": prompt})
+    if image_b64 and media_type:
+        current_content_parts.append(
+            {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}})
+
+    if current_content_parts:
+        messages.append({"role": "user", "content": current_content_parts})
 
     return messages
 
 
-async def _stream_openai_compatible(client, model, prompt, temp, image_b64, media_type, history):
-    messages = _prepare_messages(history, prompt, image_b64, media_type)
+async def _stream_openai_compatible(client, model, prompt, temp, image_b64, media_type, history, provider: str):
+    if provider == 'deepseek':
+        messages = _prepare_deepseek_messages(history, prompt, image_b64, media_type)
+    else:
+        messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
+
     stream = await client.chat.completions.create(
         model=model, messages=messages, stream=True, temperature=temp, max_tokens=4096
     )
@@ -142,30 +176,29 @@ async def _stream_openai_compatible(client, model, prompt, temp, image_b64, medi
 
 
 async def _stream_google(client, model, prompt, temp, image_b64, media_type, history):
-    # Google's API has a different format for history
     model_instance = genai.GenerativeModel(f'models/{model}')
-    chat_session = model_instance.start_chat(history=[]) # History needs to be adapted
+    # Note: Google's history format is different. This would need a specific prep function if used.
+    chat_session = model_instance.start_chat(history=[])
     content_parts = []
     if prompt: content_parts.append(prompt)
     if image_b64: content_parts.append(Image.open(io.BytesIO(base64.b64decode(image_b64))))
 
     response_stream = await chat_session.send_message_async(content_parts, stream=True,
-                                                            generation_config=genai.types.GenerationConfig(temperature=temp))
+                                                            generation_config=genai.types.GenerationConfig(
+                                                                temperature=temp))
     async for chunk in response_stream:
         if chunk.text: yield chunk.text
 
 
 async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, history):
-    messages = _prepare_messages(history, prompt, image_b64, media_type)
-    # Anthropic uses a slightly different format for image content, let's adapt
+    openai_messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
     anthropic_messages = []
-    for msg in messages:
+    for msg in openai_messages:
         anthropic_content = []
         for part in msg['content']:
             if part['type'] == 'text':
                 anthropic_content.append(part)
             elif part['type'] == 'image_url':
-                # Convert from OpenAI format to Anthropic
                 b64_data = part['image_url']['url'].split(',')[-1]
                 m_type = part['image_url']['url'].split(';')[0].split(':')[-1]
                 anthropic_content.append({
@@ -182,13 +215,11 @@ async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, 
 
 
 async def _stream_ollama(client, model, prompt, temp, image_b64, media_type, history):
-    # Ollama's format is also different, especially for history and multimodal
     messages = []
     if history:
         for msg in history[:-1]:
-            messages.append({"role": msg.get("role"), "content": msg.get("text")}) # Ollama history is simpler
+            messages.append({"role": msg.get("role"), "content": msg.get("text")})
 
-    # Current prompt
     current_message = {"role": "user", "content": prompt}
     if image_b64:
         current_message["images"] = [image_b64]
@@ -226,9 +257,16 @@ async def stream_chat_endpoint(request: StreamChatRequest):
 
     async def generator():
         try:
-            async for chunk in stream_func(client, request.model, request.prompt, request.temperature,
-                                           request.image_b64, request.media_type, request.history):
-                yield chunk
+            # Pass the provider to the stream function for specific handling
+            if request.provider in ["openai", "deepseek"]:
+                async for chunk in stream_func(client, request.model, request.prompt, request.temperature,
+                                               request.image_b64, request.media_type, request.history,
+                                               request.provider):
+                    yield chunk
+            else:
+                async for chunk in stream_func(client, request.model, request.prompt, request.temperature,
+                                               request.image_b64, request.media_type, request.history):
+                    yield chunk
         except Exception as e:
             print(f"Error streaming from {request.provider}: {e}", file=sys.stderr)
             yield f"SERVER_ERROR: {e}"
@@ -257,7 +295,6 @@ async def get_available_models_endpoint():
         models["anthropic/claude-3-opus-20240229"] = "Anthropic: Claude 3 Opus"
         models["anthropic/claude-3-haiku-20240307"] = "Anthropic: Claude 3 Haiku"
 
-    # Discover local Ollama models
     ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/tags"
     try:
         timeout = aiohttp.ClientTimeout(total=2.0)
