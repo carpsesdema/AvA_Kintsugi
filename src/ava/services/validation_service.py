@@ -7,7 +7,7 @@ from typing import Set, Dict, Any, List, Tuple
 from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
 from src.ava.services.reviewer_service import ReviewerService
-from src.ava.prompts.prompts import REFINEMENT_PROMPT  # REFINEMENT_PROMPT is an alias for INTELLIGENT_FIXER_PROMPT
+from src.ava.prompts import INTELLIGENT_FIXER_PROMPT
 from src.ava.utils.code_summarizer import CodeSummarizer
 
 
@@ -31,8 +31,6 @@ class ValidationService:
 
         self.update_status("reviewer", "working", "Analyzing error with full project context...")
 
-        # --- CONTEXT: FULL PROJECT SOURCE ---
-        # This provides the maximum possible context to the AI, just like the original working version.
         full_code_context = json.dumps(all_project_files, indent=2)
         git_diff = self.project_manager.get_git_diff()
 
@@ -41,10 +39,8 @@ class ValidationService:
             self.event_bus.emit("error_highlight_requested", self.project_manager.active_project_path / crashing_file,
                                 line_number)
 
-        # --- Ask the reviewer for the fix with the full context ---
         changes_json_str = await self.reviewer_service.review_and_correct_code(
             full_code_context=full_code_context,
-            file_summaries_string="",  # Not needed since we send the full code
             error_report=error_report,
             git_diff=git_diff
         )
@@ -58,7 +54,6 @@ class ValidationService:
             if not isinstance(files_to_commit, dict) or not files_to_commit:
                 raise ValueError("AI response was not a valid, non-empty dictionary of file changes.")
 
-            # Safety check to prevent file wiping
             for filename, content in files_to_commit.items():
                 if not content or content.isspace():
                     self.handle_error("reviewer",
@@ -68,7 +63,6 @@ class ValidationService:
             self.handle_error("reviewer", f"Failed to parse AI's fix response: {e}")
             return False
 
-        # Apply the fix
         filenames_changed = ", ".join(files_to_commit.keys())
         fix_commit_message = f"fix: AI rewrite for error in {crashing_file or 'project'}"
         self.project_manager.save_and_commit_files(files_to_commit, fix_commit_message)

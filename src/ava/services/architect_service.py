@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
 from src.ava.core.project_manager import ProjectManager
-from src.ava.prompts.prompts import (
+from src.ava.prompts import (
     HIERARCHICAL_PLANNER_PROMPT,
     MODIFICATION_PLANNER_PROMPT
 )
@@ -146,16 +146,10 @@ class ArchitectService:
             full_code_context_str = "\n\n".join(full_code_context_list)
             summaries_context_str = "\n\n".join(summaries_context_list)
 
-            # Include RAG context in the modification planner prompt if it exists
-            # The MODIFICATION_PLANNER_PROMPT doesn't have a placeholder for rag_context yet.
-            # We might need to adjust the prompt or append rag_context to the user's prompt.
-            # For now, let's assume the main `prompt` to the LLM might already be enhanced by the user if they used RAG.
-            # Or, we can add it to the "CONTEXT ON EXISTING PROJECT" section.
-            # Let's add it to the main prompt for now for simplicity.
             enhanced_prompt_for_llm = f"{prompt}\n\nADDITIONAL CONTEXT FROM KNOWLEDGE BASE:\n{rag_context}"
 
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
-                prompt=enhanced_prompt_for_llm,  # Use the enhanced prompt
+                prompt=enhanced_prompt_for_llm,
                 full_code_context=full_code_context_str,
                 file_summaries_string=summaries_context_str
             )
@@ -195,7 +189,6 @@ class ArchitectService:
 
     async def _generate_hierarchical_plan(self, prompt: str, rag_context: str) -> dict | None:
         self.log("info", "Designing project structure...")
-        # HIERARCHICAL_PLANNER_PROMPT already has {rag_context} placeholder
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
         return await self._get_plan_from_llm(plan_prompt)
 
@@ -231,7 +224,6 @@ class ArchitectService:
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
-            # GenerationCoordinator will use the combined rag_context passed here for its initial context build
             generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
             if not generated_files or len(generated_files) < len(all_filenames):
                 self.log("error",

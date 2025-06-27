@@ -1,6 +1,7 @@
+# src/ava/services/reviewer_service.py
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
-from src.ava.prompts.prompts import REFINEMENT_PROMPT
+from src.ava.prompts import REFINEMENT_PROMPT
 import json
 
 
@@ -10,7 +11,7 @@ class ReviewerService:
         self.llm_client = llm_client
 
     async def review_and_correct_code(
-            self, error_report: str, git_diff: str, full_code_context: str, file_summaries_string: str
+            self, error_report: str, git_diff: str, full_code_context: str
     ) -> str | None:
         """
         Uses an LLM with FOCUSED project context and git diff for the first fix attempt.
@@ -18,7 +19,6 @@ class ReviewerService:
         self.log("info", "Reviewer analyzing error with focused context.")
         prompt = REFINEMENT_PROMPT.format(
             full_code_context=full_code_context,
-            file_summaries_string=file_summaries_string,
             error_report=error_report,
             git_diff=git_diff
         )
