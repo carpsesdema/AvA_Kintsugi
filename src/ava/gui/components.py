@@ -14,15 +14,14 @@ class Colors:
     ELEVATED_BG = QColor("#21262d")  # Lighter grey, for elevated elements like buttons/inputs
     BORDER_DEFAULT = QColor("#30363d")  # Standard border color
 
-    # --- THIS IS THE FIX ---
     TEXT_PRIMARY = QColor("#f0f6fc")  # Brighter white for better contrast
     TEXT_SECONDARY = QColor("#8b949e")  # Grey, for secondary or muted text
 
-    # --- VIBRANT ORANGE ACCENT ---
+    # --- Accent Colors ---
     ACCENT_BLUE = QColor("#ffa500")  # Swapped blue for a vibrant orange
-
     ACCENT_GREEN = QColor("#3fb950")  # For success states
     ACCENT_RED = QColor("#f85149")  # For error states
+    ACCENT_PURPLE = QColor("#8957e5") # NEW: For Aura creative mode
 
     # Transparent background for highlighting lines in the editor
     DIFF_ADD_BG = QColor(46, 160, 67, 40)  # More subtle green highlight

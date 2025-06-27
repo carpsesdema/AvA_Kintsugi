@@ -11,6 +11,7 @@ from src.ava.core.interaction_mode import InteractionMode
 from src.ava.core.managers.service_manager import ServiceManager
 from src.ava.core.managers.window_manager import WindowManager
 from src.ava.core.managers.task_manager import TaskManager
+from src.ava.prompts import CREATIVE_ASSISTANT_PROMPT
 
 
 class WorkflowManager:
@@ -36,6 +37,43 @@ class WorkflowManager:
         self.event_bus.subscribe("execution_failed", self.handle_execution_failed)
         self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
+        self.event_bus.subscribe("aura_request_submitted", self.handle_aura_request)
+
+    def handle_aura_request(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes], image_media_type: Optional[str]):
+        """Handles a request for the Aura creative assistant."""
+        workflow_coroutine = self._run_aura_workflow(user_idea, conversation_history, image_bytes, image_media_type)
+        self.task_manager.start_ai_workflow_task(workflow_coroutine)
+
+    async def _run_aura_workflow(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes], image_media_type: Optional[str]):
+        """Runs the Aura persona workflow."""
+        self.log("info", f"Aura is processing: '{user_idea[:50]}...'")
+
+        # Format history for the prompt
+        formatted_history = "\n".join([f"{msg['role'].title()}: {msg['content']}" for msg in conversation_history])
+
+        # Prepare the full prompt for the LLM
+        aura_prompt = CREATIVE_ASSISTANT_PROMPT.format(
+            conversation_history=formatted_history,
+            user_idea=user_idea
+        )
+
+        llm_client = self.service_manager.get_llm_client()
+        provider, model = llm_client.get_model_for_role("chat") # Aura uses the chat model
+
+        if not provider or not model:
+            self.event_bus.emit("streaming_chunk", "Sorry, no 'chat' model is configured for Aura.")
+            return
+
+        self.event_bus.emit("streaming_start", "Aura")
+        try:
+            stream = llm_client.stream_chat(provider, model, aura_prompt, "chat", image_bytes, image_media_type)
+            async for chunk in stream:
+                self.event_bus.emit("streaming_chunk", chunk)
+        except Exception as e:
+            self.event_bus.emit("streaming_chunk", f"\n\nAura encountered an error: {e}")
+            self.log("error", f"Error during Aura streaming: {e}")
+        finally:
+            self.event_bus.emit("streaming_end")
 
     def handle_user_request(self, prompt: str, conversation_history: list,
                             image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None,
@@ -53,21 +91,14 @@ class WorkflowManager:
         interaction_mode = app_state_service.get_interaction_mode()
         app_state = app_state_service.get_app_state()
 
-        if stripped_prompt.startswith('/'):
-            self._handle_slash_command(stripped_prompt, app_state_service)
-            return
-
         workflow_coroutine = None
         if interaction_mode == InteractionMode.CHAT:
-            print("[WorkflowManager] Mode is CHAT. Starting general chat workflow...")
             workflow_coroutine = self._run_chat_workflow(prompt, conversation_history, image_bytes, image_media_type,
                                                          code_context)
         elif interaction_mode == InteractionMode.BUILD:
             if app_state == AppState.BOOTSTRAP:
-                print("[WorkflowManager] Mode is BUILD, State is BOOTSTRAP. Starting new project workflow...")
                 workflow_coroutine = self._run_bootstrap_workflow(prompt, image_bytes)
             elif app_state == AppState.MODIFY:
-                print("[WorkflowManager] Mode is BUILD, State is MODIFY. Starting modification workflow...")
                 workflow_coroutine = self._run_modification_workflow(prompt, image_bytes)
         else:
             self.log("error", f"Unknown interaction mode: {interaction_mode}")
@@ -123,13 +154,11 @@ class WorkflowManager:
         if rag_manager and rag_manager.rag_service:  # Ensure rag_service is available
             rag_query = prompt or "Summarize the attached code based on project documents or general knowledge."
 
-            # Query project-specific RAG
             project_rag_context = await rag_manager.rag_service.query(rag_query, target_collection="project")
             if project_rag_context and "no relevant documents found" not in project_rag_context.lower() and "not running or is unreachable" not in project_rag_context.lower():
                 final_prompt_parts.append(
                     f"USE THE FOLLOWING PROJECT-SPECIFIC CONTEXT TO INFORM YOUR ANSWER:\n--- PROJECT CONTEXT ---\n{project_rag_context}\n--- END PROJECT CONTEXT ---")
 
-            # Query global RAG
             global_rag_context = await rag_manager.rag_service.query(rag_query, target_collection="global")
             if global_rag_context and "no relevant documents found" not in global_rag_context.lower() and "not running or is unreachable" not in global_rag_context.lower():
                 final_prompt_parts.append(
@@ -142,10 +171,10 @@ class WorkflowManager:
         final_prompt = "\n\n".join(final_prompt_parts)
 
         chat_prompt_for_llm = final_prompt
-        if not prompt and image_bytes and not code_context:  # If only an image is provided
+        if not prompt and image_bytes and not code_context:
             chat_prompt_for_llm = "Describe this image in detail."
-        elif not prompt and not image_bytes and code_context:  # If only code context is provided
-            chat_prompt_for_llm = final_prompt  # The prompt already includes the code
+        elif not prompt and not image_bytes and code_context:
+            chat_prompt_for_llm = final_prompt
 
         self.event_bus.emit("streaming_start", "Kintsugi AvA")
         try:
@@ -157,7 +186,7 @@ class WorkflowManager:
                 self.event_bus.emit("streaming_chunk", chunk)
         except Exception as e:
             self.event_bus.emit("streaming_chunk", f"\n\nAn error occurred: {e}")
-            self.log("error", f"Error during chat streaming: {e}")  # Log the error
+            self.log("error", f"Error during chat streaming: {e}")
         finally:
             self.event_bus.emit("streaming_end")
 
@@ -188,13 +217,11 @@ class WorkflowManager:
             QMessageBox.critical(None, "Project Creation Failed", "Could not create temporary project directory.")
             return
 
-        # Switch RAG context to this new project (it will be empty initially)
         rag_manager = self.service_manager.get_rag_manager()
         if rag_manager:
             await rag_manager.switch_project_context(Path(project_path))
 
         architect_service = self.service_manager.get_architect_service()
-        # generate_or_modify in ArchitectService will now handle querying both RAGs
         generation_success = await architect_service.generate_or_modify(final_prompt, existing_files=None)
 
         if generation_success:
@@ -226,25 +253,7 @@ class WorkflowManager:
 
         existing_files = project_manager.get_project_files()
         architect_service = self.service_manager.get_architect_service()
-        # generate_or_modify in ArchitectService will now handle querying both RAGs
         await architect_service.generate_or_modify(final_prompt, existing_files)
-
-    def _handle_slash_command(self, command: str, app_state_service):
-        parts = command.strip().split(' ', 1)
-        command_name = parts[0].lower()
-        args = parts[1] if len(parts) > 1 else ""
-        if command_name == "/new":
-            if not args:
-                self.log("warning", "Usage: /new <description of new project>")
-                return
-            app_state_service.set_interaction_mode(InteractionMode.BUILD)
-            self.task_manager.start_ai_workflow_task(self._run_bootstrap_workflow(args))
-        elif command_name == "/build":
-            app_state_service.set_interaction_mode(InteractionMode.BUILD)
-        elif command_name == "/chat":
-            app_state_service.set_interaction_mode(InteractionMode.CHAT)
-        else:
-            self.log("error", f"Unknown command: {command_name}")
 
     def _on_session_cleared(self):
         """Resets the state of this manager when a new session is started."""

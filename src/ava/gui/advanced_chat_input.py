@@ -1,7 +1,7 @@
 import io
 from typing import Optional, Dict
 
-from PySide6.QtCore import Qt, Signal, QBuffer, QIODevice
+from PySide6.QtCore import Qt, Signal, QBuffer, QIODevice, QByteArray
 from PySide6.QtGui import QImage, QKeySequence, QTextCursor, QPixmap
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLabel, QPushButton, QFrame
 import qtawesome as qta
@@ -57,7 +57,8 @@ class AdvancedChatInput(QWidget):
         main_layout.setSpacing(8)
 
         # --- Code Context Preview (hidden by default) ---
-        self.code_context_preview = self._create_context_widget("code_context", "fa5s.file-code", "Code Context Attached")
+        self.code_context_preview = self._create_context_widget("code_context", "fa5s.file-code",
+                                                                "Code Context Attached")
         main_layout.addWidget(self.code_context_preview)
         self.code_context_preview.hide()
 
@@ -85,7 +86,7 @@ class AdvancedChatInput(QWidget):
         self.text_input.setFont(Typography.body())
         self.text_input.setStyleSheet("border: none; background-color: transparent;")
         self.text_input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.text_input.setFixedHeight(40) # Start with a reasonable height
+        self.text_input.setFixedHeight(40)  # Start with a reasonable height
         self.text_input.textChanged.connect(self._adjust_input_height)
         self.text_input.image_pasted.connect(self._on_image_pasted)
         self.text_input.send_message_requested.connect(self._on_send)
@@ -151,7 +152,18 @@ class AdvancedChatInput(QWidget):
 
     def _on_image_pasted(self, image: QImage):
         self._attached_image = image
-        self._attached_media_type = "image/png"
+        self._attached_media_type = "image/png"  # Assume PNG for pasted images
+
+        # Update the preview
+        preview_label = self.image_preview.property("text_label")
+        if preview_label:
+            pixmap = QPixmap.fromImage(image)
+            # Create a thumbnail for the text label
+            thumbnail = pixmap.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio,
+                                      Qt.TransformationMode.SmoothTransformation)
+            preview_label.setPixmap(thumbnail)
+            preview_label.setText("")  # Clear the "Image Attached" text
+
         self.image_preview.show()
         self.text_input.setFocus()
 
@@ -166,6 +178,13 @@ class AdvancedChatInput(QWidget):
     def _clear_image_attachment(self):
         self._attached_image = None
         self._attached_media_type = None
+
+        # Reset the preview widget to its default state
+        preview_label = self.image_preview.property("text_label")
+        if preview_label:
+            preview_label.setPixmap(QPixmap())  # Clear the image
+            preview_label.setText("Image Attached")  # Restore the text
+
         self.image_preview.hide()
         self.text_input.setFocus()
 
@@ -182,7 +201,12 @@ class AdvancedChatInput(QWidget):
             buffer = QBuffer()
             buffer.open(QIODevice.OpenModeFlag.WriteOnly)
             self._attached_image.save(buffer, "PNG")
-            image_bytes = bytes(buffer.data())
+            # --- THIS IS THE FIX ---
+            # QBuffer.data() returns a QByteArray, which can be directly
+            # converted to bytes. This silences the type checker warning.
+            image_data: QByteArray = buffer.data()
+            image_bytes = bytes(image_data)
+            # --- END OF FIX ---
 
         if text or image_bytes or self._code_context:
             self.message_sent.emit(text, image_bytes, self._attached_media_type, self._code_context)
