@@ -21,22 +21,34 @@ class ActionService:
     This includes project management and session control.
     """
 
-    def __init__(self, event_bus: EventBus, service_manager: "ServiceManager", window_manager: "WindowManager", task_manager: "TaskManager"):
+    def __init__(self, event_bus: EventBus, service_manager: "ServiceManager", window_manager: "WindowManager",
+                 task_manager: "TaskManager"):
         self.event_bus = event_bus
         self.service_manager = service_manager
         self.window_manager = window_manager
         self.task_manager = task_manager
+        # Set the project manager on the chat interface once it's available
+        if self.window_manager and self.window_manager.get_main_window() and self.service_manager:
+            self.window_manager.get_main_window().chat_interface.set_project_manager(
+                self.service_manager.get_project_manager()
+            )
         print("[ActionService] Initialized")
 
     def handle_build_prompt_from_chat(self, prompt_text: str):
         """Switches to Build mode and populates the chat input with the given text."""
         self.log("info", "Switching to Build mode from chat context.")
-        app_state_service = self.service_manager.get_app_state_service()
-        if app_state_service:
-            app_state_service.set_interaction_mode(InteractionMode.BUILD)
         if self.window_manager:
             main_window = self.window_manager.get_main_window()
             if main_window and hasattr(main_window, 'chat_interface'):
+                # Deactivate Aura mode if it's on
+                if main_window.chat_interface.is_aura_active:
+                    main_window.chat_interface.aura_toggle.setChecked(False)
+
+                # Set to build mode
+                main_window.chat_interface.mode_toggle.setMode(InteractionMode.BUILD)
+                self.event_bus.emit("interaction_mode_change_requested", InteractionMode.BUILD)
+
+                # Set the text
                 chat_input = main_window.chat_interface.input_widget
                 chat_input.set_text_and_focus(prompt_text)
 
@@ -54,7 +66,6 @@ class ActionService:
             return
 
         project_path = Path(project_path_str)
-        self.event_bus.emit("chat_cleared", "New project created. Chat history cleared.")
         asyncio.create_task(rag_manager.switch_project_context(project_path))
 
         app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
@@ -74,7 +85,6 @@ class ActionService:
             project_path_str = project_manager.load_project(path)
             if project_path_str:
                 project_path = Path(project_path_str)
-                self.event_bus.emit("chat_cleared", f"Loaded project '{project_path.name}'. Chat history cleared.")
                 asyncio.create_task(rag_manager.switch_project_context(project_path))
 
                 branch_name = project_manager.begin_modification_session()
@@ -88,10 +98,7 @@ class ActionService:
         """Handles the 'New Session' button click."""
         self.log("info", "Handling new session reset")
         if self.task_manager:
-            # --- THIS IS THE FIX ---
-            # Schedule the async function to run on the event loop instead of calling it directly.
             asyncio.create_task(self.task_manager.cancel_all_tasks())
-            # --- END OF FIX ---
 
         project_manager = self.service_manager.get_project_manager()
         if project_manager:
@@ -101,7 +108,9 @@ class ActionService:
         if app_state_service:
             app_state_service.set_app_state(AppState.BOOTSTRAP)
 
-        self.event_bus.emit("chat_cleared")
+        # Also ensure Aura is turned off
+        if self.window_manager and self.window_manager.get_main_window():
+            self.window_manager.get_main_window().chat_interface.aura_toggle.setChecked(False)
 
     def log(self, level: str, message: str):
         self.event_bus.emit("log_message_received", "ActionService", level, message)

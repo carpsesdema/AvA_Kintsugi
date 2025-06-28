@@ -52,7 +52,6 @@ class ArchitectService:
         project_rag_context = await self.rag_service.query(prompt, target_collection="project")
         global_rag_context = await self.rag_service.query(prompt, target_collection="global")
 
-        # Filter out "not found" or "unreachable" messages to avoid cluttering the LLM prompt
         valid_project_context = project_rag_context if "no relevant documents found" not in project_rag_context.lower() and "not running or is unreachable" not in project_rag_context.lower() else ""
         valid_global_context = global_rag_context if "no relevant documents found" not in global_rag_context.lower() and "not running or is unreachable" not in global_rag_context.lower() else ""
 
@@ -83,10 +82,9 @@ class ArchitectService:
         else:
             self.log("info", "Existing project detected. Generating modification plan...")
             plan = await self._generate_modification_plan(prompt, existing_files,
-                                                          combined_rag_context)  # Pass combined_rag_context here too
+                                                          combined_rag_context)
 
         if plan:
-            # Pass combined_rag_context to the coordinator as well, it might use it for initial context building.
             success = await self._execute_coordinated_generation(plan, combined_rag_context, existing_files)
         else:
             self.log("error", "Failed to generate a valid plan. Aborting generation.")
@@ -99,10 +97,6 @@ class ArchitectService:
         return success
 
     def _find_relevant_files(self, prompt: str, existing_files: Dict[str, str], top_n: int = 4) -> List[str]:
-        """
-        Finds the most relevant files from the existing project to the user's prompt.
-        This is a simple but effective keyword-based relevance scoring.
-        """
         prompt_keywords = set(re.findall(r'\b\w+\b', prompt.lower()))
         if not prompt_keywords:
             return list(existing_files.keys())[:top_n]
@@ -110,10 +104,8 @@ class ArchitectService:
         scored_files = []
         for filename, content in existing_files.items():
             score = 0
-            # Heavily weight matches in the filename
             if any(keyword in filename.lower() for keyword in prompt_keywords):
                 score += 10
-            # Score based on keyword count in content
             content_lower = content.lower()
             for keyword in prompt_keywords:
                 score += content_lower.count(keyword)
@@ -127,7 +119,7 @@ class ArchitectService:
         return list(relevant_set)
 
     async def _generate_modification_plan(self, prompt: str, existing_files: dict,
-                                          rag_context: str) -> dict | None:  # Added rag_context
+                                          rag_context: str) -> dict | None:
         self.log("info", "Analyzing existing files to create a modification plan...")
         try:
             relevant_filenames = self._find_relevant_files(prompt, existing_files)
@@ -202,7 +194,7 @@ class ArchitectService:
             async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt, "architect"):
                 raw_plan_response += chunk
             plan = self._parse_json_response(raw_plan_response)
-            if not plan or not plan.get("files"):
+            if not plan or not isinstance(plan.get("files"), list):
                 raise ValueError("AI did not return a valid file plan in JSON format.")
             self.log("success", f"Plan created: {len(plan['files'])} file(s).")
             return plan
@@ -218,18 +210,32 @@ class ArchitectService:
         try:
             is_modification = existing_files is not None
             files_to_generate = plan.get("files", [])
+            if not files_to_generate:
+                self.log("warning", "Architect created an empty plan. Nothing to generate.")
+                return True  # Technically successful, as there was nothing to do.
+
             project_root = self.project_manager.active_project_path
             all_filenames = [f['filename'] for f in files_to_generate]
             self.event_bus.emit("prepare_for_generation", all_filenames, str(project_root), is_modification)
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
+
             generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
-            if not generated_files or len(generated_files) < len(all_filenames):
-                self.log("error",
-                         f"Generation failed. Expected {len(all_filenames)} files, but got {len(generated_files)}.")
+
+            if not generated_files:
+                self.log("error", "Generation coordinator returned no files.")
                 return False
-            commit_message = f"feat: AI-driven changes for '{plan['files'][0]['purpose'][:50]}...'"
+
+            # --- THIS IS THE FIX ---
+            # Check if there are any files in the plan before creating the commit message.
+            if plan.get("files"):
+                first_purpose = plan["files"][0].get("purpose", "AI-driven changes")
+                commit_message = f"feat: {first_purpose[:50]}..."
+            else:
+                commit_message = "feat: AI-driven changes"
+            # --- END OF FIX ---
+
             self.project_manager.save_and_commit_files(generated_files, commit_message)
             self.log("success", "Project changes committed successfully.")
             self.event_bus.emit("code_generation_complete", generated_files)

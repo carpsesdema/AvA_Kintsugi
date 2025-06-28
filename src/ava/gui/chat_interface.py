@@ -118,6 +118,7 @@ class ChatInterface(QWidget):
     def __init__(self, event_bus: EventBus, project_root: Path):
         super().__init__()
         self.event_bus = event_bus
+        self.project_manager = None  # Will be set by ServiceManager via ActionService
         self.project_root = project_root
         self.conversation_history = []
         self.streaming_message_widget = None
@@ -155,6 +156,9 @@ class ChatInterface(QWidget):
         self._setup_event_subscriptions()
         self._add_message({"role": "assistant", "text": "Hello! Let's build something amazing from scratch."},
                           is_feedback=True)
+
+    def set_project_manager(self, pm):
+        self.project_manager = pm
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
@@ -247,6 +251,11 @@ class ChatInterface(QWidget):
         self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
 
     def _on_app_state_changed(self, new_state: AppState, project_name: str = None):
+        if new_state == AppState.MODIFY and self.project_manager and self.project_manager.active_project_path:
+            self.load_session(project_specific=True)
+        else:
+            self.clear_chat("New session started.")
+
         if self.is_aura_active: return
         if new_state == AppState.BOOTSTRAP:
             self.input_widget.setPlaceholderText("Describe the new application you want to build...")
@@ -267,14 +276,7 @@ class ChatInterface(QWidget):
     def _on_aura_toggled(self, is_checked: bool):
         self.is_aura_active = is_checked
         self.mode_toggle.setEnabled(not is_checked)
-        if is_checked:
-            self.clear_chat(initial_message="Aura activated! ✨ What great idea is on your mind today?")
-            self.input_widget.setPlaceholderText("Describe your idea to Aura...")
-        else:
-            self.clear_chat(initial_message="Aura deactivated. Resuming normal operation.")
-            app_state_service = self.service_manager.get_app_state_service()
-            if app_state_service:
-                self._on_app_state_changed(app_state_service.get_app_state())
+        self.load_session(project_specific=True)  # Load project-specific session for Aura or regular chat
 
     def _on_interaction_mode_changed(self, new_mode: InteractionMode, is_state_change: bool = False):
         if self.is_aura_active: return
@@ -314,6 +316,9 @@ class ChatInterface(QWidget):
         else:
             self.event_bus.emit("user_request_submitted", text, self.conversation_history, image_bytes,
                                 image_media_type, code_context)
+
+        # Auto-save after sending a message
+        self.save_session(project_specific=True, silent=True)
 
     def _add_message(self, message_data: dict, is_feedback: bool = False, image_override: Optional[QImage] = None):
         role = message_data.get("role", "assistant")
@@ -363,6 +368,7 @@ class ChatInterface(QWidget):
 
                 self.conversation_history.append(final_message_data)
             self.streaming_message_widget = None
+            self.save_session(project_specific=True, silent=True)
 
     def clear_chat(self, initial_message: str = "New session started."):
         while self.bubble_layout.count() > 1:
@@ -373,33 +379,76 @@ class ChatInterface(QWidget):
         if initial_message:
             self._add_message({"role": "assistant", "text": initial_message}, is_feedback=True)
 
-    def save_session(self):
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Chat Session", "", "JSON Files (*.json)")
-        if not file_path: return
-        session_data = {"schema_version": "1.1", "saved_at": datetime.now().isoformat(),
+    def get_session_filepath(self, project_specific: bool) -> Optional[Path]:
+        if project_specific:
+            if not self.project_manager or not self.project_manager.active_project_path:
+                return None
+
+            project_dir = self.project_manager.active_project_path
+            sessions_dir = project_dir / ".ava_sessions"
+            sessions_dir.mkdir(exist_ok=True)
+
+            filename = "aura_chat.json" if self.is_aura_active else "main_chat.json"
+            return sessions_dir / filename
+        else:
+            # Fallback for manual saving
+            return None
+
+    def save_session(self, project_specific: bool = False, silent: bool = False):
+        file_path = self.get_session_filepath(project_specific)
+        if not file_path:
+            if not silent:  # Ask user for location only if it's a manual save
+                file_path_str, _ = QFileDialog.getSaveFileName(self, "Save Chat Session", "", "JSON Files (*.json)")
+                if not file_path_str: return
+                file_path = Path(file_path_str)
+            else:
+                return
+
+        session_data = {"schema_version": "1.2", "saved_at": datetime.now().isoformat(),
                         "conversation_history": self.conversation_history, "is_aura_session": self.is_aura_active}
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(session_data, f, indent=2)
-            QMessageBox.information(self, "Success", "Chat session saved successfully.")
+            if not silent:
+                QMessageBox.information(self, "Success", "Chat session saved successfully.")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save chat session: {e}")
+            if not silent:
+                QMessageBox.critical(self, "Error", f"Failed to save chat session: {e}")
 
-    def load_session(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Load Chat Session", "", "JSON Files (*.json)")
-        if not file_path: return
+    def load_session(self, project_specific: bool = False):
+        file_path = self.get_session_filepath(project_specific)
+        if not file_path:
+            if not project_specific:  # Ask user for location only if it's a manual load
+                file_path_str, _ = QFileDialog.getOpenFileName(self, "Load Chat Session", "", "JSON Files (*.json)")
+                if not file_path_str: return
+                file_path = Path(file_path_str)
+            else:
+                # If project-specific and no file, just clear chat
+                initial_message = "Aura activated! ✨ What great idea is on your mind today?" if self.is_aura_active else "New session started."
+                self.clear_chat(initial_message)
+                return
+
+        if not file_path.exists():
+            initial_message = "Aura activated! ✨ What great idea is on your mind today?" if self.is_aura_active else "New session started."
+            self.clear_chat(initial_message)
+            return
+
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 session_data = json.load(f)
-            if "conversation_history" not in session_data:
-                raise ValueError("Invalid session file: 'conversation_history' key not found.")
 
-            self.is_aura_active = session_data.get("is_aura_session", False)
+            self.is_aura_active = session_data.get("is_aura_session", self.is_aura_active)
             self.aura_toggle.setChecked(self.is_aura_active)
 
             self.clear_chat(None)
-            for message_data in session_data["conversation_history"]:
+            self.conversation_history = session_data.get("conversation_history", [])
+            for message_data in self.conversation_history:
                 self._add_message(message_data, is_feedback=True)
-            QMessageBox.information(self, "Success", "Chat session loaded successfully.")
+
+            if not project_specific:
+                QMessageBox.information(self, "Success", "Chat session loaded successfully.")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load chat session: {e}")
+            if not project_specific:
+                QMessageBox.critical(self, "Error", f"Failed to load chat session: {e}")
+            else:
+                self.log("error", f"Failed to auto-load session from {file_path}: {e}")
