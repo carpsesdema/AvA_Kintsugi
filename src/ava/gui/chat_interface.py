@@ -289,7 +289,7 @@ class ChatInterface(QWidget):
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
         self.event_bus.subscribe("user_request_submitted", self.show_thinking_indicator)
         self.event_bus.subscribe("streaming_end", self.hide_thinking_indicator)
-        self.event_bus.subscribe("ai_fix_workflow_complete", self.hide_thinking_indicator)
+        self.event_bus.subscribe("ai_workflow_finished", self.hide_thinking_indicator)
 
     def show_thinking_indicator(self, *args):
         self.thinking_panel.show()
@@ -301,7 +301,11 @@ class ChatInterface(QWidget):
         self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
 
     def _on_app_state_changed(self, new_state: AppState, project_name: str = None):
-        """Only updates UI elements based on project state; does NOT reload the chat session."""
+        """
+        Handles high-level project state changes. This should ONLY update UI elements
+        that depend on the project name, like the placeholder text. It must NOT
+        reload the session, as that wipes the current in-memory conversation.
+        """
         if self.mode_toggle._current_mode == InteractionMode.BUILD:
             if new_state == AppState.BOOTSTRAP:
                 self.input_widget.setPlaceholderText("Describe the new application you want to build...")
