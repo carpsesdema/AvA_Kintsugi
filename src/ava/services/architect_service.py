@@ -96,54 +96,55 @@ class ArchitectService:
             self.handle_error("coder", "Code generation failed.")
         return success
 
-    def _find_relevant_files(self, prompt: str, existing_files: Dict[str, str], top_n: int = 4) -> List[str]:
+    def _find_relevant_files(self, prompt: str, existing_files: Dict[str, str], top_n: int = 5) -> str:
+        """
+        Finds the most relevant files from the existing project to the user's prompt
+        and formats them into a single string for the context.
+        """
         prompt_keywords = set(re.findall(r'\b\w+\b', prompt.lower()))
         if not prompt_keywords:
-            return list(existing_files.keys())[:top_n]
+            # If no keywords, just take the first few files
+            relevant_files = list(existing_files.items())[:top_n]
+            return "\n\n".join([f"--- File: {fn} ---\n```python\n{co}\n```" for fn, co in relevant_files])
 
         scored_files = []
         for filename, content in existing_files.items():
             score = 0
+            # Heavily weight matches in the filename
             if any(keyword in filename.lower() for keyword in prompt_keywords):
                 score += 10
+            # Score based on keyword count in content
             content_lower = content.lower()
             for keyword in prompt_keywords:
                 score += content_lower.count(keyword)
-            scored_files.append((score, filename))
+            scored_files.append((score, filename, content))
 
         scored_files.sort(key=lambda x: x[0], reverse=True)
 
-        relevant_set = {filename for score, filename in scored_files[:top_n]}
-        if 'main.py' in existing_files:
-            relevant_set.add('main.py')
-        return list(relevant_set)
+        # Always include main.py if it exists, as it's often a crucial entry point
+        if 'main.py' in existing_files and not any(f[1] == 'main.py' for f in scored_files[:top_n]):
+            main_content = existing_files['main.py']
+            scored_files.insert(0, (999, 'main.py', main_content))  # Give it a high score to ensure inclusion
+
+        # Take the top N files
+        top_files = scored_files[:top_n]
+
+        self.log("info", f"Identified most relevant files for context: {[f[1] for f in top_files]}")
+
+        return "\n\n".join(
+            [f"--- File: {filename} ---\n```python\n{content}\n```" for score, filename, content in top_files])
 
     async def _generate_modification_plan(self, prompt: str, existing_files: dict,
                                           rag_context: str) -> dict | None:
         self.log("info", "Analyzing existing files to create a modification plan...")
         try:
-            relevant_filenames = self._find_relevant_files(prompt, existing_files)
-            self.log("info", f"Identified most relevant files for full code context: {relevant_filenames}")
-
-            full_code_context_list = []
-            summaries_context_list = []
-
-            for filename, content in sorted(existing_files.items()):
-                if filename in relevant_filenames:
-                    full_code_context_list.append(f"--- File: {filename} ---\n```python\n{content}\n```")
-                else:
-                    summary = CodeSummarizer(content).summarize() if filename.endswith('.py') else "// Non-Python file"
-                    summaries_context_list.append(f"### File: `{filename}`\n```\n{summary}\n```")
-
-            full_code_context_str = "\n\n".join(full_code_context_list)
-            summaries_context_str = "\n\n".join(summaries_context_list)
+            full_code_context_str = self._find_relevant_files(prompt, existing_files)
 
             enhanced_prompt_for_llm = f"{prompt}\n\nADDITIONAL CONTEXT FROM KNOWLEDGE BASE:\n{rag_context}"
 
             plan_prompt = MODIFICATION_PLANNER_PROMPT.format(
                 prompt=enhanced_prompt_for_llm,
-                full_code_context=full_code_context_str,
-                file_summaries_string=summaries_context_str
+                full_code_context=full_code_context_str
             )
 
             plan = await self._get_plan_from_llm(plan_prompt)
@@ -151,10 +152,7 @@ class ArchitectService:
             if plan:
                 plan = self._sanitize_plan_paths(plan)
 
-            if not plan or not isinstance(plan.get("files"), list):
-                self.log("error", "The AI's modification plan was invalid or missing the 'files' list.")
-                return None
-            return plan
+            return plan  # Return plan even if it's None, to be handled by the caller
         except Exception as e:
             self.handle_error("architect", f"An unexpected error during modification planning: {e}")
             import traceback
@@ -194,8 +192,13 @@ class ArchitectService:
             async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt, "architect"):
                 raw_plan_response += chunk
             plan = self._parse_json_response(raw_plan_response)
+
+            # --- Robustness Check ---
             if not plan or not isinstance(plan.get("files"), list):
+                self.log("error", "The AI's plan was invalid or missing the 'files' list.", raw_plan_response)
                 raise ValueError("AI did not return a valid file plan in JSON format.")
+            # --- End Robustness Check ---
+
             self.log("success", f"Plan created: {len(plan['files'])} file(s).")
             return plan
         except (json.JSONDecodeError, ValueError) as e:
@@ -210,9 +213,12 @@ class ArchitectService:
         try:
             is_modification = existing_files is not None
             files_to_generate = plan.get("files", [])
+
+            # --- Robustness Check ---
             if not files_to_generate:
                 self.log("warning", "Architect created an empty plan. Nothing to generate.")
-                return True  # Technically successful, as there was nothing to do.
+                return True
+                # --- End Robustness Check ---
 
             project_root = self.project_manager.active_project_path
             all_filenames = [f['filename'] for f in files_to_generate]
@@ -227,14 +233,8 @@ class ArchitectService:
                 self.log("error", "Generation coordinator returned no files.")
                 return False
 
-            # --- THIS IS THE FIX ---
-            # Check if there are any files in the plan before creating the commit message.
-            if plan.get("files"):
-                first_purpose = plan["files"][0].get("purpose", "AI-driven changes")
-                commit_message = f"feat: {first_purpose[:50]}..."
-            else:
-                commit_message = "feat: AI-driven changes"
-            # --- END OF FIX ---
+            first_purpose = plan["files"][0].get("purpose", "AI-driven changes")
+            commit_message = f"feat: {first_purpose[:50]}..."
 
             self.project_manager.save_and_commit_files(generated_files, commit_message)
             self.log("success", "Project changes committed successfully.")

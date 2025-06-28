@@ -66,18 +66,7 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent(f"""
 
     ---
     **CONTEXT ON EXISTING PROJECT:**
-
-    **1. FULL SOURCE OF HIGHLY RELEVANT FILES:**
-    The following files are the most relevant to the user's request. You MUST use them as your primary reference for style, libraries, and architecture.
-    ```
     {{full_code_context}}
-    ```
-
-    **2. SUMMARIES OF OTHER PROJECT FILES:**
-    This provides a broad overview of the rest of the project for general awareness.
-    ```
-    {{file_summaries_string}}
-    ```
     ---
 
     **MODIFICATION DIRECTIVES (UNBREAKABLE LAWS):**
@@ -85,8 +74,25 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent(f"""
     2.  **USE EXISTING FILE PATHS:** When planning to modify a file, you MUST use its exact existing path.
     3.  **CREATE NEW FILES LOGICALLY:** If new files are required, their path and purpose must align with the existing project structure.
     4.  **CONCISE PURPOSE:** For each file in your plan, write a clear, one-sentence "purpose" explaining the high-level goal of the changes.
+    5.  **OUTPUT FORMAT:** Your response MUST be ONLY a valid JSON object with a single key "files". The value should be a list of file objects.
 
     {JSON_OUTPUT_RULE}
+
+    **EXAMPLE OF CORRECT MODIFICATION PLAN OUTPUT:**
+    ```json
+    {{{{
+        "files": [
+            {{{{
+                "filename": "utils/api_client.py",
+                "purpose": "Add a new method for handling POST requests."
+            }}}},
+            {{{{
+                "filename": "main.py",
+                "purpose": "Update the main function to use the new POST request method."
+            }}}}
+        ]
+    }}}}
+    ```
 
     **Generate the JSON modification plan now.**
     """)
