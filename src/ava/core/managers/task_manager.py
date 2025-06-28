@@ -118,7 +118,7 @@ class TaskManager:
             QMessageBox.critical(main_window, "Workflow Error",
                                  f"The AI workflow failed unexpectedly.\n\nError: {e}")
         finally:
-            self.event_bus.emit("ai_fix_workflow_complete")
+            self.event_bus.emit("ai_workflow_finished")
 
     def _on_terminal_task_done(self, task: asyncio.Task, session_id: int):
         """Handle terminal task completion."""

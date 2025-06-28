@@ -39,7 +39,6 @@ class WorkflowManager:
         self.event_bus.subscribe("execution_failed", self.handle_execution_failed)
         self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
-        self.event_bus.subscribe("aura_request_submitted", self.handle_aura_request)
         self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
 
     def _on_code_generation_complete(self, generated_files: Dict[str, str]):
@@ -47,19 +46,21 @@ class WorkflowManager:
         self.log("info", f"WorkflowManager captured {len(generated_files)} generated files for Aura's context.")
         self._last_generated_code = generated_files
 
-    def handle_aura_request(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes],
-                            image_media_type: Optional[str]):
-        """Handles a request for the Aura creative assistant."""
-        workflow_coroutine = self._run_aura_workflow(user_idea, conversation_history, image_bytes, image_media_type)
-        self.task_manager.start_ai_workflow_task(workflow_coroutine)
-
     async def _run_aura_workflow(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes],
                                  image_media_type: Optional[str]):
         """Runs the Aura persona workflow."""
         self.log("info", f"Aura is processing: '{user_idea[:50]}...'")
 
+        # --- THIS IS THE FIX ---
+        # The conversation_history from the UI includes the user's latest message.
+        # The prompt wants the history *before* the latest message, and the latest message separately.
+        history_for_prompt = conversation_history[:-1] if conversation_history else []
         formatted_history = "\n".join(
-            [f"{msg['role'].title()}: {msg.get('content', '')}" for msg in conversation_history])
+            # Use sender for assistant, role for user for a clear history format
+            [f"{msg.get('sender', msg.get('role', 'unknown')).title()}: {msg.get('text', '') or msg.get('content', '')}"
+             for msg in history_for_prompt]
+        )
+        # --- END OF FIX ---
 
         # Determine which prompt to use: initial creation or refinement
         if self._last_generated_code:
@@ -113,8 +114,8 @@ class WorkflowManager:
 
         workflow_coroutine = None
         if interaction_mode == InteractionMode.CHAT:
-            workflow_coroutine = self._run_chat_workflow(prompt, conversation_history, image_bytes, image_media_type,
-                                                         code_context)
+            # Chat mode now directly triggers the Aura workflow.
+            workflow_coroutine = self._run_aura_workflow(prompt, conversation_history, image_bytes, image_media_type)
         elif interaction_mode == InteractionMode.BUILD:
             if app_state == AppState.BOOTSTRAP:
                 self._last_generated_code = None  # Clear old code for new project
@@ -152,64 +153,6 @@ class WorkflowManager:
         except Exception as e:
             self.log("error", f"Failed to get description from image: {e}")
             return ""
-
-    async def _run_chat_workflow(self, prompt: str, conversation_history: list,
-                                 image_bytes: Optional[bytes], image_media_type: Optional[str],
-                                 code_context: Optional[Dict[str, str]]):
-        """Runs a simple, streaming chat interaction with the LLM."""
-        if not self.service_manager: return
-        llm_client = self.service_manager.get_llm_client()
-        provider, model = llm_client.get_model_for_role("chat")
-
-        if not provider or not model:
-            self.event_bus.emit("streaming_chunk", "Sorry, no 'chat' model is configured.")
-            return
-
-        final_prompt_parts = []
-        if code_context:
-            filename, content = list(code_context.items())[0]
-            final_prompt_parts.append(
-                f"Please analyze the following code from the file `{filename}`.\n--- CODE ---\n```python\n{content}\n```\n--- END CODE ---")
-
-        rag_manager = self.service_manager.get_rag_manager()
-        if rag_manager and rag_manager.rag_service:
-            rag_query = prompt or "Summarize the attached code based on project documents or general knowledge."
-
-            project_rag_context = await rag_manager.rag_service.query(rag_query, target_collection="project")
-            if project_rag_context and "no relevant documents found" not in project_rag_context.lower() and "not running or is unreachable" not in project_rag_context.lower():
-                final_prompt_parts.append(
-                    f"USE THE FOLLOWING PROJECT-SPECIFIC CONTEXT TO INFORM YOUR ANSWER:\n--- PROJECT CONTEXT ---\n{project_rag_context}\n--- END PROJECT CONTEXT ---")
-
-            global_rag_context = await rag_manager.rag_service.query(rag_query, target_collection="global")
-            if global_rag_context and "no relevant documents found" not in global_rag_context.lower() and "not running or is unreachable" not in global_rag_context.lower():
-                final_prompt_parts.append(
-                    f"USE THE FOLLOWING GENERAL PYTHON EXAMPLES & BEST PRACTICES (GLOBAL CONTEXT) TO INFORM YOUR ANSWER:\n--- GLOBAL CONTEXT ---\n{global_rag_context}\n--- END GLOBAL CONTEXT ---")
-
-        else:
-            self.log("warning", "RAGManager or RAGService not available for chat workflow.")
-
-        final_prompt_parts.append(f"User's Question: {prompt if prompt else 'Please review the attached code.'}")
-        final_prompt = "\n\n".join(final_prompt_parts)
-
-        chat_prompt_for_llm = final_prompt
-        if not prompt and image_bytes and not code_context:
-            chat_prompt_for_llm = "Describe this image in detail."
-        elif not prompt and not image_bytes and code_context:
-            chat_prompt_for_llm = final_prompt
-
-        self.event_bus.emit("streaming_start", "Kintsugi AvA")
-        try:
-            stream = llm_client.stream_chat(
-                provider, model, chat_prompt_for_llm, "chat",
-                image_bytes, image_media_type, history=conversation_history
-            )
-            async for chunk in stream:
-                self.event_bus.emit("streaming_chunk", chunk)
-        except Exception as e:
-            self.event_bus.emit("streaming_chunk", f"\n\nAn error occurred: {e}")
-            self.log("error", f"Error during chat streaming: {e}")
-        finally:
-            self.event_bus.emit("streaming_end")
 
     async def _run_bootstrap_workflow(self, prompt: str, image_bytes: Optional[bytes] = None):
         """Runs the workflow to create a new project from a prompt or an image description."""

@@ -16,11 +16,11 @@ class ModeToggle(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(150, 34)  # Increased size for better spacing
+        self.setFixedSize(180, 34)
         self.setCursor(Qt.PointingHandCursor)
 
         self._current_mode = InteractionMode.BUILD
-        self._circle_position = 112  # Adjusted start on "Build" side
+        self._circle_position = 92
 
         # Animation for the toggle
         self.animation = QPropertyAnimation(self, b"circle_position")
@@ -40,7 +40,7 @@ class ModeToggle(QWidget):
         """Programmatically set the mode."""
         self._current_mode = mode
 
-        target_pos = 112 if mode == InteractionMode.BUILD else 4
+        target_pos = 92 if mode == InteractionMode.BUILD else 4
 
         if animate:
             self.animation.stop()
@@ -75,9 +75,9 @@ class ModeToggle(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
 
         if self._current_mode == InteractionMode.CHAT:
-            painter.drawRoundedRect(2, 2, 72, 30, 14, 14)
+            painter.drawRoundedRect(2, 2, 88, 30, 14, 14)
         else:
-            painter.drawRoundedRect(76, 2, 72, 30, 14, 14)
+            painter.drawRoundedRect(90, 2, 88, 30, 14, 14)
 
         # Draw text labels
         painter.setFont(Typography.get_font(10, QFont.Weight.Bold))
@@ -85,9 +85,9 @@ class ModeToggle(QWidget):
         # Chat Label
         chat_color = Colors.TEXT_PRIMARY if self._current_mode == InteractionMode.CHAT else Colors.TEXT_SECONDARY
         painter.setPen(chat_color)
-        painter.drawText(10, 0, 60, self.height(), Qt.AlignmentFlag.AlignCenter, "Chat")
+        painter.drawText(10, 0, 80, self.height(), Qt.AlignmentFlag.AlignCenter, "Aura Chat")
 
         # Build Label
         build_color = Colors.TEXT_PRIMARY if self._current_mode == InteractionMode.BUILD else Colors.TEXT_SECONDARY
         painter.setPen(build_color)
-        painter.drawText(80, 0, 60, self.height(), Qt.AlignmentFlag.AlignCenter, "Build")
+        painter.drawText(90, 0, 80, self.height(), Qt.AlignmentFlag.AlignCenter, "Build")

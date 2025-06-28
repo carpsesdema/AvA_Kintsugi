@@ -27,8 +27,9 @@ class ActionService:
         self.service_manager = service_manager
         self.window_manager = window_manager
         self.task_manager = task_manager
-        # Set the project manager on the chat interface once it's available
-        if self.window_manager and self.window_manager.get_main_window() and self.service_manager:
+
+        # This needs to be deferred until managers are set in EventCoordinator
+        if self.window_manager and self.window_manager.get_main_window() and self.service_manager and self.service_manager.get_project_manager():
             self.window_manager.get_main_window().chat_interface.set_project_manager(
                 self.service_manager.get_project_manager()
             )
@@ -40,16 +41,13 @@ class ActionService:
         if self.window_manager:
             main_window = self.window_manager.get_main_window()
             if main_window and hasattr(main_window, 'chat_interface'):
-                # Deactivate Aura mode if it's on
-                if main_window.chat_interface.is_aura_active:
-                    main_window.chat_interface.aura_toggle.setChecked(False)
+                chat_interface = main_window.chat_interface
 
-                # Set to build mode
-                main_window.chat_interface.mode_toggle.setMode(InteractionMode.BUILD)
+                # Directly set the mode to BUILD. The UI will update via the event bus.
                 self.event_bus.emit("interaction_mode_change_requested", InteractionMode.BUILD)
 
-                # Set the text
-                chat_input = main_window.chat_interface.input_widget
+                # Set the prompt text in the input box
+                chat_input = chat_interface.input_widget
                 chat_input.set_text_and_focus(prompt_text)
 
     def handle_new_project(self):
@@ -67,8 +65,14 @@ class ActionService:
 
         project_path = Path(project_path_str)
         asyncio.create_task(rag_manager.switch_project_context(project_path))
-
         app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
+
+        # Explicitly tell the chat interface to reset and load the session for the new project.
+        if self.window_manager:
+            chat_interface = self.window_manager.get_main_window().chat_interface
+            if chat_interface:
+                chat_interface.load_project_session()
+
         if project_manager.repo and project_manager.repo.active_branch:
             self.event_bus.emit("branch_updated", project_manager.repo.active_branch.name)
 
@@ -91,6 +95,12 @@ class ActionService:
                 self.log("info", f"Created modification branch: {branch_name}")
                 app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
 
+                # Explicitly tell the chat interface to reset and load the session for the loaded project.
+                if self.window_manager:
+                    chat_interface = self.window_manager.get_main_window().chat_interface
+                    if chat_interface:
+                        chat_interface.load_project_session()
+
                 if project_manager.repo and project_manager.repo.active_branch:
                     self.event_bus.emit("branch_updated", project_manager.repo.active_branch.name)
 
@@ -108,9 +118,8 @@ class ActionService:
         if app_state_service:
             app_state_service.set_app_state(AppState.BOOTSTRAP)
 
-        # Also ensure Aura is turned off
         if self.window_manager and self.window_manager.get_main_window():
-            self.window_manager.get_main_window().chat_interface.aura_toggle.setChecked(False)
+            self.window_manager.get_main_window().chat_interface.clear_chat("New session started.")
 
     def log(self, level: str, message: str):
         self.event_bus.emit("log_message_received", "ActionService", level, message)
