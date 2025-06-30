@@ -42,6 +42,32 @@ class ExecutionEngine:
         if not project_dir:
             return ExecutionResult(False, "", "Execution failed: No project is active.", command)
 
+        # --- NEW GODOT-SPECIFIC LOGIC ---
+        if command.strip() == "run_godot":
+            godot_executable = os.getenv("GODOT_EXECUTABLE_PATH")
+            if not godot_executable or not Path(godot_executable).exists():
+                err_msg = "Execution failed: GODOT_EXECUTABLE_PATH is not set in your .env file or the path is invalid."
+                return ExecutionResult(False, "", err_msg, command)
+
+            # Command to launch Godot editor for the current project
+            cmd_to_run = f'"{godot_executable}" --path "{project_dir}"'
+            print(f"[ExecutionEngine] Launching Godot Editor: {cmd_to_run}")
+
+            try:
+                # For launching a GUI like Godot, we use Popen and don't wait for it to finish.
+                # We won't capture stdout/stderr as it's a separate GUI process.
+                process = subprocess.Popen(
+                    cmd_to_run,
+                    shell=True,
+                    cwd=project_dir,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                )
+                return ExecutionResult(True, f"Godot editor launched for project '{project_dir.name}'.", "", command)
+            except Exception as e:
+                err_msg = f"An unexpected error occurred while launching Godot: {e}"
+                return ExecutionResult(False, "", err_msg, command)
+        # --- END NEW LOGIC ---
+
         python_executable = self.project_manager.venv_python_path
         if not python_executable:
             error_msg = (

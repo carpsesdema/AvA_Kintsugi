@@ -1,7 +1,5 @@
 {
-  "enabled_plugins": [
-    "Creative Assistant (Aura)"
-  ],
+  "enabled_plugins": [],
   "plugin_settings": {
     "code_monitor": {
       "report_frequency": 5,

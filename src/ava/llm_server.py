@@ -285,15 +285,12 @@ async def get_available_models_endpoint():
         models["google/gemini-2.5-pro-preview-06-05"] = "Google: Gemini 2.5 Pro (Preview 6/5)"
         models["google/gemini-2.5-pro-preview-05-06"] = "Google: Gemini 2.5 Pro (Preview 5/6)"
         models["google/gemini-2.5-flash-preview-05-20"] = "Google: Gemini 2.5 Flash (Preview)"
-        models["google/gemini-2.5-pro-latest"] = "Google: Gemini 2.5 Pro (stable)"
-        models["models/gemini-2.0-flash"] = "Google: Gemini 2.0 Flash"
-        models["google/gemini-pro"] = "Google: Gemini Pro"
+        models["google/gemini-2.5-pro"] = "Google: Gemini 2.5 Pro (stable)"
+        models["google/gemini-2.0-flash"] = "Google: Gemini 2.0 Flash"
     if "anthropic" in app_state["clients"]:
-        models["anthropic/claude-3-5-sonnet-20240620"] = "Anthropic: Claude 3.5 Sonnet"
-        models["anthropic/claude-opus-4-20250514"] = "Anthropic: Claude Opus 4 (Preview)"
-        models["anthropic/claude-sonnet-4-20250514"] = "Anthropic: Claude Sonnet 4 (Preview)"
-        models["anthropic/claude-3-opus-20240229"] = "Anthropic: Claude 3 Opus"
-        models["anthropic/claude-3-haiku-20240307"] = "Anthropic: Claude 3 Haiku"
+        models["anthropic/claude-opus-4-20250514"] = "Anthropic: Claude Opus 4"
+        models["anthropic/claude-sonnet-4-20250514"] = "Anthropic: Claude Sonnet 4"
+
 
     ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/tags"
     try:

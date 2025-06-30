@@ -6,8 +6,25 @@ import textwrap
 from pathlib import Path
 
 from src.ava.core.event_bus import EventBus
-from src.ava.prompts import CODER_PROMPT, SIMPLE_FILE_PROMPT, SURGICAL_MODIFICATION_PROMPT
-from src.ava.utils.code_summarizer import CodeSummarizer
+from src.ava.prompts import CODER_PROMPT, SIMPLE_FILE_PROMPT
+from src.ava.prompts.godot import GODOT_GDSCRIPT_CODER_PROMPT, GODOT_GENERIC_FILE_PROMPT
+
+
+def create_tscn_content(node_type: str, script_path: str) -> str:
+    """
+    Programmatically creates a simple, valid .tscn file content.
+    This bypasses the LLM for scene files, guaranteeing correctness.
+    """
+    # Generate unique IDs for the resources. Godot doesn't strictly require they are random, just unique within the file.
+    script_uid = f'uid://b{abs(hash(script_path)) % (10 ** 10)}'
+
+    return f'''[gd_scene load_steps=2 format=3 uid="uid://b{abs(hash(node_type + script_path)) % (10 ** 10)}"]
+
+[ext_resource type="Script" path="res://{script_path}" id="1_{script_uid}"]
+
+[node name="{Path(script_path).stem.capitalize()}" type="{node_type}"]
+script = ExtResource("1_{script_uid}")
+'''
 
 
 class GenerationCoordinator:
@@ -37,10 +54,9 @@ class GenerationCoordinator:
                     self.log("error", f"Could not find file info for {filename} in plan. Skipping.")
                     continue
 
-                # Pass all other generated files as context, excluding the current one.
                 other_generated_files = generated_files_this_session.copy()
                 if filename in other_generated_files:
-                    del other_generated_files[filename]  # Should not happen, but for safety
+                    del other_generated_files[filename]
 
                 generated_content = await self._generate_single_file(file_info, context, other_generated_files)
 
@@ -57,7 +73,6 @@ class GenerationCoordinator:
             self.log("success",
                      f"✅ Unified generation complete: {len(generated_files_this_session)}/{total_files} files generated.")
 
-            # For modifications, we must also include the files that were NOT modified
             if existing_files:
                 final_file_set = existing_files.copy()
                 final_file_set.update(generated_files_this_session)
@@ -71,12 +86,33 @@ class GenerationCoordinator:
             traceback.print_exc()
             return {}
 
+    def _extract_node_type_from_purpose(self, purpose: str) -> str:
+        """Extracts the root node type from the architect's purpose string."""
+        match = re.search(r'(?:Root node is|Extends)\s+([A-Za-z0-9_]+)', purpose, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return "Node"  # Default to a basic Node if not found
+
     async def _generate_single_file(self, file_info: Dict[str, str], context: Any,
                                     other_generated_files: Dict[str, str]) -> Optional[str]:
         filename = file_info["filename"]
+        purpose = file_info["purpose"]
+        file_extension = Path(filename).suffix
 
-        if filename.endswith('.py'):
+        # --- THIS IS THE NEW LOGIC ---
+        if file_extension == '.tscn':
+            self.log("info", f"Programmatically generating placeholder scene for {filename}")
+            node_type = self._extract_node_type_from_purpose(purpose)
+            script_path = filename.replace('.tscn', '.gd')
+            return create_tscn_content(node_type, script_path)
+        # --- END OF NEW LOGIC ---
+
+        if file_extension == '.py':
             prompt = self._build_python_coder_prompt(file_info, context, other_generated_files)
+        elif file_extension == '.gd':
+            prompt = self._build_gdscript_coder_prompt(file_info, context)
+        elif file_extension in ['.godot', '.import', '.svg']:
+            prompt = self._build_godot_generic_prompt(file_info, context)
         else:
             prompt = self._build_simple_file_prompt(file_info, context, other_generated_files)
 
@@ -97,10 +133,8 @@ class GenerationCoordinator:
 
     def _build_python_coder_prompt(self, file_info: Dict[str, str], context: Any,
                                    other_generated_files: Dict[str, str]) -> str:
-
         filename = file_info["filename"]
         is_modification = filename in (context.existing_files or {})
-
         original_code_section = ""
         if is_modification:
             original_code = context.existing_files.get(filename, "")
@@ -111,11 +145,9 @@ class GenerationCoordinator:
                 {original_code}
                 ```
             """)
-
         python_files_this_session = {
             fname: code for fname, code in other_generated_files.items() if fname.endswith('.py')
         }
-
         return CODER_PROMPT.format(
             filename=filename,
             purpose=file_info["purpose"],
@@ -123,6 +155,20 @@ class GenerationCoordinator:
             file_plan_json=json.dumps(context.plan, indent=2),
             symbol_index_json=json.dumps(context.project_index, indent=2),
             generated_files_code_json=json.dumps(python_files_this_session, indent=2),
+        )
+
+    def _build_gdscript_coder_prompt(self, file_info: Dict[str, str], context: Any) -> str:
+        return GODOT_GDSCRIPT_CODER_PROMPT.format(
+            filename=file_info["filename"],
+            purpose=file_info["purpose"],
+            file_plan_json=json.dumps(context.plan, indent=2)
+        )
+
+    def _build_godot_generic_prompt(self, file_info: Dict[str, str], context: Any) -> str:
+        return GODOT_GENERIC_FILE_PROMPT.format(
+            filename=file_info["filename"],
+            purpose=file_info["purpose"],
+            file_plan_json=json.dumps(context.plan, indent=2)
         )
 
     def _build_simple_file_prompt(self, file_info: Dict[str, str], context: Any,
@@ -136,7 +182,7 @@ class GenerationCoordinator:
 
     def robust_clean_llm_output(self, content: str) -> str:
         content = content.strip()
-        code_block_regex = re.compile(r'```(?:python)?\n(.*?)\n```', re.DOTALL)
+        code_block_regex = re.compile(r'```(?:python|gdscript)?\n(.*?)\n```', re.DOTALL)
         match = code_block_regex.search(content)
         if match:
             return match.group(1).strip()

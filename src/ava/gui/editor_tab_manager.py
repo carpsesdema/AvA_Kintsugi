@@ -6,9 +6,9 @@ from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QKeySequence, QShortcut
 
 from src.ava.gui.components import Colors, Typography
-from src.ava.gui.code_viewer_helpers import PythonHighlighter
+from src.ava.gui.code_viewer_helpers import PythonHighlighter, GenericHighlighter
 from src.ava.core.event_bus import EventBus
-from src.ava.core.project_manager import ProjectManager  # Added ProjectManager for path resolution
+from src.ava.core.project_manager import ProjectManager
 
 
 class LineNumberArea(QWidget):
@@ -321,6 +321,8 @@ class EditorTabManager:
         editor = EnhancedCodeEditor()
         if abs_path_str.endswith('.py'):
             PythonHighlighter(editor.document())
+        elif abs_path_str.endswith('.gd'):
+            GenericHighlighter(editor.document(), 'gdscript')
 
         editor.save_requested.connect(lambda: self.save_file(abs_path_str))
         editor.content_changed.connect(lambda: self._update_tab_title(abs_path_str))

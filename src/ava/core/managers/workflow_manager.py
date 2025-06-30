@@ -28,6 +28,7 @@ class WorkflowManager:
         self.task_manager: TaskManager = None
         self._last_error_report = None
         self._last_generated_code: Optional[Dict[str, str]] = None
+        self._is_plugin_override_active = False
         print("[WorkflowManager] Initialized")
 
     def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager, task_manager: TaskManager):
@@ -40,29 +41,29 @@ class WorkflowManager:
         self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
         self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
+        self.event_bus.subscribe("plugin_build_override_activated", self._activate_plugin_override)
+
+    def _activate_plugin_override(self):
+        """Called by a plugin to signal it's taking over the build process."""
+        self._is_plugin_override_active = True
 
     def _on_code_generation_complete(self, generated_files: Dict[str, str]):
         """Catches the generated code after a build to be used by Aura."""
         self.log("info", f"WorkflowManager captured {len(generated_files)} generated files for Aura's context.")
         self._last_generated_code = generated_files
+        self._is_plugin_override_active = False  # Reset override after a build completes
 
     async def _run_aura_workflow(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes],
                                  image_media_type: Optional[str]):
         """Runs the Aura persona workflow."""
         self.log("info", f"Aura is processing: '{user_idea[:50]}...'")
 
-        # --- THIS IS THE FIX ---
-        # The conversation_history from the UI includes the user's latest message.
-        # The prompt wants the history *before* the latest message, and the latest message separately.
         history_for_prompt = conversation_history[:-1] if conversation_history else []
         formatted_history = "\n".join(
-            # Use sender for assistant, role for user for a clear history format
             [f"{msg.get('sender', msg.get('role', 'unknown')).title()}: {msg.get('text', '') or msg.get('content', '')}"
              for msg in history_for_prompt]
         )
-        # --- END OF FIX ---
 
-        # Determine which prompt to use: initial creation or refinement
         if self._last_generated_code:
             self.log("info", "Aura is in REFINEMENT mode with existing code context.")
             code_context_json = json.dumps(self._last_generated_code, indent=2)
@@ -104,6 +105,16 @@ class WorkflowManager:
         if not stripped_prompt and not image_bytes and not code_context:
             return
 
+        # Reset plugin override flag at the start of each new request
+        self._is_plugin_override_active = False
+        # Let plugins have the first say
+        self.event_bus.emit("user_build_request_intercepted", prompt)
+
+        # If a plugin took over, it will have set the override flag.
+        if self._is_plugin_override_active:
+            self.log("info", "A plugin has taken control of the build process. Default workflow is paused.")
+            return
+
         app_state_service = self.service_manager.get_app_state_service()
         if not app_state_service:
             self.log("error", "AppStateService not available.")
@@ -114,11 +125,10 @@ class WorkflowManager:
 
         workflow_coroutine = None
         if interaction_mode == InteractionMode.CHAT:
-            # Chat mode now directly triggers the Aura workflow.
             workflow_coroutine = self._run_aura_workflow(prompt, conversation_history, image_bytes, image_media_type)
         elif interaction_mode == InteractionMode.BUILD:
             if app_state == AppState.BOOTSTRAP:
-                self._last_generated_code = None  # Clear old code for new project
+                self._last_generated_code = None
                 workflow_coroutine = self._run_bootstrap_workflow(prompt, image_bytes)
             elif app_state == AppState.MODIFY:
                 workflow_coroutine = self._run_modification_workflow(prompt, image_bytes)
@@ -222,6 +232,7 @@ class WorkflowManager:
     def _on_session_cleared(self):
         self._last_error_report = None
         self._last_generated_code = None
+        self._is_plugin_override_active = False
 
     def handle_execution_failed(self, error_report: str):
         self._last_error_report = error_report

@@ -18,6 +18,7 @@ from src.ava.gui.components import Colors, Typography, ModernButton
 from src.ava.gui.mode_toggle import ModeToggle
 from src.ava.gui.advanced_chat_input import AdvancedChatInput
 from src.ava.gui.loading_indicator import LoadingIndicator
+from src.ava.gui.project_type_selector import ProjectTypeSelector
 from src.ava.core.event_bus import EventBus
 from src.ava.core.app_state import AppState
 from src.ava.core.interaction_mode import InteractionMode
@@ -270,11 +271,19 @@ class ChatInterface(QWidget):
     def _create_header_controls(self, layout: QVBoxLayout):
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(10)
 
         self.mode_toggle = ModeToggle()
         self.mode_toggle.modeChanged.connect(self._on_mode_change_requested)
         self.mode_toggle.setMode(InteractionMode.BUILD, animate=False)
         controls_layout.addWidget(self.mode_toggle)
+
+        self.project_type_selector = ProjectTypeSelector()
+        self.project_type_selector.projectTypeChanged.connect(
+            lambda type: self.event_bus.emit("project_type_changed", type)
+        )
+        controls_layout.addWidget(self.project_type_selector)
+
 
         controls_layout.addStretch()
         layout.addLayout(controls_layout)

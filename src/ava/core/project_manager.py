@@ -339,7 +339,7 @@ class ProjectManager:
             '.py', '.md', '.txt', '.json', '.toml', '.ini', '.cfg', '.yaml', '.yml',
             '.html', '.css', '.js', '.ts', '.java', '.c', '.cpp', '.h', '.hpp',
             '.cs', '.go', '.rb', '.php', '.sh', '.bat', '.ps1', '.dockerfile',
-            '.gitignore', '.env',
+            '.gitignore', '.env', '.gd', '.tscn', '.godot'
         }
         try:
             for item in self.active_project_path.rglob('*'):
