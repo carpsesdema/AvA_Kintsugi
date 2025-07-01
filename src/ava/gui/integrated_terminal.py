@@ -23,10 +23,11 @@ class IntegratedTerminal(QWidget):
         self.sessions = {}
         self.next_session_id = 0
 
-        # Initialize UI attributes in __init__
         self.tab_widget: QTabWidget = None
         self.fix_button: ModernButton = None
         self.fixing_label: QLabel = None
+        self.run_python_button: ModernButton = None
+        self.run_godot_button: ModernButton = None
 
         self.setObjectName("integrated_terminal")
         self.setup_ui()
@@ -43,10 +44,8 @@ class IntegratedTerminal(QWidget):
         main_layout.setContentsMargins(10, 5, 10, 10)
         main_layout.setSpacing(5)
 
-        # --- Action Bar for Buttons ---
         action_bar = self._create_action_bar()
         main_layout.addWidget(action_bar)
-        # --- End Action Bar ---
 
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
@@ -62,8 +61,10 @@ class IntegratedTerminal(QWidget):
         main_layout.addWidget(self.tab_widget)
         self._add_initial_tab()
 
+        # Default to Python controls being visible
+        self.show_python_controls()
+
     def _create_action_bar(self) -> QWidget:
-        """Creates the horizontal bar containing the Run, Install, and Fix buttons."""
         bar = QFrame()
         bar.setObjectName("action_bar")
         bar.setStyleSheet(f"""
@@ -77,13 +78,18 @@ class IntegratedTerminal(QWidget):
         layout.setContentsMargins(5, 0, 5, 0)
         layout.setSpacing(10)
 
-        # -- Run Code Button --
-        run_button = ModernButton("Run Code", "primary")
-        run_button.setIcon(qta.icon("fa5s.play", color=Colors.TEXT_PRIMARY))
-        run_button.clicked.connect(self._on_run_clicked)
-        layout.addWidget(run_button)
+        # -- Run Python Button --
+        self.run_python_button = ModernButton("Run Code", "primary")
+        self.run_python_button.setIcon(qta.icon("fa5s.play", color=Colors.TEXT_PRIMARY))
+        self.run_python_button.clicked.connect(self._on_run_python_clicked)
+        layout.addWidget(self.run_python_button)
 
-        # -- Install Dependencies Button --
+        # -- Run Godot Button --
+        self.run_godot_button = ModernButton("Run in Godot", "primary")
+        self.run_godot_button.setIcon(qta.icon("fa5s.gamepad", color=Colors.TEXT_PRIMARY))
+        self.run_godot_button.clicked.connect(self._on_run_godot_clicked)
+        layout.addWidget(self.run_godot_button)
+
         install_button = ModernButton("Install Dependencies", "secondary")
         install_button.setIcon(qta.icon("fa5s.download", color=Colors.TEXT_SECONDARY))
         install_button.clicked.connect(self._on_install_clicked)
@@ -91,14 +97,12 @@ class IntegratedTerminal(QWidget):
 
         layout.addStretch()
 
-        # -- "Fixing in Progress" Label (hidden by default) --
         self.fixing_label = QLabel("🤖 AI is fixing the code...")
         self.fixing_label.setFont(Typography.body())
         self.fixing_label.setStyleSheet(f"color: {Colors.ACCENT_BLUE.name()};")
         self.fixing_label.hide()
         layout.addWidget(self.fixing_label)
 
-        # -- "Review & Fix" Button (hidden by default) --
         self.fix_button = ModernButton("Review & Fix Code", "primary")
         self.fix_button.setIcon(qta.icon("fa5s.magic", color=Colors.TEXT_PRIMARY))
         fix_color = Colors.ACCENT_RED.lighter(120).name()
@@ -116,20 +120,29 @@ class IntegratedTerminal(QWidget):
 
         return bar
 
+    def show_godot_controls(self):
+        self.run_godot_button.show()
+        self.run_python_button.hide()
+
+    def show_python_controls(self):
+        self.run_godot_button.hide()
+        self.run_python_button.show()
+
     def _get_current_session_id(self) -> int:
-        """Helper to get the session ID of the currently visible terminal tab."""
         current_widget = self.tab_widget.currentWidget()
         if isinstance(current_widget, TerminalWidget):
             return current_widget.session_id
-        return 0  # Fallback to the main session
+        return 0
 
-    def _on_run_clicked(self):
-        """Emits the command to run the main project file."""
+    def _on_run_python_clicked(self):
         session_id = self._get_current_session_id()
         self.command_entered.emit("python main.py", session_id)
 
+    def _on_run_godot_clicked(self):
+        session_id = self._get_current_session_id()
+        self.command_entered.emit("run_godot", session_id)
+
     def _on_install_clicked(self):
-        """Emits the command to install dependencies from requirements.txt."""
         session_id = self._get_current_session_id()
         if self.project_manager and self.project_manager.active_project_path:
             req_file = self.project_manager.active_project_path / "requirements.txt"
@@ -141,7 +154,6 @@ class IntegratedTerminal(QWidget):
             self.event_bus.emit("terminal_output_received", "No active project.\n", session_id)
 
     def _on_fix_clicked(self):
-        """Emits the event to start the review and fix workflow."""
         self.event_bus.emit("review_and_fix_requested")
         self.show_fixing_in_progress()
 
@@ -187,7 +199,6 @@ class IntegratedTerminal(QWidget):
         self.event_bus.subscribe("ai_fix_workflow_complete", self._on_ai_fix_complete)
 
     def _on_ai_fix_complete(self):
-        """Hides the 'AI is fixing...' label when the task is done."""
         if self.fixing_label:
             self.fixing_label.hide()
 

@@ -350,11 +350,9 @@ class ProjectManager:
                         continue
                     try:
                         relative_path = item.relative_to(self.active_project_path)
-                        # --- THIS IS THE FIX ---
                         # Always store the dictionary key with POSIX-style forward slashes
                         # for cross-platform consistency.
                         project_files[relative_path.as_posix()] = item.read_text(encoding='utf-8', errors='ignore')
-                        # --- END OF FIX ---
                     except (IOError, UnicodeDecodeError) as e:
                         print(f"[ProjectManager] Skipping unreadable file {item}: {e}")
             return project_files

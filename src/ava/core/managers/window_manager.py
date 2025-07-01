@@ -34,13 +34,11 @@ class WindowManager:
 
         print("[WindowManager] Initialized")
 
-    # MODIFIED: Added project_root parameter
     def initialize_windows(self, llm_client: LLMClient, service_manager: ServiceManager, project_root: Path):
         """Initialize all GUI windows."""
         print("[WindowManager] Initializing windows...")
 
         # Create main windows
-        # MODIFIED: Pass project_root to MainWindow
         self.main_window = MainWindow(self.event_bus, project_root)
         self.code_viewer = CodeViewerWindow(self.event_bus, self.project_manager)
         self.log_viewer = LogViewerWindow(self.event_bus)
@@ -52,7 +50,6 @@ class WindowManager:
 
         print("[WindowManager] Windows initialized")
 
-    # --- THIS IS THE FIX ---
     def handle_app_state_change(self, new_state: AppState, project_name: str | None):
         """
         Listens for global state changes and updates all relevant UI components.
@@ -65,7 +62,6 @@ class WindowManager:
                 self.load_project_in_code_viewer(str(self.project_manager.active_project_path))
         else:  # BOOTSTRAP state
             self.prepare_code_viewer_for_new_project()
-    # --- END OF FIX ---
 
     # --- Window Getters ---
     def get_main_window(self) -> MainWindow:

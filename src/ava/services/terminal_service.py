@@ -50,11 +50,10 @@ class TerminalService:
                 self.event_bus.emit("terminal_success_received", exit_message, session_id)
             else:
                 self.event_bus.emit("terminal_error_received", exit_message, session_id)
-                # --- FIX: Combine stdout and stderr for a complete error report ---
+                # Combine stdout and stderr for a complete error report
                 # This ensures the full traceback and any related print statements are captured.
                 full_error_report = (result.output + "\n" + result.error).strip()
                 self.event_bus.emit("execution_failed", full_error_report)
-                # --- END FIX ---
 
         except asyncio.CancelledError:
             self.event_bus.emit("terminal_error_received", "\nCommand was cancelled.\n", session_id)

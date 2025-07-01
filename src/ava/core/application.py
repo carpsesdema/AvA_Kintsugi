@@ -98,7 +98,6 @@ class Application:
         else:
             actual_repo_root = self.project_root.parent
 
-            # --- THIS IS THE FIX ---
             # This ensures that when running from source, the application looks inside
             # the `examples` directory for built-in plugins like our new Godot one.
             builtin_plugins_src_dir = actual_repo_root / "src" / "ava" / "core" / "plugins" / "examples"
@@ -107,7 +106,6 @@ class Application:
                 print(f"[Application] Added source (built-in) plugin discovery path: {builtin_plugins_src_dir}")
             else:
                 print(f"[Application] Source built-in plugin path not found: {builtin_plugins_src_dir}")
-            # --- END OF FIX ---
 
             custom_plugins_repo_dir = actual_repo_root / "plugins"
             if custom_plugins_repo_dir.exists():
