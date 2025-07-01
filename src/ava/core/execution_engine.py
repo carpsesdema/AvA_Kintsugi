@@ -112,32 +112,34 @@ class ExecutionEngine:
             return ExecutionResult(False, "", err_msg, command)
 
     def _get_subprocess_env(self, python_executable: Path | None) -> dict:
-        """Prepare the environment variables for the subprocess to use the venv."""
+        """
+        Prepare environment variables for the subprocess. This method no longer
+        modifies the PATH, relying solely on explicit command rewriting.
+        """
         env = os.environ.copy()
         if python_executable and python_executable.exists():
             venv_dir = python_executable.parent.parent
-            scripts_dir = str(python_executable.parent)
-            if 'PATH' in env:
-                env['PATH'] = f"{scripts_dir}{os.pathsep}{env['PATH']}"
-            else:
-                env['PATH'] = scripts_dir
+            # The VIRTUAL_ENV variable is still useful for some tools to detect the venv.
             env['VIRTUAL_ENV'] = str(venv_dir)
-            # Add PYTHONUNBUFFERED to ensure output streams are not delayed
+            # Add PYTHONUNBUFFERED to ensure output streams are not delayed.
             env['PYTHONUNBUFFERED'] = "1"
         return env
 
     def _prepare_command(self, command: str, python_executable: Path | None) -> str:
         """
         Modifies the command to use the venv python interpreter where appropriate.
+        This is the primary mechanism for ensuring the correct interpreter is used.
         """
         parts = command.split()
         if not parts:
             return ""
 
         if python_executable and python_executable.exists():
-            if parts[0] == 'python':
+            # Explicitly replace 'python' or 'python3' with the absolute path to the venv's Python.
+            if parts[0] in ('python', 'python3'):
                 parts[0] = f'"{python_executable}"'
-            elif parts[0] == 'pip':
+            # Explicitly replace 'pip' or 'pip3' with a call to the venv's Python running the pip module.
+            elif parts[0] in ('pip', 'pip3'):
                 parts = [f'"{python_executable}"', '-m', 'pip'] + parts[1:]
 
         return ' '.join(parts)

@@ -60,7 +60,7 @@ class ActionService:
         project_path_str = project_manager.new_project("New_AI_Project")
         if not project_path_str:
             QMessageBox.critical(self.window_manager.get_main_window(), "Project Creation Failed",
-                                 "Could not initialize project. Please ensure Git is installed.")
+                                 "Could not initialize project. Please ensure Git is installed and a standalone Python is available.")
             return
 
         project_path = Path(project_path_str)
@@ -71,10 +71,11 @@ class ActionService:
         if self.window_manager:
             chat_interface = self.window_manager.get_main_window().chat_interface
             if chat_interface:
+                chat_interface.set_project_manager(project_manager)
                 chat_interface.load_project_session()
 
-        if project_manager.repo and project_manager.repo.active_branch:
-            self.event_bus.emit("branch_updated", project_manager.repo.active_branch.name)
+        if project_manager.git_manager:
+            self.event_bus.emit("branch_updated", project_manager.git_manager.get_active_branch_name())
 
     def handle_load_project(self):
         """Handles the 'Load Project' button click, now with context isolation."""
@@ -99,10 +100,12 @@ class ActionService:
                 if self.window_manager:
                     chat_interface = self.window_manager.get_main_window().chat_interface
                     if chat_interface:
+                        chat_interface.set_project_manager(project_manager)
                         chat_interface.load_project_session()
 
-                if project_manager.repo and project_manager.repo.active_branch:
-                    self.event_bus.emit("branch_updated", project_manager.repo.active_branch.name)
+                if project_manager.git_manager:
+                    self.event_bus.emit("branch_updated", project_manager.git_manager.get_active_branch_name())
+
 
     def handle_new_session(self):
         """Handles the 'New Session' button click."""

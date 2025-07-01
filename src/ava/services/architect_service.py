@@ -244,21 +244,24 @@ class ArchitectService:
         return plan
 
     async def _create_package_structure(self, files: list):
-        project_root = self.project_manager.active_project_path
-        if not project_root: return
-        dirs_that_need_init = {Path(f['filename']).parent for f in files if
+        if not self.project_manager.active_project_path: return
+        # This now delegates to the ProjectManager/GitManager
+        dirs_that_need_init = {str(Path(f['filename']).parent) for f in files if
                                '/' in f['filename'] or '\\' in f['filename']}
         init_files_to_create = {}
-        for d in dirs_that_need_init:
+        for d_str in dirs_that_need_init:
+            d = Path(d_str)
+            if d.name == '.': continue # Skip root directory
             init_path = d / "__init__.py"
-            is_planned = any(f['filename'] == str(init_path).replace('\\', '/') for f in files)
-            exists_on_disk = (project_root / init_path).exists()
+            is_planned = any(f['filename'] == init_path.as_posix() for f in files)
+            exists_on_disk = (self.project_manager.active_project_path / init_path).exists()
             if not is_planned and not exists_on_disk:
-                init_files_to_create[str(init_path).replace('\\', '/')] = "# This file makes this a Python package\n"
+                init_files_to_create[init_path.as_posix()] = "# This file makes this a Python package\n"
         if init_files_to_create:
             self.log("info", f"Creating missing __init__.py files: {list(init_files_to_create.keys())}")
             self.project_manager.save_and_commit_files(init_files_to_create, "chore: add package markers")
             await asyncio.sleep(0.1)
+
 
     def _parse_json_response(self, response: str) -> dict:
         match = re.search(r'\{.*\}', response, re.DOTALL)
