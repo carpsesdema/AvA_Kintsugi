@@ -45,11 +45,11 @@ class EventCoordinator:
         self._wire_plugin_events()
         self._wire_chat_session_events()
 
-        # --- THIS IS THE FIX ---
         # Allows plugins to request core manager instances for advanced operations.
-        self.event_bus.subscribe("plugin_requesting_managers",
-                                 lambda callback: callback(self.service_manager, self.task_manager))
-        # --- END OF FIX ---
+        self.event_bus.subscribe(
+            "plugin_requesting_managers",
+            lambda callback: callback(self.service_manager, self.task_manager, self.workflow_manager)
+        )
 
         print("[EventCoordinator] All events wired successfully.")
 

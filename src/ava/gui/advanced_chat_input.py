@@ -201,12 +201,10 @@ class AdvancedChatInput(QWidget):
             buffer = QBuffer()
             buffer.open(QIODevice.OpenModeFlag.WriteOnly)
             self._attached_image.save(buffer, "PNG")
-            # --- THIS IS THE FIX ---
             # QBuffer.data() returns a QByteArray, which can be directly
             # converted to bytes. This silences the type checker warning.
             image_data: QByteArray = buffer.data()
             image_bytes = bytes(image_data)
-            # --- END OF FIX ---
 
         if text or image_bytes or self._code_context:
             self.message_sent.emit(text, image_bytes, self._attached_media_type, self._code_context)

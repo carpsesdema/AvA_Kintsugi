@@ -31,7 +31,7 @@ class GodotGameDevPlugin(PluginBase):
 
     async def start(self) -> bool:
         self.emit_event("plugin_requesting_managers", self.receive_managers)
-        self.subscribe_to_event("user_request_submitted", self.handle_user_request)
+        self.subscribe_to_event("user_build_request_intercepted", self.handle_user_request_override)
         self.subscribe_to_event("project_type_changed", self.on_project_type_changed)
         self.log("info", f"{self.metadata.name} started. Select 'Godot' from the dropdown to generate a game.")
         self.set_state(self.state.STARTED)
@@ -55,14 +55,19 @@ class GodotGameDevPlugin(PluginBase):
     async def unload(self) -> bool:
         return True
 
-    async def handle_user_request(self, prompt: str, conversation_history: list, image_bytes, image_media_type, code_context):
+    async def handle_user_request_override(self, prompt: str):
+        """
+        This method intercepts the user's request and, if the project type is 'Godot',
+        it takes over the build process from the default WorkflowManager.
+        """
         if self.active_project_type != "Godot":
-            return
+            return  # Do nothing if not in Godot mode
 
         self.log("info", "Godot project type is active. Intercepting build process.")
 
+        # Signal to the WorkflowManager that a plugin is handling this build
         if self.workflow_manager:
-            self.workflow_manager.is_plugin_override_active = True
+            self.emit_event("plugin_build_override_activated")
 
         if not self.service_manager or not self.task_manager:
             self.log("error", "Cannot start Godot build: Core managers not available.")
@@ -73,9 +78,10 @@ class GodotGameDevPlugin(PluginBase):
             self.log("error", "ArchitectService not found.")
             return
 
+        # Use the Architect service with our custom Godot prompt
         build_coroutine = architect_service.generate_or_modify(
-            prompt=prompt,  # Pass the user's raw prompt
-            existing_files=None,
+            prompt=prompt,
+            existing_files=None,  # For now, we only support new Godot projects
             custom_prompts={
                 "architect": GODOT_ARCHITECT_PROMPT
             }

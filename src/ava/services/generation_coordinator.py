@@ -99,13 +99,11 @@ class GenerationCoordinator:
         purpose = file_info["purpose"]
         file_extension = Path(filename).suffix
 
-        # --- THIS IS THE NEW LOGIC ---
         if file_extension == '.tscn':
             self.log("info", f"Programmatically generating placeholder scene for {filename}")
             node_type = self._extract_node_type_from_purpose(purpose)
             script_path = filename.replace('.tscn', '.gd')
             return create_tscn_content(node_type, script_path)
-        # --- END OF NEW LOGIC ---
 
         if file_extension == '.py':
             prompt = self._build_python_coder_prompt(file_info, context, other_generated_files)
