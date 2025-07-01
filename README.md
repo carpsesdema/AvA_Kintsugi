@@ -12,7 +12,7 @@
 </div>
 
 <div align="center">
-  <img src="https://img.shields.io/badge/version-1.0.2-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.1.2-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-windows-informational.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-success.svg" alt="License">
 </div>
