@@ -88,7 +88,13 @@ class WorkflowManager:
 
         self.event_bus.emit("streaming_start", "Aura")
         try:
-            stream = llm_client.stream_chat(provider, model, aura_prompt, "chat", image_bytes, image_media_type)
+            # We send the full conversation history to the server, which will build the final message list.
+            # The `aura_prompt` contains the system instructions and user's text for the current turn.
+            stream = llm_client.stream_chat(
+                provider, model, aura_prompt, "chat",
+                image_bytes, image_media_type,
+                history=conversation_history
+            )
             async for chunk in stream:
                 self.event_bus.emit("streaming_chunk", chunk)
         except Exception as e:
@@ -107,8 +113,10 @@ class WorkflowManager:
 
         # Reset plugin override flag at the start of each new request
         self._is_plugin_override_active = False
-        # Let plugins have the first say
-        self.event_bus.emit("user_build_request_intercepted", prompt)
+
+        # Let plugins have the first say. Pass ALL arguments to the interception event.
+        self.event_bus.emit("intercept_build_request", prompt, conversation_history, image_bytes, image_media_type,
+                            code_context)
 
         # If a plugin took over, it will have set the override flag.
         if self._is_plugin_override_active:

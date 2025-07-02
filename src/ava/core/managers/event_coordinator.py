@@ -135,7 +135,9 @@ class EventCoordinator:
             self.event_bus.subscribe("review_and_fix_requested", self.workflow_manager.handle_review_and_fix_button)
             self.event_bus.subscribe("fix_highlighted_error_requested",
                                      self.workflow_manager.handle_highlighted_error_fix_request)
-            self.event_bus.subscribe("user_build_request_intercepted", self.workflow_manager.handle_user_request)
+            # THIS is the line that caused the crash. The WorkflowManager should not subscribe to its own interception event.
+            # Plugins will subscribe to 'intercept_build_request' instead.
+            # self.event_bus.subscribe("user_build_request_intercepted", self.workflow_manager.handle_user_request)
 
         else:
             print("[EventCoordinator] AI Workflow Event Wiring: WorkflowManager not available.")

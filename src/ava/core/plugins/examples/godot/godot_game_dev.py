@@ -1,6 +1,9 @@
 # src/ava/core/plugins/examples/godot/godot_game_dev.py
+from typing import Optional, Dict
+
 from src.ava.core.plugins.plugin_system import PluginBase, PluginMetadata
 from src.ava.prompts.godot import GODOT_ARCHITECT_PROMPT
+
 
 class GodotGameDevPlugin(PluginBase):
     """
@@ -8,6 +11,7 @@ class GodotGameDevPlugin(PluginBase):
     It intercepts build requests when the project type is set to 'Godot'
     and uses specialized prompts for Godot's architecture and GDScript.
     """
+
     def __init__(self, event_bus, plugin_config):
         super().__init__(event_bus, plugin_config)
         self.service_manager = None
@@ -19,7 +23,7 @@ class GodotGameDevPlugin(PluginBase):
     def metadata(self) -> PluginMetadata:
         return PluginMetadata(
             name="Godot Game Dev",
-            version="1.0.2",
+            version="1.0.3",  # Version bump
             description="Enables Avakin to generate Godot game files (GDScript, scenes).",
             author="Avakin",
             enabled_by_default=True
@@ -31,7 +35,8 @@ class GodotGameDevPlugin(PluginBase):
 
     async def start(self) -> bool:
         self.emit_event("plugin_requesting_managers", self.receive_managers)
-        self.subscribe_to_event("user_build_request_intercepted", self.handle_user_request_override)
+        # Update subscription to the new, corrected event name
+        self.subscribe_to_event("intercept_build_request", self.handle_user_request_override)
         self.subscribe_to_event("project_type_changed", self.on_project_type_changed)
         self.log("info", f"{self.metadata.name} started. Select 'Godot' from the dropdown to generate a game.")
         self.set_state(self.state.STARTED)
@@ -55,10 +60,13 @@ class GodotGameDevPlugin(PluginBase):
     async def unload(self) -> bool:
         return True
 
-    async def handle_user_request_override(self, prompt: str):
+    async def handle_user_request_override(self, prompt: str, conversation_history: list,
+                                           image_bytes: Optional[bytes], image_media_type: Optional[str],
+                                           code_context: Optional[Dict[str, str]]):
         """
         This method intercepts the user's request and, if the project type is 'Godot',
         it takes over the build process from the default WorkflowManager.
+        The signature is updated to match the arguments from the emitted event.
         """
         if self.active_project_type != "Godot":
             return  # Do nothing if not in Godot mode

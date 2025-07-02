@@ -100,72 +100,61 @@ app = FastAPI(title="Avakin LLM Service", lifespan=lifespan)
 
 def _prepare_openai_messages(history: List[Dict[str, Any]], prompt: str, image_b64: str, media_type: str) -> List[
     Dict[str, Any]]:
-    """Constructs a message list for OpenAI-compatible APIs."""
+    """
+    Constructs a message list for OpenAI-compatible APIs by intelligently combining
+    the history with the current prompt and image, ensuring multimodal compliance.
+    """
+    processed_history = list(history) if history else []
+
+    # The `prompt` from the workflow manager is the primary text content for the current user turn.
+    # It contains the user's idea embedded within a larger system prompt (e.g., AURA_REFINEMENT_PROMPT).
+    # The `history` list also contains the user's text. To avoid duplication and ensure the full
+    # Aura prompt is used, we will replace the content of the last user message.
+
+    current_turn_data = {
+        "role": "user",
+        "text": prompt,
+        "image_b64": image_b64,
+        "media_type": media_type
+    }
+
+    # Replace the last message if it's the user's turn placeholder, otherwise append.
+    # This correctly syncs the full prompt and image with the latest user action.
+    if processed_history and processed_history[-1].get("role") == "user":
+        processed_history[-1] = current_turn_data
+    else:
+        # This case is unlikely if the client-side logic is correct, but it's a safe fallback.
+        processed_history.append(current_turn_data)
+
+    # Now, format the entire, corrected history for the API.
+    # ALL content fields MUST be a list of content blocks for multimodal APIs.
     messages = []
-    if history:
-        for msg in history[:-1]:
-            role = msg.get("role", "user")
-            content = []
-            if text := msg.get("text"):
-                content.append({"type": "text", "text": text})
-            if img := msg.get("image_b64"):
+    for msg in processed_history:
+        role = msg.get("role")
+        if not role:
+            continue
+
+        content_parts = []
+
+        # Add text content for all roles.
+        if text := (msg.get("text") or msg.get("content")):
+            content_parts.append({"type": "text", "text": text})
+
+        # Add image content ONLY for user roles.
+        if role == "user":
+            if img_b64 := msg.get("image_b64"):
                 m_type = msg.get("media_type", "image/png")
-                content.append({"type": "image_url", "image_url": {"url": f"data:{m_type};base64,{img}"}})
-            if content:
-                messages.append({"role": role, "content": content})
+                content_parts.append({"type": "image_url", "image_url": {"url": f"data:{m_type};base64,{img_b64}"}})
 
-    current_content = []
-    if prompt:
-        current_content.append({"type": "text", "text": prompt})
-    if image_b64 and media_type:
-        current_content.append({"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}})
-
-    if current_content:
-        messages.append({"role": "user", "content": current_content})
-    return messages
-
-
-def _prepare_deepseek_messages(history: List[Dict[str, Any]], prompt: str, image_b64: str, media_type: str) -> List[
-    Dict[str, Any]]:
-    """Constructs a message list specifically for DeepSeek's API quirks."""
-    # Deepseek is mostly OpenAI compatible, but let's be explicit.
-    # The key difference is ensuring the payload structure is exactly what it expects.
-    # It has been sensitive to the exact format of the 'content' list.
-    messages = []
-
-    # Process history
-    if history:
-        for msg in history[:-1]:  # All but the last message
-            role = msg.get("role", "user")
-            content_parts = []
-            if text := msg.get("text"):
-                content_parts.append({"type": "text", "text": text})
-            if img := msg.get("image_b64"):
-                m_type = msg.get("media_type", "image/png")
-                content_parts.append({"type": "image_url", "image_url": {"url": f"data:{m_type};base64,{img}"}})
-
-            if content_parts:
-                messages.append({"role": role, "content": content_parts})
-
-    # Process current prompt
-    current_content_parts = []
-    if prompt:
-        current_content_parts.append({"type": "text", "text": prompt})
-    if image_b64 and media_type:
-        current_content_parts.append(
-            {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}})
-
-    if current_content_parts:
-        messages.append({"role": "user", "content": current_content_parts})
+        # Add the message to the final list if it has any content.
+        if content_parts:
+            messages.append({"role": role, "content": content_parts})
 
     return messages
 
 
 async def _stream_openai_compatible(client, model, prompt, temp, image_b64, media_type, history, provider: str):
-    if provider == 'deepseek':
-        messages = _prepare_deepseek_messages(history, prompt, image_b64, media_type)
-    else:
-        messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
+    messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
 
     stream = await client.chat.completions.create(
         model=model, messages=messages, stream=True, temperature=temp, max_tokens=4096
@@ -194,18 +183,28 @@ async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, 
     openai_messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
     anthropic_messages = []
     for msg in openai_messages:
+        # Anthropic's 'assistant' role also expects a list of content blocks
         anthropic_content = []
-        for part in msg['content']:
-            if part['type'] == 'text':
-                anthropic_content.append(part)
-            elif part['type'] == 'image_url':
-                b64_data = part['image_url']['url'].split(',')[-1]
-                m_type = part['image_url']['url'].split(';')[0].split(':')[-1]
-                anthropic_content.append({
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": m_type, "data": b64_data}
-                })
-        anthropic_messages.append({"role": msg['role'], "content": anthropic_content})
+
+        if isinstance(msg.get('content'), list):
+            # Handle user messages with multiple parts (text, image)
+            for part in msg['content']:
+                if part['type'] == 'text':
+                    anthropic_content.append(part)
+                elif part['type'] == 'image_url':
+                    b64_data = part['image_url']['url'].split(',')[-1]
+                    m_type = part['image_url']['url'].split(';')[0].split(':')[-1]
+                    anthropic_content.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": m_type, "data": b64_data}
+                    })
+        elif isinstance(msg.get('content'), str):
+             # Handle assistant messages with simple string content
+             anthropic_content.append({"type": "text", "text": msg['content']})
+
+        if anthropic_content:
+            anthropic_messages.append({"role": msg['role'], "content": anthropic_content})
+
 
     async with client.messages.stream(max_tokens=4096, model=model, messages=anthropic_messages,
                                       temperature=temp) as stream:
