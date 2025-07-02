@@ -14,6 +14,7 @@ from src.ava.prompts import (
     HIERARCHICAL_PLANNER_PROMPT,
     MODIFICATION_PLANNER_PROMPT
 )
+from src.ava.prompts.godot import GODOT_ARCHITECT_PROMPT
 from src.ava.services.rag_service import RAGService
 from src.ava.services.project_indexer_service import ProjectIndexerService
 from src.ava.services.import_fixer_service import ImportFixerService
@@ -47,11 +48,12 @@ class ArchitectService:
             self.dependency_planner, self.integration_validator
         )
 
-    async def _get_combined_rag_context(self, prompt: str, is_non_python_project: bool = False) -> str:
+    async def _get_combined_rag_context(self, prompt: str, is_godot_project: bool = False) -> str:
         project_rag_context = await self.rag_service.query(prompt, target_collection="project")
 
         global_rag_context = ""
-        if not is_non_python_project:
+        # FIX: Also skip global RAG for Unreal C++ projects
+        if not is_godot_project and "unreal" not in prompt.lower():
             self.log("info", "Python project detected. Querying global RAG for Python examples.")
             global_rag_context = await self.rag_service.query(prompt, target_collection="global")
         else:
@@ -79,10 +81,11 @@ class ArchitectService:
         plan = None
 
         custom_architect_prompt = custom_prompts.get("architect") if custom_prompts else None
-        is_non_python_project = custom_prompts is not None
+
+        is_non_python_project = custom_architect_prompt is not None
 
         self.log("info", "Fetching combined RAG context...")
-        combined_rag_context = await self._get_combined_rag_context(prompt, is_non_python_project=is_non_python_project)
+        combined_rag_context = await self._get_combined_rag_context(prompt, is_godot_project=is_non_python_project)
         self.log("info", f"Combined RAG context length: {len(combined_rag_context)} chars.")
 
         if not existing_files:
@@ -240,19 +243,33 @@ class ArchitectService:
         return plan
 
     async def _create_package_structure(self, files: list):
-        if not self.project_manager.active_project_path: return
-        # This now delegates to the ProjectManager/GitManager
+        """
+        Creates __init__.py files for Python projects to ensure they are
+        treated as packages. Skips this for non-Python projects.
+        """
+        if not self.project_manager.active_project_path:
+            return
+
+        # --- INTELLIGENT CHECK ---
+        # Only create __init__.py files if it's a Python project.
+        is_python_project = any(f['filename'].endswith('.py') for f in files)
+        if not is_python_project:
+            self.log("info", "Non-Python project detected. Skipping __init__.py creation.")
+            return
+        # --- END CHECK ---
+
         dirs_that_need_init = {str(Path(f['filename']).parent) for f in files if
                                '/' in f['filename'] or '\\' in f['filename']}
         init_files_to_create = {}
         for d_str in dirs_that_need_init:
             d = Path(d_str)
-            if d.name == '.': continue # Skip root directory
+            if d.name == '.' or not d_str: continue # Skip root directory
             init_path = d / "__init__.py"
             is_planned = any(f['filename'] == init_path.as_posix() for f in files)
             exists_on_disk = (self.project_manager.active_project_path / init_path).exists()
             if not is_planned and not exists_on_disk:
                 init_files_to_create[init_path.as_posix()] = "# This file makes this a Python package\n"
+
         if init_files_to_create:
             self.log("info", f"Creating missing __init__.py files: {list(init_files_to_create.keys())}")
             self.project_manager.save_and_commit_files(init_files_to_create, "chore: add package markers")
