@@ -256,8 +256,8 @@ class EditorTabManager:
     def _connect_events(self):
         self.event_bus.subscribe("file_renamed", self._handle_file_renamed)
         self.event_bus.subscribe("items_deleted", self._handle_items_deleted)
-        self.event_bus.subscribe("items_moved", self._handle_items_moved)  # New
-        self.event_bus.subscribe("items_added", self._handle_items_added)  # New
+        self.event_bus.subscribe("items_moved", self._handle_items_moved)
+        self.event_bus.subscribe("items_added", self._handle_items_added)
 
     def _setup_initial_state(self):
         self.clear_all_tabs()
@@ -296,7 +296,7 @@ class EditorTabManager:
                         break
                 if path_key_to_remove:
                     del self.editors[path_key_to_remove]
-            if widget_to_remove:  # Ensure widget exists before calling deleteLater
+            if widget_to_remove:
                 widget_to_remove.deleteLater()
         self.editors.clear()
 
@@ -313,6 +313,7 @@ class EditorTabManager:
 
     def create_editor_tab(self, abs_path_str: str) -> bool:
         if abs_path_str in self.editors:
+            self.focus_tab(abs_path_str)
             return False
 
         if self.tab_widget.count() == 1 and isinstance(self.tab_widget.widget(0), QLabel):
@@ -340,14 +341,18 @@ class EditorTabManager:
 
     def stream_content_to_editor(self, abs_path_str: str, chunk: str):
         if abs_path_str not in self.editors:
-            self.create_editor_tab(abs_path_str)
+            # Tab doesn't exist, create it now. This is a key part of the fix.
+            if not self.create_editor_tab(abs_path_str):
+                # If creation fails (e.g., it was created in a race condition), we still get the editor.
+                pass
             self.focus_tab(abs_path_str)
 
-        editor = self.editors[abs_path_str]
-        cursor = editor.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(chunk)
-        editor.ensureCursorVisible()
+        editor = self.editors.get(abs_path_str)
+        if editor:
+            cursor = editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertText(chunk)
+            editor.ensureCursorVisible()
 
     def focus_tab(self, abs_path_str: str):
         for i in range(self.tab_widget.count()):
@@ -372,7 +377,7 @@ class EditorTabManager:
 
     def close_tab(self, index: int, force_close: bool = False):
         abs_path_str = self.tab_widget.tabToolTip(index)
-        widget_to_remove = self.tab_widget.widget(index)  # Get widget before removing tab
+        widget_to_remove = self.tab_widget.widget(index)
 
         if abs_path_str in self.editors:
             editor = self.editors[abs_path_str]
@@ -388,7 +393,7 @@ class EditorTabManager:
             del self.editors[abs_path_str]
 
         self.tab_widget.removeTab(index)
-        if widget_to_remove:  # Ensure widget exists before calling deleteLater
+        if widget_to_remove:
             widget_to_remove.deleteLater()
 
         if self.tab_widget.count() == 0:
@@ -424,9 +429,8 @@ class EditorTabManager:
 
     def save_all_files(self) -> bool:
         all_saved = True
-        # Iterate over a copy of keys if modifying the dictionary (not here, but good practice)
         for abs_path_str in list(self.editors.keys()):
-            editor = self.editors.get(abs_path_str)  # Use .get for safety
+            editor = self.editors.get(abs_path_str)
             if editor and editor.is_dirty():
                 if not self.save_file(abs_path_str):
                     all_saved = False
@@ -473,7 +477,6 @@ class EditorTabManager:
         for editor in self.editors.values():
             editor.clear_error_highlight()
 
-    # --- Event Handlers for File System Changes ---
     def _handle_file_renamed(self, old_rel_path_str: str, new_rel_path_str: str):
         if not self.project_manager or not self.project_manager.active_project_path:
             return
@@ -501,9 +504,8 @@ class EditorTabManager:
         for rel_path_str in deleted_rel_paths:
             abs_path = (self.project_manager.active_project_path / rel_path_str).resolve()
             abs_paths_to_check_for_closing.add(str(abs_path))
-            # If it's a directory, we need to check all files within it that might be open
-            if abs_path.is_dir():  # This check might be tricky if dir is already deleted, rely on path structure
-                for open_abs_path_str in list(self.editors.keys()):  # Iterate on copy
+            if abs_path.is_dir():
+                for open_abs_path_str in list(self.editors.keys()):
                     if Path(open_abs_path_str).is_relative_to(abs_path):
                         abs_paths_to_check_for_closing.add(open_abs_path_str)
 
@@ -513,7 +515,6 @@ class EditorTabManager:
             if tab_tooltip_path in abs_paths_to_check_for_closing:
                 tabs_to_close_indices.append(i)
 
-        # Close tabs in reverse order to avoid index shifting issues
         for i in sorted(tabs_to_close_indices, reverse=True):
             rel_path_of_closed_tab = Path(self.tab_widget.tabToolTip(i)).relative_to(
                 self.project_manager.active_project_path).as_posix()
@@ -521,7 +522,6 @@ class EditorTabManager:
             print(f"[EditorTabManager] Closed tab for deleted item: {rel_path_of_closed_tab}")
 
     def _handle_items_moved(self, moved_item_infos: List[Dict[str, str]]):
-        """Handles items moved within the project tree."""
         if not self.project_manager or not self.project_manager.active_project_path:
             return
 
@@ -534,7 +534,6 @@ class EditorTabManager:
             old_abs_path_str = str((self.project_manager.active_project_path / old_rel_path).resolve())
             new_abs_path_str = str((self.project_manager.active_project_path / new_rel_path).resolve())
 
-            # If the moved item itself was an open tab
             if old_abs_path_str in self.editors:
                 editor = self.editors.pop(old_abs_path_str)
                 self.editors[new_abs_path_str] = editor
@@ -546,16 +545,11 @@ class EditorTabManager:
                         print(f"[EditorTabManager] Updated tab for moved file: {old_rel_path} -> {new_rel_path}")
                         break
             else:
-                # Check if any open files were *inside* a moved directory
-                # This requires iterating through open tabs and checking if their old path
-                # was relative to the old_abs_path_str (if it was a directory).
-                # Then, construct their new absolute path based on new_abs_path_str.
-                for open_abs_path_str in list(self.editors.keys()):  # Iterate on copy
+                for open_abs_path_str in list(self.editors.keys()):
                     open_path_obj = Path(open_abs_path_str)
                     old_dir_abs_path_obj = Path(old_abs_path_str)
 
                     if old_dir_abs_path_obj.is_dir() and open_path_obj.is_relative_to(old_dir_abs_path_obj):
-                        # This open file was inside the moved directory
                         relative_to_moved_dir = open_path_obj.relative_to(old_dir_abs_path_obj)
                         new_file_abs_path_str = str((Path(new_abs_path_str) / relative_to_moved_dir).resolve())
 
@@ -571,7 +565,6 @@ class EditorTabManager:
                                 break
 
     def _handle_items_added(self, added_item_infos: List[Dict[str, str]]):
-        """Handles items added to the project (e.g., by external drop)."""
         if not self.project_manager or not self.project_manager.active_project_path:
             return
 
@@ -580,6 +573,3 @@ class EditorTabManager:
             if new_rel_path:
                 new_abs_path = (self.project_manager.active_project_path / new_rel_path).resolve()
                 print(f"[EditorTabManager] File added to project: {new_rel_path}. Absolute: {new_abs_path}")
-                # Optionally, automatically open newly added files:
-                # if new_abs_path.is_file():
-                #    self.open_file_in_tab(new_abs_path)

@@ -15,7 +15,6 @@ def create_tscn_content(node_type: str, script_path: str) -> str:
     Programmatically creates a simple, valid .tscn file content.
     This bypasses the LLM for scene files, guaranteeing correctness.
     """
-    # Generate unique IDs for the resources. Godot doesn't strictly require they are random, just unique within the file.
     script_uid = f'uid://b{abs(hash(script_path)) % (10 ** 10)}'
 
     return f'''[gd_scene load_steps=2 format=3 uid="uid://b{abs(hash(node_type + script_path)) % (10 ** 10)}"]
@@ -49,6 +48,7 @@ class GenerationCoordinator:
             total_files = len(generation_order)
 
             for i, filename in enumerate(generation_order):
+                self.event_bus.emit("agent_status_changed", "Coder", f"Writing {filename}...", "fa5s.keyboard")
                 self.log("info", f"Generating file {i + 1}/{total_files}: {filename}")
                 file_info = next((f for f in plan['files'] if f['filename'] == filename), None)
                 if not file_info:
@@ -64,8 +64,11 @@ class GenerationCoordinator:
                 )
 
                 if generated_content is not None:
-                    generated_files_this_session[filename] = generated_content
-                    context = await self.context_manager.update_session_context(context, {filename: generated_content})
+                    # Clean the final output once, after the full stream is complete
+                    cleaned_content = self.robust_clean_llm_output(generated_content)
+                    generated_files_this_session[filename] = cleaned_content
+                    # Update context with the cleaned content
+                    context = await self.context_manager.update_session_context(context, {filename: cleaned_content})
                 else:
                     self.log("error", f"Failed to generate content for {filename}.")
                     generated_files_this_session[filename] = f"# ERROR: Failed to generate content for {filename}"
@@ -90,11 +93,10 @@ class GenerationCoordinator:
             return {}
 
     def _extract_node_type_from_purpose(self, purpose: str) -> str:
-        """Extracts the root node type from the architect's purpose string."""
         match = re.search(r'(?:Root node is|Extends)\s+([A-Za-z0-9_]+)', purpose, re.IGNORECASE)
         if match:
             return match.group(1)
-        return "Node"  # Default to a basic Node if not found
+        return "Node"
 
     async def _generate_single_file(self, file_info: Dict[str, str], context: Any,
                                     other_generated_files: Dict[str, str],
@@ -103,30 +105,29 @@ class GenerationCoordinator:
         purpose = file_info["purpose"]
         file_extension = Path(filename).suffix
 
-        # Special programmatic handling for .tscn files
+        prompt = None
         if file_extension == '.tscn':
             self.log("info", f"Programmatically generating placeholder scene for {filename}")
             node_type = self._extract_node_type_from_purpose(purpose)
             script_path = filename.replace('.tscn', '.gd')
             return create_tscn_content(node_type, script_path)
 
-        prompt = None
-        prompt_template = None
-
-        # Check for custom prompts first (for Godot, Unreal, etc.)
         if file_extension in custom_prompts:
             self.log("info", f"Using custom prompt for extension '{file_extension}'")
             prompt_template = custom_prompts[file_extension]
             prompt = prompt_template.format(
                 filename=filename,
-                filename_stem=Path(filename).stem, # For Unreal .generated.h includes
+                filename_stem=Path(filename).stem,
                 purpose=purpose,
                 file_plan_json=json.dumps(context.plan, indent=2)
             )
-        # Fallback to default prompts
         elif file_extension == '.py':
             prompt = self._build_python_coder_prompt(file_info, context, other_generated_files)
-        else: # Default for requirements.txt, README.md, etc.
+        elif file_extension == '.gd':
+            prompt = self._build_gdscript_coder_prompt(file_info, context)
+        elif file_extension in ['.godot', '.import', '.svg']:
+            prompt = self._build_godot_generic_prompt(file_info, context)
+        else:
             prompt = self._build_simple_file_prompt(file_info, context, other_generated_files)
 
         if not prompt:
@@ -143,7 +144,7 @@ class GenerationCoordinator:
             async for chunk in self.llm_client.stream_chat(provider, model, prompt, "coder"):
                 file_content += chunk
                 self.event_bus.emit("stream_code_chunk", filename, chunk)
-            return self.robust_clean_llm_output(file_content)
+            return file_content # Return raw content, cleaning happens once after stream
         except Exception as e:
             self.log("error", f"LLM generation failed for {filename}: {e}")
             return None
@@ -174,6 +175,20 @@ class GenerationCoordinator:
             generated_files_code_json=json.dumps(python_files_this_session, indent=2),
         )
 
+    def _build_gdscript_coder_prompt(self, file_info: Dict[str, str], context: Any) -> str:
+        return GODOT_GDSCRIPT_CODER_PROMPT.format(
+            filename=file_info["filename"],
+            purpose=file_info["purpose"],
+            file_plan_json=json.dumps(context.plan, indent=2)
+        )
+
+    def _build_godot_generic_prompt(self, file_info: Dict[str, str], context: Any) -> str:
+        return GODOT_GENERIC_FILE_PROMPT.format(
+            filename=file_info["filename"],
+            purpose=file_info["purpose"],
+            file_plan_json=json.dumps(context.plan, indent=2)
+        )
+
     def _build_simple_file_prompt(self, file_info: Dict[str, str], context: Any,
                                   other_generated_files: Dict[str, str]) -> str:
         return SIMPLE_FILE_PROMPT.format(
@@ -185,7 +200,8 @@ class GenerationCoordinator:
 
     def robust_clean_llm_output(self, content: str) -> str:
         content = content.strip()
-        code_block_regex = re.compile(r'```(?:python|cpp|csharp|json|c\+\+|gdscript|text|)?\n(.*?)\n```', re.DOTALL)
+        # Adjusted regex to handle more language identifiers or no identifier
+        code_block_regex = re.compile(r'```(?:[a-zA-Z0-9_]*)?\n(.*?)\n```', re.DOTALL)
         match = code_block_regex.search(content)
         if match:
             return match.group(1).strip()

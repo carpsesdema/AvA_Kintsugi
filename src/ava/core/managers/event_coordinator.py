@@ -44,6 +44,7 @@ class EventCoordinator:
         self._wire_terminal_events()
         self._wire_plugin_events()
         self._wire_chat_session_events()
+        self._wire_status_bar_events()  # NEW
 
         # Allows plugins to request core manager instances for advanced operations.
         self.event_bus.subscribe(
@@ -52,6 +53,19 @@ class EventCoordinator:
         )
 
         print("[EventCoordinator] All events wired successfully.")
+
+    def _wire_status_bar_events(self):
+        """Wire events for updating the status bar."""
+        if not self.window_manager: return
+        main_window = self.window_manager.get_main_window()
+        if not main_window or not hasattr(main_window, 'sidebar'): return  # Using sidebar as a proxy for main window UI
+
+        status_bar = main_window.statusBar()
+        if status_bar and hasattr(status_bar, 'update_agent_status'):
+            self.event_bus.subscribe("agent_status_changed", status_bar.update_agent_status)
+            print("[EventCoordinator] Status bar agent events wired.")
+        else:
+            print("[EventCoordinator] Warning: StatusBar not found or is missing 'update_agent_status' method.")
 
     def _wire_chat_session_events(self):
         """Wire events for saving and loading chat sessions."""
@@ -71,8 +85,8 @@ class EventCoordinator:
             print("[EventCoordinator] Warning: ChatInterface not found on MainWindow for chat session event wiring.")
 
     def _wire_ui_events(self):
-        if not all([self.service_manager, self.window_manager, self.workflow_manager]):
-            print("[EventCoordinator] UI Event Wiring: Core managers not available.")
+        if not all([self.service_manager, self.window_manager]):
+            print("[EventCoordinator] UI Event Wiring: ServiceManager or WindowManager not available.")
             return
 
         action_service = self.service_manager.get_action_service()
@@ -89,10 +103,6 @@ class EventCoordinator:
             self.event_bus.subscribe("interaction_mode_change_requested", app_state_service.set_interaction_mode)
         else:
             print("[EventCoordinator] UI Event Wiring: AppStateService not available.")
-
-        # --- NEW: Connect Project Type Selector to Workflow Manager ---
-        self.event_bus.subscribe("project_type_changed", self.workflow_manager._on_project_type_changed)
-        # --- END NEW ---
 
         if self.window_manager:
             self.event_bus.subscribe("app_state_changed", self.window_manager.handle_app_state_change)

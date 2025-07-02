@@ -24,6 +24,7 @@ class ValidationService:
         This is a robust method that mirrors the previously successful approach.
         """
         self.log("info", "Starting full-context fix workflow...")
+        self.event_bus.emit("agent_status_changed", "Reviewer", "Analyzing error...", "fa5s.search")
         all_project_files = self.project_manager.get_project_files()
         if not all_project_files:
             self.handle_error("executor", "Cannot initiate fix: No project files found.")

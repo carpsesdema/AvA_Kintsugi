@@ -78,6 +78,7 @@ class ArchitectService:
     async def generate_or_modify(self, prompt: str, existing_files: dict | None,
                                  custom_prompts: Optional[Dict[str, str]] = None) -> bool:
         self.log("info", f"Architect task received: '{prompt}'")
+        self.event_bus.emit("agent_status_changed", "Architect", "Planning project...", "fa5s.pencil-ruler")
         plan = None
 
         custom_architect_prompt = custom_prompts.get("architect") if custom_prompts else None

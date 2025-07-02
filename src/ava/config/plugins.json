@@ -1,9 +1,5 @@
 {
-  "enabled_plugins": [
-    "Creative Assistant (Aura)",
-    "Godot Game Dev",
-    "Unreal C++ Dev"
-  ],
+  "enabled_plugins": [],
   "plugin_settings": {
     "code_monitor": {
       "report_frequency": 5,
