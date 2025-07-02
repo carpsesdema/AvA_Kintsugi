@@ -21,6 +21,7 @@ class PluginManager:
         self.event_bus = event_bus
         self.registry = PluginRegistry()
         self.config = PluginConfig(project_root)
+        self.service_manager = None  # Will be set by Application
 
         # Active plugin instances
         self._active_plugins: Dict[str, PluginBase] = {}
@@ -40,6 +41,10 @@ class PluginManager:
     def _connect_events(self):
         """Connect to event bus for plugin-related events."""
         self.event_bus.subscribe("plugin_state_changed", self._on_plugin_state_changed)
+
+    def set_service_manager(self, service_manager: Any):
+        """Receives the ServiceManager to inject into plugins."""
+        self.service_manager = service_manager
 
     def add_discovery_path(self, path: Path):
         """
@@ -173,6 +178,12 @@ class PluginManager:
 
             # Create plugin instance
             plugin_instance = plugin_class(self.event_bus, settings)
+
+            # --- NEW: Service Manager Injection ---
+            if self.service_manager and hasattr(plugin_instance, 'set_service_manager'):
+                plugin_instance.set_service_manager(self.service_manager)
+                print(f"[PluginManager] Injected ServiceManager into '{plugin_name}'.")
+            # --- END NEW ---
 
             # Load the plugin
             if await plugin_instance.load():

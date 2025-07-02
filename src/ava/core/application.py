@@ -54,6 +54,11 @@ class Application:
         try:
             self.service_manager.plugin_manager = self.plugin_manager
             self._configure_plugin_paths()
+
+            # --- NEW: Ensure ServiceManager is given to PluginManager ---
+            self.plugin_manager.set_service_manager(self.service_manager)
+            # --- END NEW ---
+
             self.service_manager.initialize_core_components(self.project_root, self.project_manager)
             await self.service_manager.initialize_plugins()
             self.service_manager.initialize_services()

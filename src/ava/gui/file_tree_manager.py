@@ -314,6 +314,14 @@ class FileTreeManager(QObject):
             print(f"[FileTreeManager] Error loading project tree: {e}")
             return False
 
+    def refresh_tree_from_disk(self):
+        """Public method to trigger a refresh of the file tree."""
+        if self.project_manager and self.project_manager.active_project_path:
+            self.log("info", "Refreshing file tree from disk...")
+            self.load_existing_project_tree(self.project_manager.active_project_path)
+        else:
+            self.log("warning", "Cannot refresh tree, no active project.")
+
     def _get_expanded_items_paths(self) -> Set[str]:
         expanded_paths = set()
         iterator = QTreeWidgetItemIterator(self.tree_widget)
@@ -650,3 +658,6 @@ class FileTreeManager(QObject):
             self.load_existing_project_tree(self.project_manager.active_project_path)
         else:
             QMessageBox.warning(self.tree_widget, "Drop Failed", msg)
+
+    def log(self, level, message):
+        self.event_bus.emit(f"log_message_received", "FileTreeManager", level, message)

@@ -1,3 +1,4 @@
+# src/ava/core/plugins/plugin_system.py
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Dict, List, Any, Optional
@@ -60,6 +61,16 @@ class PluginBase(ABC):
         self.config = plugin_config
         self.state = PluginState.UNLOADED
         self._subscribed_events = []
+        # This will be populated by the PluginManager after initialization
+        self.service_manager = None
+
+    def set_service_manager(self, service_manager: Any):
+        """
+        A dedicated method for the PluginManager to inject the ServiceManager.
+        This ensures plugins have access to core services after they are initialized.
+        """
+        self.service_manager = service_manager
+
 
     @property
     @abstractmethod

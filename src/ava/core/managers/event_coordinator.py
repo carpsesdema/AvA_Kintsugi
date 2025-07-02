@@ -71,8 +71,8 @@ class EventCoordinator:
             print("[EventCoordinator] Warning: ChatInterface not found on MainWindow for chat session event wiring.")
 
     def _wire_ui_events(self):
-        if not all([self.service_manager, self.window_manager]):
-            print("[EventCoordinator] UI Event Wiring: ServiceManager or WindowManager not available.")
+        if not all([self.service_manager, self.window_manager, self.workflow_manager]):
+            print("[EventCoordinator] UI Event Wiring: Core managers not available.")
             return
 
         action_service = self.service_manager.get_action_service()
@@ -89,6 +89,10 @@ class EventCoordinator:
             self.event_bus.subscribe("interaction_mode_change_requested", app_state_service.set_interaction_mode)
         else:
             print("[EventCoordinator] UI Event Wiring: AppStateService not available.")
+
+        # --- NEW: Connect Project Type Selector to Workflow Manager ---
+        self.event_bus.subscribe("project_type_changed", self.workflow_manager._on_project_type_changed)
+        # --- END NEW ---
 
         if self.window_manager:
             self.event_bus.subscribe("app_state_changed", self.window_manager.handle_app_state_change)
@@ -135,10 +139,6 @@ class EventCoordinator:
             self.event_bus.subscribe("review_and_fix_requested", self.workflow_manager.handle_review_and_fix_button)
             self.event_bus.subscribe("fix_highlighted_error_requested",
                                      self.workflow_manager.handle_highlighted_error_fix_request)
-            # THIS is the line that caused the crash. The WorkflowManager should not subscribe to its own interception event.
-            # Plugins will subscribe to 'intercept_build_request' instead.
-            # self.event_bus.subscribe("user_build_request_intercepted", self.workflow_manager.handle_user_request)
-
         else:
             print("[EventCoordinator] AI Workflow Event Wiring: WorkflowManager not available.")
 

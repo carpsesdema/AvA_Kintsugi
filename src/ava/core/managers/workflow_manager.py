@@ -12,7 +12,11 @@ from src.ava.core.interaction_mode import InteractionMode
 from src.ava.core.managers.service_manager import ServiceManager
 from src.ava.core.managers.window_manager import WindowManager
 from src.ava.core.managers.task_manager import TaskManager
-from src.ava.prompts import CREATIVE_ASSISTANT_PROMPT, AURA_REFINEMENT_PROMPT
+from src.ava.prompts import (
+    CREATIVE_ASSISTANT_PROMPT, AURA_REFINEMENT_PROMPT,
+    UNREAL_ARCHITECT_PROMPT, UNREAL_CPP_CODER_PROMPT, UNREAL_GENERIC_FILE_PROMPT,
+    GODOT_ARCHITECT_PROMPT, GODOT_GDSCRIPT_CODER_PROMPT, GODOT_GENERIC_FILE_PROMPT
+)
 
 
 class WorkflowManager:
@@ -29,6 +33,7 @@ class WorkflowManager:
         self._last_error_report = None
         self._last_generated_code: Optional[Dict[str, str]] = None
         self._is_plugin_override_active = False
+        self._current_project_type = "Python"  # Default project type
         print("[WorkflowManager] Initialized")
 
     def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager, task_manager: TaskManager):
@@ -42,6 +47,13 @@ class WorkflowManager:
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
         self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
         self.event_bus.subscribe("plugin_build_override_activated", self._activate_plugin_override)
+        # NEW: Subscribe to project type changes from the UI
+        self.event_bus.subscribe("project_type_changed", self._on_project_type_changed)
+
+    def _on_project_type_changed(self, project_type: str):
+        """Updates the current project type when the user changes it in the UI."""
+        self.log("info", f"Workflow project type set to: {project_type}")
+        self._current_project_type = project_type
 
     def _activate_plugin_override(self):
         """Called by a plugin to signal it's taking over the build process."""
@@ -111,18 +123,6 @@ class WorkflowManager:
         if not stripped_prompt and not image_bytes and not code_context:
             return
 
-        # Reset plugin override flag at the start of each new request
-        self._is_plugin_override_active = False
-
-        # Let plugins have the first say. Pass ALL arguments to the interception event.
-        self.event_bus.emit("intercept_build_request", prompt, conversation_history, image_bytes, image_media_type,
-                            code_context)
-
-        # If a plugin took over, it will have set the override flag.
-        if self._is_plugin_override_active:
-            self.log("info", "A plugin has taken control of the build process. Default workflow is paused.")
-            return
-
         app_state_service = self.service_manager.get_app_state_service()
         if not app_state_service:
             self.log("error", "AppStateService not available.")
@@ -135,11 +135,36 @@ class WorkflowManager:
         if interaction_mode == InteractionMode.CHAT:
             workflow_coroutine = self._run_aura_workflow(prompt, conversation_history, image_bytes, image_media_type)
         elif interaction_mode == InteractionMode.BUILD:
+            # --- NEW: Prepare custom prompts based on project type ---
+            custom_prompts = None
+            if self._current_project_type == "Unreal C++":
+                self.log("info", "Unreal C++ project type selected. Loading custom prompts.")
+                custom_prompts = {
+                    "architect": UNREAL_ARCHITECT_PROMPT,
+                    ".h": UNREAL_CPP_CODER_PROMPT,
+                    ".cpp": UNREAL_CPP_CODER_PROMPT,
+                    ".uproject": UNREAL_GENERIC_FILE_PROMPT,
+                    ".cs": UNREAL_GENERIC_FILE_PROMPT,
+                }
+            elif self._current_project_type == "Godot":
+                self.log("info", "Godot project type selected. Loading custom prompts.")
+                custom_prompts = {
+                    "architect": GODOT_ARCHITECT_PROMPT,
+                    ".gd": GODOT_GDSCRIPT_CODER_PROMPT,
+                    ".tscn": GODOT_GENERIC_FILE_PROMPT,
+                    ".godot": GODOT_GENERIC_FILE_PROMPT,
+                    ".import": GODOT_GENERIC_FILE_PROMPT,
+                    ".svg": GODOT_GENERIC_FILE_PROMPT,
+                }
+            # --- END NEW ---
+
+            architect_service = self.service_manager.get_architect_service()
             if app_state == AppState.BOOTSTRAP:
                 self._last_generated_code = None
-                workflow_coroutine = self._run_bootstrap_workflow(prompt, image_bytes)
+                workflow_coroutine = architect_service.generate_or_modify(prompt, existing_files=None, custom_prompts=custom_prompts)
             elif app_state == AppState.MODIFY:
-                workflow_coroutine = self._run_modification_workflow(prompt, image_bytes)
+                existing_files = self.service_manager.get_project_manager().get_project_files()
+                workflow_coroutine = architect_service.generate_or_modify(prompt, existing_files, custom_prompts=custom_prompts)
         else:
             self.log("error", f"Unknown interaction mode: {interaction_mode}")
             return

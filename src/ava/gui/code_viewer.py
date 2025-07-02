@@ -129,6 +129,13 @@ class CodeViewerWindow(QMainWindow):
         self.terminal.command_entered.connect(
             lambda cmd, sid: self.event_bus.emit("terminal_command_entered", cmd, sid)
         )
+        self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
+
+    def _on_code_generation_complete(self, files: dict):
+        """When code generation is done, refresh the file tree."""
+        if self.file_tree_manager:
+            self.file_tree_manager.refresh_tree_from_disk()
+        self.display_code(files) # Also update the editor tabs
 
     def _save_current_file(self):
         if self.editor_manager:
@@ -244,9 +251,8 @@ class CodeViewerWindow(QMainWindow):
                     print(f"[CodeViewer] Warning: Could not resolve absolute path for '{filename}'.")
             else:
                 print("[CodeViewer] Warning: Project context is invalid, cannot display code.")
-        if self.project_context.is_valid and self.project_context.project_root:
-            print("[CodeViewer] Forcing file tree refresh from disk.")
-            self.file_tree_manager.load_existing_project_tree(self.project_context.project_root)
+        # The tree refresh is now handled by the _on_code_generation_complete slot.
+        # This prevents a double refresh.
 
     def _on_file_selected(self, file_path: Path):
         self.editor_manager.open_file_in_tab(file_path)
