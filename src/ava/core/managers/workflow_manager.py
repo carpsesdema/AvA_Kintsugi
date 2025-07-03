@@ -132,7 +132,7 @@ class WorkflowManager:
         app_state = app_state_service.get_app_state()
 
         workflow_coroutine = None
-        if interaction_mode == InteractionMode.CHAT:
+        if interaction_mode == InteractionMode.PLAN:
             workflow_coroutine = self._run_aura_workflow(prompt, conversation_history, image_bytes, image_media_type)
         elif interaction_mode == InteractionMode.BUILD:
             # --- NEW: Prepare custom prompts based on project type ---

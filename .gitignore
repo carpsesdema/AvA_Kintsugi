@@ -92,3 +92,4 @@ secrets.json
 /setup_rag.py
 /build_dist.py
 /src/ava/config/role_assignments.json
+/src/ava/Monster_Generator_Chat.json

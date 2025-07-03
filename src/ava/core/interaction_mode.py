@@ -8,5 +8,5 @@ class InteractionMode(Enum):
     """
     Represents the user's intended interaction with the AI.
     """
-    CHAT = auto()   # For general conversation, brainstorming, and questions.
+    PLAN = auto()   # For general conversation, brainstorming, and questions.
     BUILD = auto()  # For requests that should result in code generation or modification.

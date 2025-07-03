@@ -159,7 +159,7 @@ class ChatMessageWidget(QWidget):
             return
 
         menu = QMenu(self)
-        use_as_prompt_action = QAction("Use as Build Prompt", self)
+        use_as_prompt_action = QAction("🚀 Use as Build Prompt", self)
         use_as_prompt_action.triggered.connect(self._on_use_as_prompt)
         menu.addAction(use_as_prompt_action)
         menu.exec(self.mapToGlobal(pos))
@@ -212,8 +212,10 @@ class ChatInterface(QWidget):
         main_layout.addWidget(self.input_widget)
 
         self._setup_event_subscriptions()
-        self._add_message({"role": "assistant", "sender": "Aura", "text": "Hello! Let's build something amazing from scratch."},
+        self._add_message({"role": "assistant", "sender": "Aura", "text": "Hello! Let's plan and build something amazing."},
                           is_feedback=True)
+        # Set initial UI state to match the default mode (BUILD)
+        self._on_interaction_mode_changed(InteractionMode.BUILD)
 
     def set_project_manager(self, pm):
         self.project_manager = pm
@@ -310,31 +312,47 @@ class ChatInterface(QWidget):
         self.scroll_area.verticalScrollBar().setValue(self.scroll_area.verticalScrollBar().maximum())
 
     def _on_app_state_changed(self, new_state: AppState, project_name: str = None):
-        """
-        Handles high-level project state changes. This should ONLY update UI elements
-        that depend on the project name, like the placeholder text. It must NOT
-        reload the session, as that wipes the current in-memory conversation.
-        """
         if self.mode_toggle._current_mode == InteractionMode.BUILD:
             if new_state == AppState.BOOTSTRAP:
                 self.input_widget.setPlaceholderText("Describe the new application you want to build...")
             elif new_state == AppState.MODIFY:
-                self.input_widget.setPlaceholderText(f"What changes for '{project_name}'? Paste an image of an error!")
+                self.input_widget.setPlaceholderText(
+                    f"What changes for '{project_name}'? Paste an error or describe a new feature...")
 
     def _on_mode_change_requested(self, new_mode: InteractionMode):
         self.event_bus.emit("interaction_mode_change_requested", new_mode)
 
-    def _on_interaction_mode_changed(self, new_mode: InteractionMode, is_state_change: bool = False):
-        """Handles the visual and placeholder changes when switching modes. Does not load sessions."""
+    def _on_interaction_mode_changed(self, new_mode: InteractionMode):
+        """Handles the visual and placeholder changes when switching modes."""
         self.mode_toggle.setMode(new_mode)
-        if new_mode == InteractionMode.CHAT:
-            self.input_widget.setPlaceholderText("Describe your idea to Aura...")
+        input_frame = self.input_widget.findChild(QFrame, "input_frame")
+
+        if new_mode == InteractionMode.PLAN:
+            self.input_widget.setPlaceholderText("Discuss your ideas with Aura...")
+            self.input_widget.set_send_button_text("Ask Aura")
+            if input_frame:
+                input_frame.setStyleSheet(f"""
+                    #input_frame {{
+                        background-color: {Colors.SECONDARY_BG.name()};
+                        border-radius: 8px;
+                        border: 1px solid {Colors.ACCENT_PURPLE.name()};
+                    }}
+                """)
         elif new_mode == InteractionMode.BUILD:
             if self.project_manager and self.project_manager.active_project_name != "(none)":
                 self.input_widget.setPlaceholderText(
-                    f"What changes for '{self.project_manager.active_project_name}'? Paste an image of an error!")
+                    f"What changes for '{self.project_manager.active_project_name}'? Paste an error or describe a new feature...")
             else:
                 self.input_widget.setPlaceholderText("Describe the new application you want to build...")
+            self.input_widget.set_send_button_text("Build")
+            if input_frame:
+                input_frame.setStyleSheet(f"""
+                    #input_frame {{
+                        background-color: {Colors.SECONDARY_BG.name()};
+                        border-radius: 8px;
+                        border: 1px solid {Colors.ACCENT_BLUE.name()};
+                    }}
+                """)
 
     def _create_input_widget(self) -> AdvancedChatInput:
         input_widget = AdvancedChatInput()
@@ -429,7 +447,7 @@ class ChatInterface(QWidget):
     def load_project_session(self):
         file_path = self.get_session_filepath()
         if not file_path or not file_path.exists():
-            self.clear_chat("Aura activated! ✨ What great idea is on your mind today?")
+            self.clear_chat("Aura is ready to plan! What's on your mind?")
             return
 
         try:
@@ -440,10 +458,10 @@ class ChatInterface(QWidget):
             for message_data in self.conversation_history:
                 self._add_message(message_data, is_feedback=True)
             if not self.conversation_history:
-                self.clear_chat("Aura activated! ✨ What great idea is on your mind today?")
+                self.clear_chat("Aura is ready to plan! What's on your mind?")
         except Exception as e:
             self.log("error", f"Failed to auto-load session from {file_path}: {e}")
-            self.clear_chat("Aura activated! ✨ What great idea is on your mind today?")
+            self.clear_chat("Aura is ready to plan! What's on your mind?")
 
     def save_session(self):
         file_path_str, _ = QFileDialog.getSaveFileName(self, "Save Chat Session", "", "JSON Files (*.json)")

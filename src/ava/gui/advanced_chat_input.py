@@ -94,9 +94,9 @@ class AdvancedChatInput(QWidget):
         # Bottom bar with send button
         bottom_bar_layout = QHBoxLayout()
         bottom_bar_layout.addStretch()
-        send_button = ModernButton("Send", "primary")
-        send_button.clicked.connect(self._on_send)
-        bottom_bar_layout.addWidget(send_button)
+        self.send_button = ModernButton("Send", "primary")
+        self.send_button.clicked.connect(self._on_send)
+        bottom_bar_layout.addWidget(self.send_button)
 
         frame_layout.addWidget(self.text_input)
         frame_layout.addLayout(bottom_bar_layout)
@@ -215,6 +215,9 @@ class AdvancedChatInput(QWidget):
 
     def setPlaceholderText(self, text: str):
         self.text_input.setPlaceholderText(text)
+
+    def set_send_button_text(self, text: str):
+        self.send_button.setText(text)
 
     def set_text_and_focus(self, text: str):
         self.text_input.setPlainText(text)
