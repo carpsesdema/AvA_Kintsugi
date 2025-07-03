@@ -9,6 +9,7 @@ from .directory_scanner_service import DirectoryScannerService
 from .generation_coordinator import GenerationCoordinator
 from .import_fixer_service import ImportFixerService
 from .integration_validator import IntegrationValidator
+from .lsp_client_service import LSPClientService # <-- NEW
 from .project_analyzer import ProjectAnalyzer
 from .project_indexer_service import ProjectIndexerService
 # from .rag_manager import RAGManager # <-- REMOVED to break circular import
@@ -28,6 +29,7 @@ __all__ = [
     "GenerationCoordinator",
     "ImportFixerService",
     "IntegrationValidator",
+    "LSPClientService", # <-- NEW
     "ProjectAnalyzer",
     "ProjectIndexerService",
     # "RAGManager", # <-- REMOVED

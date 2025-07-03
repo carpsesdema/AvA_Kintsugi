@@ -1,0 +1,2 @@
+# src/ava/requirements_lsp.txt
+python-lsp-server[all]

@@ -44,7 +44,8 @@ class EventCoordinator:
         self._wire_terminal_events()
         self._wire_plugin_events()
         self._wire_chat_session_events()
-        self._wire_status_bar_events()  # NEW
+        self._wire_status_bar_events()
+        self._wire_lsp_events() # <-- NEW
 
         # Allows plugins to request core manager instances for advanced operations.
         self.event_bus.subscribe(
@@ -53,6 +54,18 @@ class EventCoordinator:
         )
 
         print("[EventCoordinator] All events wired successfully.")
+
+    def _wire_lsp_events(self):
+        """Wire events for the Language Server Protocol integration."""
+        if not self.window_manager: return
+        code_viewer = self.window_manager.get_code_viewer()
+        if not code_viewer or not hasattr(code_viewer, 'editor_manager'):
+            print("[EventCoordinator] Warning: CodeViewer or EditorTabManager not available for LSP event wiring.")
+            return
+
+        editor_manager = code_viewer.editor_manager
+        self.event_bus.subscribe("lsp_diagnostics_received", editor_manager.handle_diagnostics)
+        print("[EventCoordinator] LSP events wired.")
 
     def _wire_status_bar_events(self):
         """Wire events for updating the status bar."""

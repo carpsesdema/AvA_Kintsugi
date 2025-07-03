@@ -1,5 +1,5 @@
 # src/ava/core/managers/window_manager.py
-from pathlib import Path # Added Path import
+from pathlib import Path
 from src.ava.gui.main_window import MainWindow
 from src.ava.gui.code_viewer import CodeViewerWindow
 from src.ava.gui.model_config_dialog import ModelConfigurationDialog
@@ -38,14 +38,17 @@ class WindowManager:
         """Initialize all GUI windows."""
         print("[WindowManager] Initializing windows...")
 
-        # Create main windows
+        # --- Get necessary services ---
+        lsp_client_service = service_manager.get_lsp_client_service()
+        plugin_manager = service_manager.get_plugin_manager()
+
+        # --- Create main windows ---
         self.main_window = MainWindow(self.event_bus, project_root)
-        self.code_viewer = CodeViewerWindow(self.event_bus, self.project_manager)
+        self.code_viewer = CodeViewerWindow(self.event_bus, self.project_manager, lsp_client_service) # Pass LSP client
         self.log_viewer = LogViewerWindow(self.event_bus)
 
-        # Create dialogs
+        # --- Create dialogs ---
         self.model_config_dialog = ModelConfigurationDialog(llm_client, self.main_window)
-        plugin_manager = service_manager.get_plugin_manager()
         self.plugin_management_dialog = PluginManagementDialog(plugin_manager, self.event_bus, self.main_window)
 
         print("[WindowManager] Windows initialized")
@@ -92,17 +95,13 @@ class WindowManager:
     async def show_model_config_dialog(self):
         """Asynchronously populates model data and then shows the dialog."""
         if self.model_config_dialog:
-            # Prevent opening multiple instances of the dialog
             if self.model_config_dialog.isVisible():
                 self.model_config_dialog.activateWindow()
                 self.model_config_dialog.raise_()
                 return
 
-            # Asynchronously populate the model list first
             await self.model_config_dialog.populate_models_async()
-            # Then synchronously populate the current selections
             self.model_config_dialog.populate_settings()
-            # Now show the dialog non-blockingly
             self.model_config_dialog.show()
 
     def show_plugin_management_dialog(self):

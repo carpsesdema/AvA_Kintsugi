@@ -55,6 +55,7 @@ class ActionService:
         project_manager = self.service_manager.get_project_manager()
         rag_manager = self.service_manager.get_rag_manager()
         app_state_service = self.service_manager.get_app_state_service()
+        lsp_client = self.service_manager.get_lsp_client_service()  # <-- GET LSP CLIENT
         if not all([project_manager, rag_manager, app_state_service]): return
 
         project_path_str = project_manager.new_project("New_AI_Project")
@@ -66,6 +67,11 @@ class ActionService:
         project_path = Path(project_path_str)
         asyncio.create_task(rag_manager.switch_project_context(project_path))
         app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
+
+        # --- NEW: Initialize LSP session now that we have a project ---
+        if lsp_client:
+            asyncio.create_task(lsp_client.initialize_session())
+        # --- END NEW ---
 
         # Explicitly tell the chat interface to reset and load the session for the new project.
         if self.window_manager:
@@ -82,6 +88,7 @@ class ActionService:
         project_manager = self.service_manager.get_project_manager()
         rag_manager = self.service_manager.get_rag_manager()
         app_state_service = self.service_manager.get_app_state_service()
+        lsp_client = self.service_manager.get_lsp_client_service()  # <-- GET LSP CLIENT
         if not all([project_manager, rag_manager, app_state_service]): return
 
         path = QFileDialog.getExistingDirectory(self.window_manager.get_main_window(), "Load Project",
@@ -96,6 +103,11 @@ class ActionService:
                 self.log("info", f"Created modification branch: {branch_name}")
                 app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
 
+                # --- NEW: Initialize LSP session now that we have a project ---
+                if lsp_client:
+                    asyncio.create_task(lsp_client.initialize_session())
+                # --- END NEW ---
+
                 # Explicitly tell the chat interface to reset and load the session for the loaded project.
                 if self.window_manager:
                     chat_interface = self.window_manager.get_main_window().chat_interface
@@ -105,7 +117,6 @@ class ActionService:
 
                 if project_manager.git_manager:
                     self.event_bus.emit("branch_updated", project_manager.git_manager.get_active_branch_name())
-
 
     def handle_new_session(self):
         """Handles the 'New Session' button click."""

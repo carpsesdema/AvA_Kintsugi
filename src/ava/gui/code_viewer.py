@@ -1,9 +1,9 @@
 # src/ava/gui/code_viewer.py
 from pathlib import Path
 from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter,
-                               QTabWidget, QMessageBox)  # Removed QTreeWidget as it's handled by FileTreeManager
+                               QTabWidget, QMessageBox)
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent  # Added QMessageBox
+from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent
 import qasync
 
 from src.ava.core.event_bus import EventBus
@@ -15,6 +15,7 @@ from src.ava.gui.integrated_terminal import IntegratedTerminal
 from src.ava.gui.find_replace_dialog import FindReplaceDialog
 from src.ava.gui.quick_file_finder import QuickFileFinder
 from src.ava.gui.status_bar import StatusBar
+from src.ava.services.lsp_client_service import LSPClientService # <-- NEW
 
 
 class CodeViewerWindow(QMainWindow):
@@ -22,10 +23,11 @@ class CodeViewerWindow(QMainWindow):
     The main code viewing and interaction window with enhanced IDE features.
     """
 
-    def __init__(self, event_bus: EventBus, project_manager: ProjectManager):
+    def __init__(self, event_bus: EventBus, project_manager: ProjectManager, lsp_client: LSPClientService): # <-- Add lsp_client
         super().__init__()
         self.event_bus = event_bus
         self.project_manager = project_manager
+        self.lsp_client = lsp_client # <-- Store lsp_client
         self.project_context = ProjectContextManager()
         self.editor_manager: EditorTabManager = None
         self.file_tree_manager: FileTreeManager = None
@@ -48,20 +50,16 @@ class CodeViewerWindow(QMainWindow):
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Create the panel that will HOST the tree widget
         file_tree_panel_widget = QWidget()
         file_tree_panel_layout = QVBoxLayout(file_tree_panel_widget)
         file_tree_panel_layout.setContentsMargins(0, 0, 0, 0)
 
-        # FileTreeManager now creates its own CustomFileTreeWidget.
-        # We pass the panel as the parent for the CustomFileTreeWidget.
         self.file_tree_manager = FileTreeManager(file_tree_panel_widget, self.project_manager, self.event_bus)
         self.file_tree_manager.set_file_selection_callback(self._on_file_selected)
 
-        # Add the actual tree widget (obtained from the manager) to the panel's layout
         file_tree_panel_layout.addWidget(self.file_tree_manager.get_widget())
 
-        main_splitter.addWidget(file_tree_panel_widget)  # Add the panel to the splitter
+        main_splitter.addWidget(file_tree_panel_widget)
 
         editor_terminal_splitter = self._create_editor_terminal_splitter()
         main_splitter.addWidget(editor_terminal_splitter)
@@ -71,12 +69,6 @@ class CodeViewerWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
 
-    def _create_file_tree_panel(self) -> QWidget:
-        # This method is now effectively part of _init_ui for clarity.
-        # If we needed to return the panel, the logic from _init_ui would go here.
-        # For now, _init_ui handles its creation and addition.
-        pass
-
     def _create_editor_terminal_splitter(self) -> QSplitter:
         right_splitter = QSplitter(Qt.Orientation.Vertical)
         tab_widget = QTabWidget()
@@ -84,6 +76,7 @@ class CodeViewerWindow(QMainWindow):
         tab_widget.setMovable(True)
         tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
         self.editor_manager = EditorTabManager(tab_widget, self.event_bus, self.project_manager)
+        self.editor_manager.set_lsp_client(self.lsp_client) # <-- Pass LSP client to the manager
         self.terminal = IntegratedTerminal(self.event_bus, self.project_manager)
         right_splitter.addWidget(tab_widget)
         right_splitter.addWidget(self.terminal)
