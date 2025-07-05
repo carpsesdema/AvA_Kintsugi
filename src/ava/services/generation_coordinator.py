@@ -79,11 +79,9 @@ class GenerationCoordinator:
             self.log("success",
                      f"✅ Unified generation complete: {len(generated_files_this_session)}/{total_files} files generated.")
 
-            if existing_files:
-                final_file_set = existing_files.copy()
-                final_file_set.update(generated_files_this_session)
-                return final_file_set
-
+            # This was the source of the bug. We only want to open tabs for the
+            # files that were *actually* generated or modified in this session.
+            # By only returning the files from this session, the UI will behave as expected.
             return generated_files_this_session
 
         except Exception as e:

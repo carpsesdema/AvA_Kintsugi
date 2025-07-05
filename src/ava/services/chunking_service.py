@@ -1,3 +1,4 @@
+# src/ava/services/chunking_service.py
 import re
 from pathlib import Path
 from typing import List, Dict, Any
@@ -42,19 +43,30 @@ class ChunkingService:
         print(f"[ChunkingService] Chunked '{file_path.name}' into {len(chunks)} pieces.")
         return chunks
 
+    def _get_unique_file_prefix(self, file_path: Path) -> str:
+        """Creates a sanitized, unique prefix from a file path to avoid ID collisions."""
+        # Using the last 4 parts of the path is a good compromise for uniqueness and readability.
+        # e.g., '.../src/ava/utils.py' -> 'src_ava_utils'
+        relevant_parts = file_path.parts[-4:]
+        sanitized_path = "_".join(relevant_parts)
+        # Remove common extensions and sanitize remaining dots.
+        # This handles cases like 'file.tar.gz' by just removing the final suffix.
+        return sanitized_path.replace(file_path.suffix, '').replace('.', '_')
+
     def _chunk_python_code(self, content: str, file_path: Path) -> List[Dict[str, Any]]:
         """Smart chunking for Python code files by splitting into logical blocks."""
         chunks = []
         code_blocks = self._extract_python_blocks(content)
         current_chunk_content = ""
         current_chunk_id_counter = 0
+        file_prefix = self._get_unique_file_prefix(file_path)
 
         for block in code_blocks:
             # If adding the next block would exceed the chunk size, process the current chunk
             if len(current_chunk_content) + len(block['content']) > self.chunk_size and current_chunk_content:
                 chunks.append(self._create_chunk(
                     current_chunk_content,
-                    chunk_id=f"{file_path.stem}_code_{current_chunk_id_counter}",
+                    chunk_id=f"{file_prefix}_code_{current_chunk_id_counter}",
                     file_path=file_path
                 ))
                 current_chunk_id_counter += 1
@@ -67,7 +79,7 @@ class ChunkingService:
         if current_chunk_content.strip():
             chunks.append(self._create_chunk(
                 current_chunk_content.strip(),
-                chunk_id=f"{file_path.stem}_code_{current_chunk_id_counter}",
+                chunk_id=f"{file_prefix}_code_{current_chunk_id_counter}",
                 file_path=file_path
             ))
 
@@ -95,6 +107,7 @@ class ChunkingService:
     def _chunk_markdown_text(self, content: str, file_path: Path) -> List[Dict[str, Any]]:
         """Smart chunking for Markdown by splitting on headers."""
         chunks = []
+        file_prefix = self._get_unique_file_prefix(file_path)
         # Split by major headers (## or #)
         sections = re.split(r'\n(?=#{1,2} )', content)
         section_id_counter = 0
@@ -107,7 +120,7 @@ class ChunkingService:
             if len(section) <= self.chunk_size:
                 chunks.append(self._create_chunk(
                     section,
-                    chunk_id=f"{file_path.stem}_section_{section_id_counter}",
+                    chunk_id=f"{file_prefix}_section_{section_id_counter}",
                     file_path=file_path
                 ))
             else:
@@ -116,7 +129,7 @@ class ChunkingService:
                 for i, sub_chunk in enumerate(sub_chunks):
                     chunks.append(self._create_chunk(
                         sub_chunk,
-                        chunk_id=f"{file_path.stem}_section_{section_id_counter}_part_{i}",
+                        chunk_id=f"{file_prefix}_section_{section_id_counter}_part_{i}",
                         file_path=file_path
                     ))
             section_id_counter += 1
@@ -126,11 +139,12 @@ class ChunkingService:
     def _chunk_generic_text(self, content: str, file_path: Path) -> List[Dict[str, Any]]:
         """Generic text chunking by size for any other file type."""
         chunks = []
+        file_prefix = self._get_unique_file_prefix(file_path)
         text_chunks = self._split_text_by_size(content)
         for i, chunk_text in enumerate(text_chunks):
             chunks.append(self._create_chunk(
                 chunk_text,
-                chunk_id=f"{file_path.stem}_generic_{i}",
+                chunk_id=f"{file_prefix}_generic_{i}",
                 file_path=file_path
             ))
         return chunks

@@ -8,7 +8,7 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QTabWidget, QLabel, QWidget, QMessageBox
 
 from src.ava.gui.enhanced_code_editor import EnhancedCodeEditor
-from src.ava.gui.components import Colors, Typography  # <-- CORRECTED: Imported Colors
+from src.ava.gui.components import Colors, Typography
 from src.ava.gui.code_viewer_helpers import PythonHighlighter, GenericHighlighter
 from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
@@ -44,9 +44,7 @@ class EditorTabManager:
         welcome_label = QLabel(message)
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_label.setFont(Typography.get_font(18))
-        # --- THIS IS THE FIX ---
         welcome_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY.name()};")
-        # --- END OF FIX ---
         self.tab_widget.addTab(welcome_label, "Welcome")
 
     def prepare_for_new_project(self):
@@ -132,7 +130,9 @@ class EditorTabManager:
             cursor = editor.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
             cursor.insertText(chunk)
-            editor.ensureCursorVisible()
+            # This is the key change: ensure the vertical scrollbar is at the bottom
+            # after inserting text for a smooth "streaming" feel.
+            editor.verticalScrollBar().setValue(editor.verticalScrollBar().maximum())
 
     def focus_tab(self, abs_path_str: str):
         for i in range(self.tab_widget.count()):
