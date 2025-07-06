@@ -14,13 +14,14 @@ class ReviewerService:
             self, error_report: str, git_diff: str, full_code_context: str
     ) -> str | None:
         """
-        Uses an LLM with FOCUSED project context and git diff for the first fix attempt.
+        Uses an LLM with FOCUSED project context for the first fix attempt.
+        The git_diff parameter is kept for signature compatibility but is no longer used.
         """
         self.log("info", "Reviewer analyzing error with focused context.")
         prompt = REFINEMENT_PROMPT.format(
             full_code_context=full_code_context,
             error_report=error_report,
-            git_diff=git_diff
+            git_diff="N/A" # Git diff is no longer used in the prompt.
         )
         return await self._get_fix_from_llm(prompt)
 

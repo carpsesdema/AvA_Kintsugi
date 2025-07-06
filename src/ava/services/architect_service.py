@@ -186,10 +186,9 @@ class ArchitectService:
             if not generated_files:
                 self.log("error", "Generation coordinator returned no files.")
                 return False
-            first_purpose = plan["files"][0].get("purpose", "AI-driven changes")
-            commit_message = f"feat: {first_purpose[:50]}..."
-            self.project_manager.save_and_commit_files(generated_files, commit_message)
-            self.log("success", "Project changes committed successfully.")
+
+            self.project_manager.save_files(generated_files)
+            self.log("success", "Project files saved successfully.")
             self.event_bus.emit("code_generation_complete", generated_files)
             return True
         except Exception as e:
@@ -273,7 +272,7 @@ class ArchitectService:
 
         if init_files_to_create:
             self.log("info", f"Creating missing __init__.py files: {list(init_files_to_create.keys())}")
-            self.project_manager.save_and_commit_files(init_files_to_create, "chore: add package markers")
+            self.project_manager.save_files(init_files_to_create)
             await asyncio.sleep(0.1)
 
 

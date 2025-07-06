@@ -33,17 +33,17 @@ class ValidationService:
         self.update_status("reviewer", "working", "Analyzing error with full project context...")
 
         full_code_context = json.dumps(all_project_files, indent=2)
-        git_diff = self.project_manager.get_git_diff()
 
         crashing_file, line_number = self._parse_error_traceback(error_report)
         if crashing_file and self.project_manager.active_project_path and line_number > 0:
             self.event_bus.emit("error_highlight_requested", self.project_manager.active_project_path / crashing_file,
                                 line_number)
 
+        # Simplified call without git_diff
         changes_json_str = await self.reviewer_service.review_and_correct_code(
             full_code_context=full_code_context,
             error_report=error_report,
-            git_diff=git_diff
+            git_diff="N/A - Git diff is no longer used for this process."
         )
 
         if not changes_json_str:
@@ -64,9 +64,7 @@ class ValidationService:
             self.handle_error("reviewer", f"Failed to parse AI's fix response: {e}")
             return False
 
-        filenames_changed = ", ".join(files_to_commit.keys())
-        fix_commit_message = f"fix: AI rewrite for error in {crashing_file or 'project'}"
-        self.project_manager.save_and_commit_files(files_to_commit, fix_commit_message)
+        self.project_manager.save_files(files_to_commit)
 
         self.event_bus.emit("code_generation_complete", files_to_commit)
         self.update_status("reviewer", "success", f"Fix applied to {len(files_to_commit)} file(s).")

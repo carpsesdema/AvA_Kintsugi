@@ -70,7 +70,8 @@ Avakin is designed to be run directly from source, giving you full control.
 **Prerequisites:**
 *   Python 3.10 or newer.
 *   Git.
-*   **(Strongly Recommended for Local LLMs)** [Ollama](https://ollama.com/) installed and running. Download your desired models (e.g., `ollama pull llama3`).
+*   **(Strongly Recommended for Local LLMs)** [Ollama](https://ollama.com/) installed and running.
+*   Download your desired models (e.g., `ollama pull llama3`).
 
 **1. Clone the Repository**
 ```bash

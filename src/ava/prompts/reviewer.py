@@ -12,19 +12,14 @@ INTELLIGENT_FIXER_PROMPT = textwrap.dedent(f"""
         {{error_report}}
         ```
 
-    2.  **RECENT CODE CHANGES (GIT DIFF):** These are the changes that most likely introduced the bug.
-        ```diff
-        {{git_diff}}
-        ```
-
-    3.  **FULL PROJECT SOURCE CODE:** The complete source code for all files in the project is provided below.
+    2.  **FULL PROJECT SOURCE CODE:** The complete source code for all files in the project is provided below.
         ```json
         {{full_code_context}}
         ```
 
     **DEBUGGING DIRECTIVES (UNBREAKABLE LAWS):**
 
-    1.  **ROOT CAUSE ANALYSIS:** Examine all evidence (error, diff, source) to determine the true root cause of the bug. Do not patch symptoms.
+    1.  **ROOT CAUSE ANALYSIS:** Examine all evidence (error, source code) to determine the true root cause of the bug. Do not patch symptoms.
     2.  **SURGICAL PRECISION:** Formulate the minimal set of changes required to correct the root cause. Do not refactor unrelated code.
     3.  **MAINTAIN QUALITY:** While fixing the bug, adhere to the existing code's style and quality standards (e.g., type hinting, docstrings). Your fix should not degrade the code quality.
     {JSON_OUTPUT_RULE}

@@ -8,8 +8,8 @@ from .components import Colors, Typography
 
 class StatusBar(QStatusBar):
     """
-    An event-driven status bar that displays key information like Git branch,
-    RAG service status, and dynamic AI agent activity.
+    An event-driven status bar that displays key information like
+    RAG service status and dynamic AI agent activity.
     """
 
     def __init__(self, event_bus):
@@ -38,17 +38,6 @@ class StatusBar(QStatusBar):
         self.update_agent_status("Avakin", "Ready", "fa5s.robot")
 
         # -- Separator --
-        sep0 = QLabel("|")
-        self.addPermanentWidget(sep0)
-
-        # -- Git Branch --
-        self.branch_icon = QLabel()
-        self.branch_icon.setPixmap(qta.icon("fa5s.code-branch", color=Colors.TEXT_SECONDARY.name()).pixmap(12, 12))
-        self.branch_label = QLabel("(no branch)")
-        self.addPermanentWidget(self.branch_icon)
-        self.addPermanentWidget(self.branch_label)
-
-        # -- Separator --
         sep1 = QLabel("|")
         self.addPermanentWidget(sep1)
 
@@ -62,16 +51,11 @@ class StatusBar(QStatusBar):
         self._connect_events()
 
     def _connect_events(self):
-        self.event_bus.subscribe("branch_updated", self.on_branch_updated)
         self.event_bus.subscribe("log_message_received", self.on_log_message)
         # Connect to our new agent status event
         self.event_bus.subscribe("agent_status_changed", self.update_agent_status)
         # Reset status when workflow is finished
         self.event_bus.subscribe("ai_workflow_finished", self._on_workflow_finished)
-
-    def on_branch_updated(self, branch_name: str):
-        """Updates the Git branch display."""
-        self.branch_label.setText(branch_name)
 
     def on_log_message(self, source: str, msg_type: str, content: str):
         """Listens for RAG manager logs to update its status."""

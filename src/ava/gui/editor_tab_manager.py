@@ -196,9 +196,6 @@ class EditorTabManager:
             editor.mark_clean()
             self._update_tab_title(abs_path_str)
             print(f"[EditorTabManager] Saved file: {file_path.name}")
-            if self.project_manager and self.project_manager.active_project_path:
-                rel_path = file_path.relative_to(self.project_manager.active_project_path).as_posix()
-                self.project_manager.stage_file(rel_path)
             return True
         except Exception as e:
             print(f"[EditorTabManager] Error saving file {abs_path_str}: {e}")
