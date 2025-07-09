@@ -7,23 +7,6 @@ from pathlib import Path
 
 from src.ava.core.event_bus import EventBus
 from src.ava.prompts import CODER_PROMPT, SIMPLE_FILE_PROMPT
-from src.ava.prompts.godot import GODOT_GDSCRIPT_CODER_PROMPT, GODOT_GENERIC_FILE_PROMPT
-
-
-def create_tscn_content(node_type: str, script_path: str) -> str:
-    """
-    Programmatically creates a simple, valid .tscn file content.
-    This bypasses the LLM for scene files, guaranteeing correctness.
-    """
-    script_uid = f'uid://b{abs(hash(script_path)) % (10 ** 10)}'
-
-    return f'''[gd_scene load_steps=2 format=3 uid="uid://b{abs(hash(node_type + script_path)) % (10 ** 10)}"]
-
-[ext_resource type="Script" path="res://{script_path}" id="1_{script_uid}"]
-
-[node name="{Path(script_path).stem.capitalize()}" type="{node_type}"]
-script = ExtResource("1_{script_uid}")
-'''
 
 
 class GenerationCoordinator:
@@ -37,8 +20,7 @@ class GenerationCoordinator:
         self.llm_client = service_manager.get_llm_client()
 
     async def coordinate_generation(self, plan: Dict[str, Any], rag_context: str,
-                                    existing_files: Optional[Dict[str, str]],
-                                    custom_prompts: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+                                    existing_files: Optional[Dict[str, str]]) -> Dict[str, str]:
         try:
             self.log("info", "🚀 Starting unified generation with rolling context...")
             context = await self.context_manager.build_generation_context(plan, rag_context, existing_files)
@@ -55,12 +37,17 @@ class GenerationCoordinator:
                     self.log("error", f"Could not find file info for {filename} in plan. Skipping.")
                     continue
 
-                other_generated_files = generated_files_this_session.copy()
-                if filename in other_generated_files:
-                    del other_generated_files[filename]
+                # --- FIX START ---
+                # This combines the on-disk state with the just-generated files for full context.
+                full_context_for_coder = (context.existing_files or {}).copy()
+                full_context_for_coder.update(generated_files_this_session)
+                # Remove the file being generated from its own context to prevent confusion.
+                if filename in full_context_for_coder:
+                    del full_context_for_coder[filename]
+                # --- FIX END ---
 
                 generated_content = await self._generate_single_file(
-                    file_info, context, other_generated_files, custom_prompts or {}
+                    file_info, context, full_context_for_coder
                 )
 
                 if generated_content is not None:
@@ -79,9 +66,6 @@ class GenerationCoordinator:
             self.log("success",
                      f"✅ Unified generation complete: {len(generated_files_this_session)}/{total_files} files generated.")
 
-            # This was the source of the bug. We only want to open tabs for the
-            # files that were *actually* generated or modified in this session.
-            # By only returning the files from this session, the UI will behave as expected.
             return generated_files_this_session
 
         except Exception as e:
@@ -90,41 +74,14 @@ class GenerationCoordinator:
             traceback.print_exc()
             return {}
 
-    def _extract_node_type_from_purpose(self, purpose: str) -> str:
-        match = re.search(r'(?:Root node is|Extends)\s+([A-Za-z0-9_]+)', purpose, re.IGNORECASE)
-        if match:
-            return match.group(1)
-        return "Node"
-
     async def _generate_single_file(self, file_info: Dict[str, str], context: Any,
-                                    other_generated_files: Dict[str, str],
-                                    custom_prompts: Dict[str, str]) -> Optional[str]:
+                                    other_generated_files: Dict[str, str]) -> Optional[str]:
         filename = file_info["filename"]
-        purpose = file_info["purpose"]
         file_extension = Path(filename).suffix
 
         prompt = None
-        if file_extension == '.tscn':
-            self.log("info", f"Programmatically generating placeholder scene for {filename}")
-            node_type = self._extract_node_type_from_purpose(purpose)
-            script_path = filename.replace('.tscn', '.gd')
-            return create_tscn_content(node_type, script_path)
-
-        if file_extension in custom_prompts:
-            self.log("info", f"Using custom prompt for extension '{file_extension}'")
-            prompt_template = custom_prompts[file_extension]
-            prompt = prompt_template.format(
-                filename=filename,
-                filename_stem=Path(filename).stem,
-                purpose=purpose,
-                file_plan_json=json.dumps(context.plan, indent=2)
-            )
-        elif file_extension == '.py':
+        if file_extension == '.py':
             prompt = self._build_python_coder_prompt(file_info, context, other_generated_files)
-        elif file_extension == '.gd':
-            prompt = self._build_gdscript_coder_prompt(file_info, context)
-        elif file_extension in ['.godot', '.import', '.svg']:
-            prompt = self._build_godot_generic_prompt(file_info, context)
         else:
             prompt = self._build_simple_file_prompt(file_info, context, other_generated_files)
 
@@ -171,20 +128,6 @@ class GenerationCoordinator:
             file_plan_json=json.dumps(context.plan, indent=2),
             symbol_index_json=json.dumps(context.project_index, indent=2),
             generated_files_code_json=json.dumps(python_files_this_session, indent=2),
-        )
-
-    def _build_gdscript_coder_prompt(self, file_info: Dict[str, str], context: Any) -> str:
-        return GODOT_GDSCRIPT_CODER_PROMPT.format(
-            filename=file_info["filename"],
-            purpose=file_info["purpose"],
-            file_plan_json=json.dumps(context.plan, indent=2)
-        )
-
-    def _build_godot_generic_prompt(self, file_info: Dict[str, str], context: Any) -> str:
-        return GODOT_GENERIC_FILE_PROMPT.format(
-            filename=file_info["filename"],
-            purpose=file_info["purpose"],
-            file_plan_json=json.dumps(context.plan, indent=2)
         )
 
     def _build_simple_file_prompt(self, file_info: Dict[str, str], context: Any,

@@ -96,7 +96,7 @@ class ProjectManager:
             '.py', '.md', '.txt', '.json', '.toml', '.ini', '.cfg', '.yaml', '.yml',
             '.html', '.css', '.js', '.ts', '.java', '.c', '.cpp', '.h', '.hpp',
             '.cs', '.go', '.rb', '.php', '.sh', '.bat', '.ps1', '.dockerfile',
-            '.gitignore', '.env', '.gd', '.tscn', '.godot'
+            '.gitignore', '.env'
         }
         for item in self.active_project_path.rglob('*'):
             if any(part in ignore_dirs for part in item.relative_to(self.active_project_path).parts):

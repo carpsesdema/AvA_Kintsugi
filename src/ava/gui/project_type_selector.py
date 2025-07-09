@@ -19,9 +19,7 @@ class ProjectTypeSelector(QWidget):
 
         # --- State ---
         self.project_types = {
-            "Python": "fa5b.python",
-            "Godot": "fa5s.gamepad",
-            "Unreal C++": "fa5s.cube"
+            "Python": "fa5b.python"
         }
         self._current_type = "Python"
 

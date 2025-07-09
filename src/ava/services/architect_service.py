@@ -14,7 +14,6 @@ from src.ava.prompts import (
     HIERARCHICAL_PLANNER_PROMPT,
     MODIFICATION_PLANNER_PROMPT
 )
-from src.ava.prompts.godot import GODOT_ARCHITECT_PROMPT
 from src.ava.services.rag_service import RAGService
 from src.ava.services.project_indexer_service import ProjectIndexerService
 from src.ava.services.import_fixer_service import ImportFixerService
@@ -48,16 +47,9 @@ class ArchitectService:
             self.dependency_planner, self.integration_validator
         )
 
-    async def _get_combined_rag_context(self, prompt: str, is_godot_project: bool = False) -> str:
+    async def _get_combined_rag_context(self, prompt: str) -> str:
         project_rag_context = await self.rag_service.query(prompt, target_collection="project")
-
-        global_rag_context = ""
-        # FIX: Also skip global RAG for Unreal C++ projects
-        if not is_godot_project and "unreal" not in prompt.lower():
-            self.log("info", "Python project detected. Querying global RAG for Python examples.")
-            global_rag_context = await self.rag_service.query(prompt, target_collection="global")
-        else:
-            self.log("info", "Non-Python project detected. Skipping global (Python) RAG database to avoid confusion.")
+        global_rag_context = await self.rag_service.query(prompt, target_collection="global")
 
         valid_project_context = project_rag_context if "no relevant documents found" not in project_rag_context.lower() and "not running or is unreachable" not in project_rag_context.lower() else ""
         valid_global_context = global_rag_context if "no relevant documents found" not in global_rag_context.lower() and "not running or is unreachable" not in global_rag_context.lower() else ""
@@ -75,30 +67,24 @@ class ArchitectService:
 
         return "\n\n---\n\n".join(combined_context_parts)
 
-    async def generate_or_modify(self, prompt: str, existing_files: dict | None,
-                                 custom_prompts: Optional[Dict[str, str]] = None) -> bool:
+    async def generate_or_modify(self, prompt: str, existing_files: dict | None) -> bool:
         self.log("info", f"Architect task received: '{prompt}'")
         self.event_bus.emit("agent_status_changed", "Architect", "Planning project...", "fa5s.pencil-ruler")
         plan = None
 
-        custom_architect_prompt = custom_prompts.get("architect") if custom_prompts else None
-
-        is_non_python_project = custom_architect_prompt is not None
-
         self.log("info", "Fetching combined RAG context...")
-        combined_rag_context = await self._get_combined_rag_context(prompt, is_godot_project=is_non_python_project)
+        combined_rag_context = await self._get_combined_rag_context(prompt)
         self.log("info", f"Combined RAG context length: {len(combined_rag_context)} chars.")
 
         if not existing_files:
             self.log("info", "No existing project detected. Generating new project plan...")
-            plan = await self._generate_hierarchical_plan(prompt, combined_rag_context, custom_architect_prompt)
+            plan = await self._generate_hierarchical_plan(prompt, combined_rag_context)
         else:
             self.log("info", "Existing project detected. Using default modification plan...")
             plan = await self._generate_modification_plan(prompt, existing_files, combined_rag_context)
 
         if plan:
-            # Pass the custom prompts down to the coordinator
-            success = await self._execute_coordinated_generation(plan, combined_rag_context, existing_files, custom_prompts)
+            success = await self._execute_coordinated_generation(plan, combined_rag_context, existing_files)
         else:
             self.log("error", "Failed to generate a valid plan. Aborting generation.")
             success = False
@@ -109,19 +95,10 @@ class ArchitectService:
             self.handle_error("coder", "Code generation failed.")
         return success
 
-    async def _generate_hierarchical_plan(self, prompt: str, rag_context: str,
-                                          custom_architect_prompt: Optional[str]) -> dict | None:
+    async def _generate_hierarchical_plan(self, prompt: str, rag_context: str) -> dict | None:
         self.log("info", "Designing project structure...")
-
-        if custom_architect_prompt:
-            self.log("info", "Using custom architect prompt from plugin.")
-            prompt_template = custom_architect_prompt
-            final_user_prompt = f"This is a request to build a special project type. The user's idea is: {prompt}"
-        else:
-            prompt_template = HIERARCHICAL_PLANNER_PROMPT
-            final_user_prompt = prompt
-
-        plan_prompt = prompt_template.format(prompt=final_user_prompt, rag_context=rag_context)
+        prompt_template = HIERARCHICAL_PLANNER_PROMPT
+        plan_prompt = prompt_template.format(prompt=prompt, rag_context=rag_context)
         return await self._get_plan_from_llm(plan_prompt)
 
     async def _generate_modification_plan(self, prompt: str, existing_files: dict, rag_context: str) -> dict | None:
@@ -167,8 +144,7 @@ class ArchitectService:
             return None
 
     async def _execute_coordinated_generation(self, plan: dict, rag_context: str,
-                                              existing_files: Optional[Dict[str, str]],
-                                              custom_prompts: Optional[Dict[str, str]] = None) -> bool:
+                                              existing_files: Optional[Dict[str, str]]) -> bool:
         try:
             is_modification = existing_files is not None
             files_to_generate = plan.get("files", [])
@@ -181,8 +157,7 @@ class ArchitectService:
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
-            # Pass custom prompts through to the coordinator
-            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files, custom_prompts)
+            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
             if not generated_files:
                 self.log("error", "Generation coordinator returned no files.")
                 return False

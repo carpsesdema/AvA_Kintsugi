@@ -99,8 +99,6 @@ class EditorTabManager:
         editor = EnhancedCodeEditor()
         if abs_path_str.endswith('.py'):
             PythonHighlighter(editor.document())
-        elif abs_path_str.endswith('.gd'):
-            GenericHighlighter(editor.document(), 'gdscript')
 
         editor.save_requested.connect(lambda: self.save_file(abs_path_str))
         editor.content_changed.connect(lambda: self._update_tab_title(abs_path_str))

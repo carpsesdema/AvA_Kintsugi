@@ -27,7 +27,6 @@ class IntegratedTerminal(QWidget):
         self.fix_button: ModernButton = None
         self.fixing_label: QLabel = None
         self.run_python_button: ModernButton = None
-        self.run_godot_button: ModernButton = None
 
         self.setObjectName("integrated_terminal")
         self.setup_ui()
@@ -61,9 +60,6 @@ class IntegratedTerminal(QWidget):
         main_layout.addWidget(self.tab_widget)
         self._add_initial_tab()
 
-        # Default to Python controls being visible
-        self.show_python_controls()
-
     def _create_action_bar(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("action_bar")
@@ -83,12 +79,6 @@ class IntegratedTerminal(QWidget):
         self.run_python_button.setIcon(qta.icon("fa5s.play", color=Colors.TEXT_PRIMARY))
         self.run_python_button.clicked.connect(self._on_run_python_clicked)
         layout.addWidget(self.run_python_button)
-
-        # -- Run Godot Button --
-        self.run_godot_button = ModernButton("Run in Godot", "primary")
-        self.run_godot_button.setIcon(qta.icon("fa5s.gamepad", color=Colors.TEXT_PRIMARY))
-        self.run_godot_button.clicked.connect(self._on_run_godot_clicked)
-        layout.addWidget(self.run_godot_button)
 
         install_button = ModernButton("Install Dependencies", "secondary")
         install_button.setIcon(qta.icon("fa5s.download", color=Colors.TEXT_SECONDARY))
@@ -120,14 +110,6 @@ class IntegratedTerminal(QWidget):
 
         return bar
 
-    def show_godot_controls(self):
-        self.run_godot_button.show()
-        self.run_python_button.hide()
-
-    def show_python_controls(self):
-        self.run_godot_button.hide()
-        self.run_python_button.show()
-
     def _get_current_session_id(self) -> int:
         current_widget = self.tab_widget.currentWidget()
         if isinstance(current_widget, TerminalWidget):
@@ -137,10 +119,6 @@ class IntegratedTerminal(QWidget):
     def _on_run_python_clicked(self):
         session_id = self._get_current_session_id()
         self.command_entered.emit("python main.py", session_id)
-
-    def _on_run_godot_clicked(self):
-        session_id = self._get_current_session_id()
-        self.command_entered.emit("run_godot", session_id)
 
     def _on_install_clicked(self):
         session_id = self._get_current_session_id()
