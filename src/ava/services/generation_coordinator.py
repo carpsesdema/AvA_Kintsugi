@@ -37,17 +37,15 @@ class GenerationCoordinator:
                     self.log("error", f"Could not find file info for {filename} in plan. Skipping.")
                     continue
 
-                # --- FIX START ---
-                # This combines the on-disk state with the just-generated files for full context.
-                full_context_for_coder = (context.existing_files or {}).copy()
-                full_context_for_coder.update(generated_files_this_session)
-                # Remove the file being generated from its own context to prevent confusion.
-                if filename in full_context_for_coder:
-                    del full_context_for_coder[filename]
-                # --- FIX END ---
+                # --- TOKEN USAGE FIX ---
+                # The context for "other generated files" should ONLY be files generated in THIS session.
+                # All other project context is provided via the lean `context.project_index` (symbol index).
+                # This prevents sending the entire project's source code for every file generation.
+                context_for_coder = generated_files_this_session
+                # --- END OF FIX ---
 
                 generated_content = await self._generate_single_file(
-                    file_info, context, full_context_for_coder
+                    file_info, context, context_for_coder
                 )
 
                 if generated_content is not None:
