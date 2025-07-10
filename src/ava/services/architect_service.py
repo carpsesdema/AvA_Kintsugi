@@ -71,6 +71,7 @@ class ArchitectService:
         self.log("info", f"Architect task received: '{prompt}'")
         self.event_bus.emit("agent_status_changed", "Architect", "Planning project...", "fa5s.pencil-ruler")
         plan = None
+        relevant_files_context = {}  # Initialize for modifications
 
         self.log("info", "Fetching combined RAG context...")
         combined_rag_context = await self._get_combined_rag_context(prompt)
@@ -81,10 +82,10 @@ class ArchitectService:
             plan = await self._generate_hierarchical_plan(prompt, combined_rag_context)
         else:
             self.log("info", "Existing project detected. Using default modification plan...")
-            plan = await self._generate_modification_plan(prompt, existing_files, combined_rag_context)
+            plan, relevant_files_context = await self._generate_modification_plan(prompt, existing_files, combined_rag_context)
 
         if plan:
-            success = await self._execute_coordinated_generation(plan, combined_rag_context, existing_files)
+            success = await self._execute_coordinated_generation(plan, combined_rag_context, existing_files, relevant_files_context)
         else:
             self.log("error", "Failed to generate a valid plan. Aborting generation.")
             success = False
@@ -101,11 +102,15 @@ class ArchitectService:
         plan_prompt = prompt_template.format(prompt=prompt, rag_context=rag_context)
         return await self._get_plan_from_llm(plan_prompt)
 
-    async def _generate_modification_plan(self, prompt: str, existing_files: dict, rag_context: str) -> dict | None:
+    async def _generate_modification_plan(self, prompt: str, existing_files: dict, rag_context: str) -> tuple[dict | None, dict]:
         self.log("info", "Analyzing existing files to create a modification plan...")
         prompt_template = MODIFICATION_PLANNER_PROMPT
         try:
-            full_code_context_str = self._find_relevant_files(prompt, existing_files)
+            relevant_files_dict = self._find_relevant_files_as_dict(prompt, existing_files)
+            full_code_context_str = "\n\n".join(
+                [f"--- File: {fn} ---\n```python\n{co}\n```" for fn, co in relevant_files_dict.items()]
+            )
+
             enhanced_prompt_for_llm = f"{prompt}\n\nADDITIONAL CONTEXT FROM KNOWLEDGE BASE:\n{rag_context}"
             plan_prompt = prompt_template.format(
                 prompt=enhanced_prompt_for_llm,
@@ -114,12 +119,13 @@ class ArchitectService:
             plan = await self._get_plan_from_llm(plan_prompt)
             if plan:
                 plan = self._sanitize_plan_paths(plan)
-            return plan
+
+            return plan, relevant_files_dict
         except Exception as e:
             self.handle_error("architect", f"An unexpected error during modification planning: {e}")
             import traceback
             traceback.print_exc()
-            return None
+            return None, {}
 
     async def _get_plan_from_llm(self, plan_prompt: str) -> dict | None:
         provider, model = self.llm_client.get_model_for_role("architect")
@@ -144,7 +150,8 @@ class ArchitectService:
             return None
 
     async def _execute_coordinated_generation(self, plan: dict, rag_context: str,
-                                              existing_files: Optional[Dict[str, str]]) -> bool:
+                                              existing_files: Optional[Dict[str, str]],
+                                              relevant_files_context: Optional[Dict[str, str]]) -> bool:
         try:
             is_modification = existing_files is not None
             files_to_generate = plan.get("files", [])
@@ -157,7 +164,7 @@ class ArchitectService:
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
-            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
+            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files, relevant_files_context)
             if not generated_files:
                 self.log("error", "Generation coordinator returned no files.")
                 return False
@@ -172,11 +179,11 @@ class ArchitectService:
             traceback.print_exc()
             return False
 
-    def _find_relevant_files(self, prompt: str, existing_files: Dict[str, str], top_n: int = 5) -> str:
+    def _find_relevant_files_as_dict(self, prompt: str, existing_files: Dict[str, str], top_n: int = 5) -> Dict[str, str]:
         prompt_keywords = set(re.findall(r'\b\w+\b', prompt.lower()))
         if not prompt_keywords:
             relevant_files = list(existing_files.items())[:top_n]
-            return "\n\n".join([f"--- File: {fn} ---\n```python\n{co}\n```" for fn, co in relevant_files])
+            return dict(relevant_files)
 
         scored_files = []
         for filename, content in existing_files.items():
@@ -186,18 +193,19 @@ class ArchitectService:
             content_lower = content.lower()
             for keyword in prompt_keywords:
                 score += content_lower.count(keyword)
-            scored_files.append((score, filename, content))
+            if score > 0:
+                scored_files.append((score, filename, content))
 
         scored_files.sort(key=lambda x: x[0], reverse=True)
 
         if 'main.py' in existing_files and not any(f[1] == 'main.py' for f in scored_files[:top_n]):
-            main_content = existing_files['main.py']
-            scored_files.insert(0, (999, 'main.py', main_content))
+            main_score_tuple = next((item for item in scored_files if item[1] == 'main.py'), None)
+            if main_score_tuple:
+                scored_files.insert(0, main_score_tuple)
 
         top_files = scored_files[:top_n]
         self.log("info", f"Identified most relevant files for context: {[f[1] for f in top_files]}")
-        return "\n\n".join(
-            [f"--- File: {filename} ---\n```python\n{content}\n```" for score, filename, content in top_files])
+        return {filename: content for score, filename, content in top_files}
 
     def _sanitize_plan_paths(self, plan: dict) -> dict:
         if not plan or 'files' not in plan: return plan

@@ -20,7 +20,8 @@ class GenerationCoordinator:
         self.llm_client = service_manager.get_llm_client()
 
     async def coordinate_generation(self, plan: Dict[str, Any], rag_context: str,
-                                    existing_files: Optional[Dict[str, str]]) -> Dict[str, str]:
+                                    existing_files: Optional[Dict[str, str]],
+                                    relevant_files_context: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         try:
             self.log("info", "🚀 Starting unified generation with rolling context...")
             context = await self.context_manager.build_generation_context(plan, rag_context, existing_files)
@@ -37,12 +38,12 @@ class GenerationCoordinator:
                     self.log("error", f"Could not find file info for {filename} in plan. Skipping.")
                     continue
 
-                # --- TOKEN USAGE FIX ---
-                # The context for "other generated files" should ONLY be files generated in THIS session.
-                # All other project context is provided via the lean `context.project_index` (symbol index).
-                # This prevents sending the entire project's source code for every file generation.
-                context_for_coder = generated_files_this_session
-                # --- END OF FIX ---
+                # --- NEW CONTEXT STRATEGY ---
+                # Start with the relevant files context from the architect (if any).
+                context_for_coder = (relevant_files_context or {}).copy()
+                # Then, layer on top the files generated in this session so they take precedence.
+                context_for_coder.update(generated_files_this_session)
+                # --- END NEW STRATEGY ---
 
                 generated_content = await self._generate_single_file(
                     file_info, context, context_for_coder
