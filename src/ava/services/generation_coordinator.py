@@ -20,8 +20,7 @@ class GenerationCoordinator:
         self.llm_client = service_manager.get_llm_client()
 
     async def coordinate_generation(self, plan: Dict[str, Any], rag_context: str,
-                                    existing_files: Optional[Dict[str, str]],
-                                    relevant_files_context: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+                                    existing_files: Optional[Dict[str, str]]) -> Dict[str, str]:
         try:
             self.log("info", "🚀 Starting unified generation with rolling context...")
             context = await self.context_manager.build_generation_context(plan, rag_context, existing_files)
@@ -29,6 +28,16 @@ class GenerationCoordinator:
             generation_order = [spec.filename for spec in generation_specs]
             generated_files_this_session = {}
             total_files = len(generation_order)
+
+            # --- CONTEXT: All files in the plan need to be aware of each other ---
+            # Get the full original code for all files mentioned in the plan.
+            # This is the base context for all files being generated in this session.
+            planned_filenames = {f_info["filename"] for f_info in plan.get("files", [])}
+            plan_context_base = {}
+            if existing_files:
+                for planned_fn in planned_filenames:
+                    if planned_fn in existing_files:
+                        plan_context_base[planned_fn] = existing_files[planned_fn]
 
             for i, filename in enumerate(generation_order):
                 self.event_bus.emit("agent_status_changed", "Coder", f"Writing {filename}...", "fa5s.keyboard")
@@ -38,10 +47,11 @@ class GenerationCoordinator:
                     self.log("error", f"Could not find file info for {filename} in plan. Skipping.")
                     continue
 
-                # --- NEW CONTEXT STRATEGY ---
-                # Start with the relevant files context from the architect (if any).
-                context_for_coder = (relevant_files_context or {}).copy()
-                # Then, layer on top the files generated in this session so they take precedence.
+                # --- NEW CONTEXT STRATEGY (V3 - Plan-Based) ---
+                # Start with the original code of all files in the plan.
+                context_for_coder = plan_context_base.copy()
+                # Then, layer on top the files *already generated in this session*.
+                # This ensures the coder has the absolute latest version of its dependencies.
                 context_for_coder.update(generated_files_this_session)
                 # --- END NEW STRATEGY ---
 
@@ -50,10 +60,8 @@ class GenerationCoordinator:
                 )
 
                 if generated_content is not None:
-                    # Clean the final output once, after the full stream is complete
                     cleaned_content = self.robust_clean_llm_output(generated_content)
                     generated_files_this_session[filename] = cleaned_content
-                    # Update context with the cleaned content
                     context = await self.context_manager.update_session_context(context, {filename: cleaned_content})
                 else:
                     self.log("error", f"Failed to generate content for {filename}.")
@@ -74,19 +82,19 @@ class GenerationCoordinator:
             return {}
 
     async def _generate_single_file(self, file_info: Dict[str, str], context: Any,
-                                    other_generated_files: Dict[str, str]) -> Optional[str]:
+                                    other_files_context: Dict[str, str]) -> Optional[str]:
         filename = file_info["filename"]
         file_extension = Path(filename).suffix
 
         prompt = None
         if file_extension == '.py':
-            prompt = self._build_python_coder_prompt(file_info, context, other_generated_files)
+            prompt = self._build_python_coder_prompt(file_info, context, other_files_context)
         else:
-            prompt = self._build_simple_file_prompt(file_info, context, other_generated_files)
+            prompt = self._build_simple_file_prompt(file_info, context, other_files_context)
 
         if not prompt:
-             self.log("error", f"Could not determine a prompt for {filename}. Skipping.")
-             return None
+            self.log("error", f"Could not determine a prompt for {filename}. Skipping.")
+            return None
 
         provider, model = self.llm_client.get_model_for_role("coder")
         if not provider or not model:
@@ -98,13 +106,13 @@ class GenerationCoordinator:
             async for chunk in self.llm_client.stream_chat(provider, model, prompt, "coder"):
                 file_content += chunk
                 self.event_bus.emit("stream_code_chunk", filename, chunk)
-            return file_content # Return raw content, cleaning happens once after stream
+            return file_content
         except Exception as e:
             self.log("error", f"LLM generation failed for {filename}: {e}")
             return None
 
     def _build_python_coder_prompt(self, file_info: Dict[str, str], context: Any,
-                                   other_generated_files: Dict[str, str]) -> str:
+                                   other_files_context: Dict[str, str]) -> str:
         filename = file_info["filename"]
         is_modification = filename in (context.existing_files or {})
         original_code_section = ""
@@ -117,8 +125,13 @@ class GenerationCoordinator:
                 {original_code}
                 ```
             """)
-        python_files_this_session = {
-            fname: code for fname, code in other_generated_files.items() if fname.endswith('.py')
+
+        # Remove the file being generated from its own context to prevent confusion
+        if filename in other_files_context:
+            del other_files_context[filename]
+
+        python_files_context = {
+            fname: code for fname, code in other_files_context.items() if fname.endswith('.py')
         }
         return CODER_PROMPT.format(
             filename=filename,
@@ -126,21 +139,20 @@ class GenerationCoordinator:
             original_code_section=original_code_section,
             file_plan_json=json.dumps(context.plan, indent=2),
             symbol_index_json=json.dumps(context.project_index, indent=2),
-            generated_files_code_json=json.dumps(python_files_this_session, indent=2),
+            generated_files_code_json=json.dumps(python_files_context, indent=2),
         )
 
     def _build_simple_file_prompt(self, file_info: Dict[str, str], context: Any,
-                                  other_generated_files: Dict[str, str]) -> str:
+                                  other_files_context: Dict[str, str]) -> str:
         return SIMPLE_FILE_PROMPT.format(
             filename=file_info["filename"],
             purpose=file_info["purpose"],
             file_plan_json=json.dumps(context.plan, indent=2),
-            existing_files_json=json.dumps(other_generated_files, indent=2)
+            existing_files_json=json.dumps(other_files_context, indent=2)
         )
 
     def robust_clean_llm_output(self, content: str) -> str:
         content = content.strip()
-        # Adjusted regex to handle more language identifiers or no identifier
         code_block_regex = re.compile(r'```(?:[a-zA-Z0-9_]*)?\n(.*?)\n```', re.DOTALL)
         match = code_block_regex.search(content)
         if match:

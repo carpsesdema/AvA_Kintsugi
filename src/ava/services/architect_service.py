@@ -5,7 +5,7 @@ import json
 import re
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
@@ -71,7 +71,6 @@ class ArchitectService:
         self.log("info", f"Architect task received: '{prompt}'")
         self.event_bus.emit("agent_status_changed", "Architect", "Planning project...", "fa5s.pencil-ruler")
         plan = None
-        relevant_files_context = {}  # Initialize for modifications
 
         self.log("info", "Fetching combined RAG context...")
         combined_rag_context = await self._get_combined_rag_context(prompt)
@@ -82,10 +81,10 @@ class ArchitectService:
             plan = await self._generate_hierarchical_plan(prompt, combined_rag_context)
         else:
             self.log("info", "Existing project detected. Using default modification plan...")
-            plan, relevant_files_context = await self._generate_modification_plan(prompt, existing_files, combined_rag_context)
+            plan = await self._generate_modification_plan(prompt, existing_files, combined_rag_context)
 
         if plan:
-            success = await self._execute_coordinated_generation(plan, combined_rag_context, existing_files, relevant_files_context)
+            success = await self._execute_coordinated_generation(plan, combined_rag_context, existing_files)
         else:
             self.log("error", "Failed to generate a valid plan. Aborting generation.")
             success = False
@@ -102,10 +101,11 @@ class ArchitectService:
         plan_prompt = prompt_template.format(prompt=prompt, rag_context=rag_context)
         return await self._get_plan_from_llm(plan_prompt)
 
-    async def _generate_modification_plan(self, prompt: str, existing_files: dict, rag_context: str) -> tuple[dict | None, dict]:
+    async def _generate_modification_plan(self, prompt: str, existing_files: dict, rag_context: str) -> dict | None:
         self.log("info", "Analyzing existing files to create a modification plan...")
         prompt_template = MODIFICATION_PLANNER_PROMPT
         try:
+            # The relevance finder is still useful here to keep the Architect's prompt concise
             relevant_files_dict = self._find_relevant_files_as_dict(prompt, existing_files)
             full_code_context_str = "\n\n".join(
                 [f"--- File: {fn} ---\n```python\n{co}\n```" for fn, co in relevant_files_dict.items()]
@@ -120,12 +120,12 @@ class ArchitectService:
             if plan:
                 plan = self._sanitize_plan_paths(plan)
 
-            return plan, relevant_files_dict
+            return plan
         except Exception as e:
             self.handle_error("architect", f"An unexpected error during modification planning: {e}")
             import traceback
             traceback.print_exc()
-            return None, {}
+            return None
 
     async def _get_plan_from_llm(self, plan_prompt: str) -> dict | None:
         provider, model = self.llm_client.get_model_for_role("architect")
@@ -150,8 +150,7 @@ class ArchitectService:
             return None
 
     async def _execute_coordinated_generation(self, plan: dict, rag_context: str,
-                                              existing_files: Optional[Dict[str, str]],
-                                              relevant_files_context: Optional[Dict[str, str]]) -> bool:
+                                              existing_files: Optional[Dict[str, str]]) -> bool:
         try:
             is_modification = existing_files is not None
             files_to_generate = plan.get("files", [])
@@ -164,7 +163,8 @@ class ArchitectService:
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
-            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files, relevant_files_context)
+            # The coordinator now builds its own context from the plan
+            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
             if not generated_files:
                 self.log("error", "Generation coordinator returned no files.")
                 return False
@@ -204,7 +204,7 @@ class ArchitectService:
                 scored_files.insert(0, main_score_tuple)
 
         top_files = scored_files[:top_n]
-        self.log("info", f"Identified most relevant files for context: {[f[1] for f in top_files]}")
+        self.log("info", f"Identified most relevant files for Architect context: {[f[1] for f in top_files]}")
         return {filename: content for score, filename, content in top_files}
 
     def _sanitize_plan_paths(self, plan: dict) -> dict:
@@ -233,20 +233,17 @@ class ArchitectService:
         if not self.project_manager.active_project_path:
             return
 
-        # --- INTELLIGENT CHECK ---
-        # Only create __init__.py files if it's a Python project.
         is_python_project = any(f['filename'].endswith('.py') for f in files)
         if not is_python_project:
             self.log("info", "Non-Python project detected. Skipping __init__.py creation.")
             return
-        # --- END CHECK ---
 
         dirs_that_need_init = {str(Path(f['filename']).parent) for f in files if
                                '/' in f['filename'] or '\\' in f['filename']}
         init_files_to_create = {}
         for d_str in dirs_that_need_init:
             d = Path(d_str)
-            if d.name == '.' or not d_str: continue # Skip root directory
+            if d.name == '.' or not d_str: continue
             init_path = d / "__init__.py"
             is_planned = any(f['filename'] == init_path.as_posix() for f in files)
             exists_on_disk = (self.project_manager.active_project_path / init_path).exists()
