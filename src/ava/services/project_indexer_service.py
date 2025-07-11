@@ -3,11 +3,13 @@ import ast
 from pathlib import Path
 from typing import Dict
 
+from src.ava.utils.code_summarizer import CodeSummarizer
+
 
 class ProjectIndexerService:
     """
-    Scans a Python project directory and builds an index of all globally
-    defined classes and functions.
+    Scans a Python project directory and builds an index of structural summaries
+    for each file, including imports, classes, and function signatures.
     """
 
     def __init__(self):
@@ -16,66 +18,51 @@ class ProjectIndexerService:
 
     def build_index(self, project_root: Path) -> Dict[str, str]:
         """
-        Scans all Python files in a project root and builds the definition index.
+        Scans all Python files in a project root and builds a summary index.
 
         Args:
             project_root: The root path of the project to scan.
 
         Returns:
-            A dictionary mapping definition names to their module paths.
+            A dictionary mapping relative file paths to their structural summaries.
         """
         self.index = {}
         if not project_root.is_dir():
             return {}
 
-        print(f"[ProjectIndexer] Starting scan of project: {project_root}")
+        print(f"[ProjectIndexer] Starting project summary scan: {project_root}")
         for py_file in project_root.rglob("*.py"):
-            # Exclude files in virtual environments
             if ".venv" in py_file.parts or "venv" in py_file.parts:
                 continue
 
             try:
-                self._parse_file(py_file, project_root)
+                content = py_file.read_text(encoding="utf-8")
+                if content.strip():  # Only process non-empty files
+                    relative_path_str = str(py_file.relative_to(project_root).as_posix())
+                    summarizer = CodeSummarizer(content)
+                    summary = summarizer.summarize()
+                    self.index[relative_path_str] = summary
             except Exception as e:
                 print(f"[ProjectIndexer] Warning: Could not parse {py_file.name}: {e}")
 
-        print(f"[ProjectIndexer] Scan complete. Found {len(self.index)} definitions.")
+        print(f"[ProjectIndexer] Scan complete. Summarized {len(self.index)} files.")
         return self.index.copy()
 
-    def get_symbols_from_content(self, content: str, module_path: str) -> Dict[str, str]:
+    def get_summary_from_content(self, content: str) -> str:
         """
-        Parses Python code content and returns a dictionary of its top-level symbols.
+        Generates a structural summary from a string of Python code.
 
         Args:
             content: The Python source code as a string.
-            module_path: The dot-separated module path (e.g., 'my_app.utils').
 
         Returns:
-            A dictionary mapping symbol names to the provided module_path.
+            The structural summary.
         """
-        symbols = {}
+        if not content.strip():
+            return ""
         try:
-            tree = ast.parse(content)
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                    # A simple way to check for top-level is to check the column offset
-                    if hasattr(node, 'col_offset') and node.col_offset == 0:
-                        symbols[node.name] = module_path
+            summarizer = CodeSummarizer(content)
+            return summarizer.summarize()
         except Exception as e:
-            print(f"[ProjectIndexer] Warning: Could not parse content for module '{module_path}': {e}")
-        return symbols
-
-    def _parse_file(self, file_path: Path, project_root: Path):
-        """Parses a single Python file and adds its symbols to the index."""
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        # Calculate the Python module path (e.g., 'game_logic.player')
-        relative_path = file_path.relative_to(project_root)
-        module_path = str(relative_path.with_suffix('')).replace('\\', '/').replace('/', '.')
-
-        new_symbols = self.get_symbols_from_content(content, module_path)
-        for symbol, mod_path in new_symbols.items():
-            if symbol in self.index:
-                print(f"[ProjectIndexer] Warning: Duplicate definition found for '{symbol}'. Overwriting.")
-            self.index[symbol] = mod_path
+            print(f"[ProjectIndexer] Warning: Could not summarize content: {e}")
+            return f"# Error: Could not summarize code. {e}"

@@ -29,9 +29,8 @@ class GenerationCoordinator:
             generated_files_this_session = {}
             total_files = len(generation_order)
 
-            # --- CONTEXT: All files in the plan need to be aware of each other ---
             # Get the full original code for all files mentioned in the plan.
-            # This is the base context for all files being generated in this session.
+            # This serves as the complete, static context for the entire generation session.
             planned_filenames = {f_info["filename"] for f_info in plan.get("files", [])}
             plan_context_base = {}
             if existing_files:
@@ -47,13 +46,12 @@ class GenerationCoordinator:
                     self.log("error", f"Could not find file info for {filename} in plan. Skipping.")
                     continue
 
-                # --- NEW CONTEXT STRATEGY (V3 - Plan-Based) ---
-                # Start with the original code of all files in the plan.
+                # Build the context for THIS specific file generation.
+                # Start with the original code of all other files in the plan.
                 context_for_coder = plan_context_base.copy()
-                # Then, layer on top the files *already generated in this session*.
-                # This ensures the coder has the absolute latest version of its dependencies.
+                # Then, layer on top the files *already generated in this session*,
+                # so the Coder has the absolute latest version of its dependencies.
                 context_for_coder.update(generated_files_this_session)
-                # --- END NEW STRATEGY ---
 
                 generated_content = await self._generate_single_file(
                     file_info, context, context_for_coder
@@ -62,6 +60,7 @@ class GenerationCoordinator:
                 if generated_content is not None:
                     cleaned_content = self.robust_clean_llm_output(generated_content)
                     generated_files_this_session[filename] = cleaned_content
+                    # Update the project index with a summary of the new file
                     context = await self.context_manager.update_session_context(context, {filename: cleaned_content})
                 else:
                     self.log("error", f"Failed to generate content for {filename}.")
@@ -126,19 +125,22 @@ class GenerationCoordinator:
                 ```
             """)
 
-        # Remove the file being generated from its own context to prevent confusion
+        # Remove the file being generated from its own context to prevent self-reference confusion.
         if filename in other_files_context:
             del other_files_context[filename]
 
         python_files_context = {
             fname: code for fname, code in other_files_context.items() if fname.endswith('.py')
         }
+
+        # This is the change: Pass the rich structural summary to the prompt.
+        # context.project_index is now the Dict[filepath, summary]
         return CODER_PROMPT.format(
             filename=filename,
             purpose=file_info["purpose"],
             original_code_section=original_code_section,
             file_plan_json=json.dumps(context.plan, indent=2),
-            symbol_index_json=json.dumps(context.project_index, indent=2),
+            project_structure_summary_json=json.dumps(context.project_index, indent=2),
             generated_files_code_json=json.dumps(python_files_context, indent=2),
         )
 
@@ -160,4 +162,4 @@ class GenerationCoordinator:
         return content
 
     def log(self, level: str, message: str):
-        self.event_bus.emit("log_message_received", "GenerationCoordinator", level, message)
+        self.event_bus.emit(f"log_message_received", "GenerationCoordinator", level, message)

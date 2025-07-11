@@ -5,7 +5,7 @@ import json
 import re
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
@@ -105,10 +105,9 @@ class ArchitectService:
         self.log("info", "Analyzing existing files to create a modification plan...")
         prompt_template = MODIFICATION_PLANNER_PROMPT
         try:
-            # The relevance finder is still useful here to keep the Architect's prompt concise
-            relevant_files_dict = self._find_relevant_files_as_dict(prompt, existing_files)
+            # THIS IS THE FIX: Give the Architect the full context of all existing files.
             full_code_context_str = "\n\n".join(
-                [f"--- File: {fn} ---\n```python\n{co}\n```" for fn, co in relevant_files_dict.items()]
+                [f"--- File: {fn} ---\n```python\n{co}\n```" for fn, co in existing_files.items()]
             )
 
             enhanced_prompt_for_llm = f"{prompt}\n\nADDITIONAL CONTEXT FROM KNOWLEDGE BASE:\n{rag_context}"
@@ -163,7 +162,6 @@ class ArchitectService:
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
-            # The coordinator now builds its own context from the plan
             generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
             if not generated_files:
                 self.log("error", "Generation coordinator returned no files.")
@@ -226,12 +224,7 @@ class ArchitectService:
         return plan
 
     async def _create_package_structure(self, files: list):
-        """
-        Creates __init__.py files for Python projects to ensure they are
-        treated as packages. Skips this for non-Python projects.
-        """
-        if not self.project_manager.active_project_path:
-            return
+        if not self.project_manager.active_project_path: return
 
         is_python_project = any(f['filename'].endswith('.py') for f in files)
         if not is_python_project:

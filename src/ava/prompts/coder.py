@@ -14,24 +14,24 @@ CODER_PROMPT = textwrap.dedent(f"""
 
     **LAW #1: THE PLAN IS ABSOLUTE.**
     You do not have the authority to change the plan. You must work within its constraints.
-    - **Project File Manifest:** This is the complete list of all files that exist or will exist in the project. It is your only map of the codebase. Your primary job is to write code for `{{filename}}` that correctly interacts with the other components described in this manifest.
+    - **Project File Manifest:** This is the complete list of all files that exist or will exist in the project.
       ```json
       {{file_plan_json}}
       ```
-    - **Code Written So Far:** This is the full source code for other files already completed. Use it for integration.
+    - **Code Written For Other Files in This Request:** This is the full source code for other files being modified in this same request. Use it for direct integration.
       ```json
       {{generated_files_code_json}}
       ```
-    - **Project Symbol Index:** This is a list of all classes and functions available for import from other project files.
+    - **Project Structure Summary:** This is a high-level summary of all other existing Python files in the project, including their imports, classes, and function signatures. Use this to understand how to interact with the broader codebase.
       ```json
-      {{symbol_index_json}}
+      {{project_structure_summary_json}}
       ```
 
     **LAW #2: DO NOT INVENT IMPORTS.**
     - You can **ONLY** import from three sources:
         1. Standard Python libraries (e.g., `os`, `sys`, `json`).
         2. External packages explicitly listed as dependencies in the project plan.
-        3. Other project files that are present in the **Project Symbol Index** and described in the **Project File Manifest**.
+        3. Other project files, whose structure is detailed in the **Project Structure Summary**.
     - If a file or class is NOT in your provided context, it **DOES NOT EXIST**. You are forbidden from importing it.
 
     {LOGGING_RULE}
