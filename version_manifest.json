@@ -1,5 +1,5 @@
 {
-  "latest_version": "1.3.1",
-  "download_url": "https://github.com/carpsesdema/AvA_Kintsugi/releases/download/v1.3.1/Avakin_v1.3.1.zip",
+  "latest_version": "1.3.2",
+  "download_url": "https://github.com/carpsesdema/AvA_Kintsugi/releases/download/v1.3.2/Avakin_v1.3.2.zip",
   "release_notes": "First stable release! Includes major build system overhaul and bug fixes for a reliable RAG server experience."
 }

@@ -13,7 +13,7 @@ Stop trying to write the perfect prompt. Instead, have a conversation.
 </div>
 <br>
 <div align="center">
-  <img src="https://img.shields.io/badge/version-1.3.1-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.3.2-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-windows-informational.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-success.svg" alt="License">
 </div>
