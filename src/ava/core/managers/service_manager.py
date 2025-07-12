@@ -16,7 +16,7 @@ from src.ava.services import (
     ActionService, AppStateService, TerminalService, ArchitectService, ReviewerService,
     ValidationService, ProjectIndexerService, ImportFixerService,
     GenerationCoordinator, ContextManager, DependencyPlanner, IntegrationValidator, RAGService,
-    LSPClientService # <-- NEW
+    LSPClientService
 )
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ class ServiceManager:
         self.action_service: "ActionService" = None
         self.terminal_service: TerminalService = None
         self.rag_manager: "RAGManager" = None
-        self.lsp_client_service: LSPClientService = None # <-- NEW
+        self.lsp_client_service: LSPClientService = None
         self.architect_service: ArchitectService = None
         self.reviewer_service: ReviewerService = None
         self.validation_service: ValidationService = None
@@ -85,7 +85,8 @@ class ServiceManager:
         from src.ava.services.rag_manager import RAGManager
 
         self.app_state_service = AppStateService(self.event_bus)
-        self.project_indexer_service = ProjectIndexerService()
+        # THIS IS THE FIX: Pass the project_manager to the indexer.
+        self.project_indexer_service = ProjectIndexerService(self.project_manager)
         self.import_fixer_service = ImportFixerService()
         self.context_manager = ContextManager(self)
         self.dependency_planner = DependencyPlanner(self)
@@ -94,7 +95,7 @@ class ServiceManager:
         if self.project_manager:
             self.rag_manager.set_project_manager(self.project_manager)
 
-        self.lsp_client_service = LSPClientService(self.event_bus, self.project_manager) # <-- NEW
+        self.lsp_client_service = LSPClientService(self.event_bus, self.project_manager)
 
         self.generation_coordinator = GenerationCoordinator(
             self, self.event_bus, self.context_manager,
@@ -267,7 +268,7 @@ class ServiceManager:
                 self.log_to_event_bus("error", f"[ServiceManager] Error shutting down plugin manager: {e}")
         self.log_to_event_bus("info", "[ServiceManager] Services shutdown complete")
 
-    def get_lsp_client_service(self) -> LSPClientService: # <-- NEW GETTER
+    def get_lsp_client_service(self) -> LSPClientService:
         return self.lsp_client_service
 
     def get_app_state_service(self) -> AppStateService:

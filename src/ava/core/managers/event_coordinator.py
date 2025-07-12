@@ -45,7 +45,8 @@ class EventCoordinator:
         self._wire_plugin_events()
         self._wire_chat_session_events()
         self._wire_status_bar_events()
-        self._wire_lsp_events() # <-- NEW
+        self._wire_lsp_events()
+        self._wire_project_sync_events()
 
         # Allows plugins to request core manager instances for advanced operations.
         self.event_bus.subscribe(
@@ -54,6 +55,23 @@ class EventCoordinator:
         )
 
         print("[EventCoordinator] All events wired successfully.")
+
+    def _wire_project_sync_events(self):
+        """Wire events for keeping services like the ProjectIndexer in sync with the file system."""
+        project_indexer = self.service_manager.get_project_indexer_service()
+        if not project_indexer:
+            print("[EventCoordinator] Warning: ProjectIndexer not available for project sync wiring.")
+            return
+
+        self.event_bus.subscribe(
+            "file_renamed",
+            lambda old, new: asyncio.create_task(project_indexer.handle_file_rename(old, new))
+        )
+        self.event_bus.subscribe(
+            "items_deleted",
+            lambda paths: [project_indexer.remove_from_index(p) for p in paths]
+        )
+        print("[EventCoordinator] Project sync events wired.")
 
     def _wire_lsp_events(self):
         """Wire events for the Language Server Protocol integration."""
@@ -129,13 +147,9 @@ class EventCoordinator:
 
         rag_manager = self.service_manager.get_rag_manager()
         if rag_manager:
-            # This is for adding external files to the CURRENT PROJECT's KB
             self.event_bus.subscribe("add_knowledge_requested", rag_manager.open_add_knowledge_dialog)
-            # This is for adding all files from the CURRENT PROJECT to its KB
             self.event_bus.subscribe("add_active_project_to_rag_requested", rag_manager.ingest_active_project)
-            # --- NEW EVENT WIRING for Global Knowledge ---
             self.event_bus.subscribe("add_global_knowledge_requested", rag_manager.open_add_global_knowledge_dialog)
-            # --- END NEW EVENT WIRING ---
         else:
             print("[EventCoordinator] UI Event Wiring: RAGManager not available.")
 

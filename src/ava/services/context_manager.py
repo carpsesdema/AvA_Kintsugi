@@ -31,12 +31,9 @@ class ContextManager:
     async def build_generation_context(self, plan: Dict[str, Any], rag_context: str,
                                        existing_files: Optional[Dict[str, str]]) -> GenerationContext:
         project_indexer = self.service_manager.get_project_indexer_service()
-        project_manager = self.service_manager.get_project_manager()
 
-        # THIS IS THE CHANGE: Build a structural summary for the entire project.
-        project_structure_summary = {}
-        if project_manager and project_manager.active_project_path:
-            project_structure_summary = project_indexer.build_index(project_manager.active_project_path)
+        # THIS IS THE FIX: Get the cached index. This is now instantaneous.
+        project_structure_summary = project_indexer.index.copy()
 
         living_design_context = {}  # Placeholder for now
 
@@ -52,7 +49,7 @@ class ContextManager:
 
         return GenerationContext(
             plan=plan,
-            project_index=project_structure_summary, # This now holds the rich summaries
+            project_index=project_structure_summary,  # This now holds the rich summaries
             living_design_context=living_design_context,
             dependency_order=[],
             generation_session=generation_session,
@@ -64,8 +61,7 @@ class ContextManager:
     async def update_session_context(self, context: GenerationContext,
                                      newly_generated_file: Dict[str, str]) -> GenerationContext:
         """
-        Update the context with a newly generated file, including its structural summary.
-        This is the core of the "rolling context".
+        Update the context with a newly generated file by updating the cached index.
         """
         try:
             filename, code = list(newly_generated_file.items())[0]
@@ -74,24 +70,15 @@ class ContextManager:
                 context.generation_session[filename]["status"] = "completed"
                 context.generation_session[filename]["generated_code"] = code
 
-            # THIS IS THE CHANGE: Update the project_index with the summary of the new code.
+            # Update the cached index with the summary of the new code.
             project_indexer = self.service_manager.get_project_indexer_service()
-            updated_index = context.project_index.copy()
-            if filename.endswith('.py'):
-                summary = project_indexer.get_summary_from_content(code)
-                updated_index[filename] = summary
-                print(f"[ContextManager] Updated structural summary for new file: {filename}")
+            project_indexer.update_index_for_file_content(filename, code)
 
-            return GenerationContext(
-                plan=context.plan,
-                project_index=updated_index,
-                living_design_context=context.living_design_context,
-                dependency_order=context.dependency_order,
-                generation_session=context.generation_session,
-                rag_context=context.rag_context,
-                relevance_scores=context.relevance_scores,
-                existing_files=context.existing_files
-            )
+            # The context holds a *copy* of the index state for this session.
+            # We update our session's copy to reflect the change.
+            context.project_index[filename] = project_indexer.index.get(filename, "")
+
+            return context
 
         except Exception as e:
             print(f"Error updating session context for {list(newly_generated_file.keys())[0]}: {e}")
