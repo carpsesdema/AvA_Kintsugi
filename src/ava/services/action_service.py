@@ -100,7 +100,7 @@ class ActionService:
                 asyncio.create_task(rag_manager.switch_project_context(project_path))
 
                 branch_name = project_manager.begin_modification_session()
-                self.log("info", f"Created modification branch: {branch_name}")
+                self.log("info", f"Starting modification session on branch: {branch_name}")
                 app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
 
                 # --- NEW: Initialize LSP session now that we have a project ---

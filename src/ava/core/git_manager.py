@@ -22,7 +22,6 @@ class GitManager:
     def __init__(self, project_path: Path):
         self.project_path = project_path
         self.repo: Optional[git.Repo] = None
-        self.active_dev_branch: Optional[git.Head] = None
 
         if not GIT_AVAILABLE:
             print("[GitManager] WARNING: GitPython not installed. Git features will be disabled.")
@@ -52,7 +51,10 @@ class GitManager:
     def get_active_branch_name(self) -> str:
         """Returns the name of the current active branch."""
         if self.repo and self.repo.head.is_valid():
-            return self.repo.active_branch.name
+            try:
+                return self.repo.active_branch.name
+            except TypeError:
+                return self.repo.head.commit.hexsha[:7]
         return "(no branch)"
 
     def init_repo_for_new_project(self):
@@ -78,17 +80,15 @@ class GitManager:
                 print("[GitManager] Created baseline commit for existing files.")
 
     def begin_modification_session(self) -> str:
-        """Creates and checks out a new development branch."""
-        if not self.repo: return "Error: No Git repository."
-        dev_branch_name = f"dev_{datetime.now().strftime('%Ym%d_%H%M%S')}"
-        try:
-            self.active_dev_branch = self.repo.create_head(dev_branch_name)
-            self.active_dev_branch.checkout()
-            print(f"[GitManager] Created and checked out new development branch: {dev_branch_name}")
-            return dev_branch_name
-        except GitCommandError as e:
-            print(f"[GitManager] Error creating development branch: {e}")
-            return f"Error: {e}"
+        """
+        Ensures the repository is ready for a modification session on the current branch.
+        This no longer creates a new branch.
+        """
+        if not self.repo:
+            return "Error: No Git repository."
+        current_branch_name = self.get_active_branch_name()
+        print(f"[GitManager] Beginning modification session on existing branch: {current_branch_name}")
+        return current_branch_name
 
     def write_and_stage_files(self, files: dict[str, str]):
         """Writes files to disk and stages them in Git."""
@@ -132,8 +132,9 @@ class GitManager:
         if not self.repo.is_dirty(index=True, working_tree=False, untracked_files=False):
             return "No changes staged for commit."
         try:
+            active_branch_name = self.get_active_branch_name()
             self.repo.index.commit(commit_message)
-            msg = f"Committed staged changes to branch '{self.repo.active_branch.name}'."
+            msg = f"Committed staged changes to branch '{active_branch_name}'."
             return msg
         except GitCommandError as e:
             if "nothing to commit" in str(e).lower() or "no changes added to commit" in str(e).lower():
@@ -144,11 +145,12 @@ class GitManager:
         """Gets the git diff for staged changes."""
         if not self.repo: return "No Git repository available."
         try:
-            if not self.repo.head.is_valid():
-                return self.repo.git.diff('--cached')
-            return self.repo.git.diff('HEAD')
+            return self.repo.git.diff('--staged')
         except (GitCommandError, ValueError):
-            return "Could not retrieve git diff. Repository might be in an empty state."
+            try:
+                return self.repo.git.diff('--cached')
+            except (GitCommandError, ValueError):
+                return "Could not retrieve git diff. Repository might be in an empty state."
 
     def rename_item(self, relative_item_path_str: str, new_name_str: str) -> tuple[bool, str, Optional[str]]:
         if not self.repo: return False, "No active repository.", None
@@ -164,7 +166,6 @@ class GitManager:
     def delete_items(self, relative_item_paths: List[str]) -> tuple[bool, str]:
         if not self.repo: return False, "No active repository."
         errors = []
-        # First, delete from filesystem
         for rel_path_str in relative_item_paths:
             abs_path = self.project_path / rel_path_str
             try:
@@ -172,7 +173,6 @@ class GitManager:
                 elif abs_path.is_dir(): shutil.rmtree(abs_path)
             except Exception as e:
                 errors.append(f"Error deleting '{rel_path_str}': {e}")
-        # Then, stage the deletion in Git
         if relative_item_paths:
             try:
                 self.repo.index.remove(relative_item_paths, r=True)

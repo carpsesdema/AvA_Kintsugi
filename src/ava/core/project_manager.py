@@ -63,13 +63,11 @@ class ProjectManager:
         self.git_manager = GitManager(project_path)
         self.venv_manager = VenvManager(project_path)
 
-        # Initialize Git repo
         if self.git_manager.repo:
             self.git_manager.init_repo_for_new_project()
         else:
             print("[ProjectManager] GitManager failed to initialize a repository.")
 
-        # Create virtual environment
         if not self.venv_manager.create_venv():
             print("[ProjectManager] CRITICAL: VenvManager failed to create a virtual environment.")
             shutil.rmtree(project_path, ignore_errors=True)
@@ -110,18 +108,18 @@ class ProjectManager:
         ignore_dirs = {'.git', '.venv', 'venv', '__pycache__', 'node_modules', 'dist', 'build', 'rag_db'}
         allowed_extensions = {
             '.py', '.md', '.txt', '.json', '.toml', '.ini', '.cfg', '.yaml', '.yml',
-            '.html', '.css', '.js', '.ts', '.java', '.c', '.cpp', '.h', '.hpp',
-            '.cs', '.go', '.rb', '.php', '.sh', '.bat', '.ps1', '.dockerfile',
-            '.gitignore', '.env', '.gd', '.tscn', '.godot'
+            '.html', '.css', '.js', '.ts'
         }
+        common_filenames = {'Dockerfile', '.gitignore', '.env'}
+
         for item in self.active_project_path.rglob('*'):
             if any(part in ignore_dirs for part in item.relative_to(self.active_project_path).parts):
                 continue
-            if item.is_file() and item.suffix.lower() in allowed_extensions:
+            if item.is_file() and (item.suffix.lower() in allowed_extensions or item.name in common_filenames):
                 try:
                     project_files[item.relative_to(self.active_project_path).as_posix()] = item.read_text(encoding='utf-8', errors='ignore')
                 except Exception:
-                    pass # Ignore unreadable files
+                    pass
         return project_files
 
     def read_file(self, relative_path: str) -> Optional[str]:
@@ -133,7 +131,6 @@ class ProjectManager:
         except Exception:
             return None
 
-    # --- Delegated Methods ---
     def save_and_commit_files(self, files: dict[str, str], commit_message: str):
         if self.git_manager:
             self.git_manager.write_and_stage_files(files)

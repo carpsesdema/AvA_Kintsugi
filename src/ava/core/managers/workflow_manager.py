@@ -13,9 +13,7 @@ from src.ava.core.managers.service_manager import ServiceManager
 from src.ava.core.managers.window_manager import WindowManager
 from src.ava.core.managers.task_manager import TaskManager
 from src.ava.prompts import (
-    CREATIVE_ASSISTANT_PROMPT, AURA_REFINEMENT_PROMPT,
-    UNREAL_ARCHITECT_PROMPT, UNREAL_CPP_CODER_PROMPT, UNREAL_GENERIC_FILE_PROMPT,
-    GODOT_ARCHITECT_PROMPT, GODOT_GDSCRIPT_CODER_PROMPT, GODOT_GENERIC_FILE_PROMPT
+    CREATIVE_ASSISTANT_PROMPT, AURA_REFINEMENT_PROMPT
 )
 
 
@@ -32,8 +30,7 @@ class WorkflowManager:
         self.task_manager: TaskManager = None
         self._last_error_report = None
         self._last_generated_code: Optional[Dict[str, str]] = None
-        self._is_plugin_override_active = False
-        self._current_project_type = "Python"  # Default project type
+        self._is_plugin_override_active = False # Retained for potential future Python plugins
         print("[WorkflowManager] Initialized")
 
     def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager, task_manager: TaskManager):
@@ -47,13 +44,6 @@ class WorkflowManager:
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
         self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
         self.event_bus.subscribe("plugin_build_override_activated", self._activate_plugin_override)
-        # NEW: Subscribe to project type changes from the UI
-        self.event_bus.subscribe("project_type_changed", self._on_project_type_changed)
-
-    def _on_project_type_changed(self, project_type: str):
-        """Updates the current project type when the user changes it in the UI."""
-        self.log("info", f"Workflow project type set to: {project_type}")
-        self._current_project_type = project_type
 
     def _activate_plugin_override(self):
         """Called by a plugin to signal it's taking over the build process."""
@@ -100,8 +90,6 @@ class WorkflowManager:
 
         self.event_bus.emit("streaming_start", "Aura")
         try:
-            # We send the full conversation history to the server, which will build the final message list.
-            # The `aura_prompt` contains the system instructions and user's text for the current turn.
             stream = llm_client.stream_chat(
                 provider, model, aura_prompt, "chat",
                 image_bytes, image_media_type,
@@ -135,36 +123,15 @@ class WorkflowManager:
         if interaction_mode == InteractionMode.PLAN:
             workflow_coroutine = self._run_aura_workflow(prompt, conversation_history, image_bytes, image_media_type)
         elif interaction_mode == InteractionMode.BUILD:
-            # --- NEW: Prepare custom prompts based on project type ---
-            custom_prompts = None
-            if self._current_project_type == "Unreal C++":
-                self.log("info", "Unreal C++ project type selected. Loading custom prompts.")
-                custom_prompts = {
-                    "architect": UNREAL_ARCHITECT_PROMPT,
-                    ".h": UNREAL_CPP_CODER_PROMPT,
-                    ".cpp": UNREAL_CPP_CODER_PROMPT,
-                    ".uproject": UNREAL_GENERIC_FILE_PROMPT,
-                    ".cs": UNREAL_GENERIC_FILE_PROMPT,
-                }
-            elif self._current_project_type == "Godot":
-                self.log("info", "Godot project type selected. Loading custom prompts.")
-                custom_prompts = {
-                    "architect": GODOT_ARCHITECT_PROMPT,
-                    ".gd": GODOT_GDSCRIPT_CODER_PROMPT,
-                    ".tscn": GODOT_GENERIC_FILE_PROMPT,
-                    ".godot": GODOT_GENERIC_FILE_PROMPT,
-                    ".import": GODOT_GENERIC_FILE_PROMPT,
-                    ".svg": GODOT_GENERIC_FILE_PROMPT,
-                }
-            # --- END NEW ---
-
+            # Logic for custom non-Python prompts has been removed.
+            # The architect service is now called directly without custom prompts.
             architect_service = self.service_manager.get_architect_service()
             if app_state == AppState.BOOTSTRAP:
                 self._last_generated_code = None
-                workflow_coroutine = architect_service.generate_or_modify(prompt, existing_files=None, custom_prompts=custom_prompts)
+                workflow_coroutine = architect_service.generate_or_modify(prompt, existing_files=None)
             elif app_state == AppState.MODIFY:
                 existing_files = self.service_manager.get_project_manager().get_project_files()
-                workflow_coroutine = architect_service.generate_or_modify(prompt, existing_files, custom_prompts=custom_prompts)
+                workflow_coroutine = architect_service.generate_or_modify(prompt, existing_files)
         else:
             self.log("error", f"Unknown interaction mode: {interaction_mode}")
             return
@@ -196,71 +163,6 @@ class WorkflowManager:
         except Exception as e:
             self.log("error", f"Failed to get description from image: {e}")
             return ""
-
-    async def _run_bootstrap_workflow(self, prompt: str, image_bytes: Optional[bytes] = None):
-        """Runs the workflow to create a new project from a prompt or an image description."""
-        if not self.service_manager: return
-
-        final_prompt = prompt
-        if not prompt and image_bytes:
-            description = await self._get_description_from_image(image_bytes, "image/png")
-            if not description:
-                self.log("error", "Could not generate a description from the image. Aborting.")
-                return
-            final_prompt = description
-
-        if not final_prompt:
-            self.log("error", "Cannot start new project with an empty prompt.")
-            return
-
-        project_manager = self.service_manager.get_project_manager()
-        project_manager.clear_active_project()
-
-        app_state_service = self.service_manager.get_app_state_service()
-        app_state_service.set_app_state(AppState.BOOTSTRAP)
-
-        project_path = project_manager.new_project("New_AI_Project")
-        if not project_path:
-            QMessageBox.critical(None, "Project Creation Failed", "Could not create temporary project directory.")
-            return
-
-        rag_manager = self.service_manager.get_rag_manager()
-        if rag_manager:
-            await rag_manager.switch_project_context(Path(project_path))
-
-        architect_service = self.service_manager.get_architect_service()
-        generation_success = await architect_service.generate_or_modify(final_prompt, existing_files=None)
-
-        if generation_success:
-            self.log("info", "Bootstrap generation successful. Transitioning to MODIFY state.")
-            app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
-        else:
-            self.log("error", "Bootstrap generation failed. Remaining in BOOTSTRAP state.")
-
-    async def _run_modification_workflow(self, prompt: str, image_bytes: Optional[bytes] = None):
-        """Runs the workflow to modify an existing project from a prompt or image description."""
-        if not self.service_manager: return
-
-        final_prompt = prompt
-        if not prompt and image_bytes:
-            description = await self._get_description_from_image(image_bytes, "image/png")
-            if not description:
-                self.log("error", "Could not generate a description from the image. Aborting.")
-                return
-            final_prompt = description
-
-        if not final_prompt:
-            self.log("error", "Cannot modify project with an empty prompt.")
-            return
-
-        project_manager = self.service_manager.get_project_manager()
-        if not project_manager.active_project_path:
-            self.log("error", "Cannot modify: No project is loaded.")
-            return
-
-        existing_files = project_manager.get_project_files()
-        architect_service = self.service_manager.get_architect_service()
-        await architect_service.generate_or_modify(final_prompt, existing_files)
 
     def _on_session_cleared(self):
         self._last_error_report = None

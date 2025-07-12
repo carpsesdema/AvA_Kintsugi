@@ -33,7 +33,6 @@ class LSPClientService:
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
             self._listener_task = asyncio.create_task(self._listen_for_messages())
             self.log("success", "Successfully connected to LSP server. Waiting for project to initialize session.")
-            # --- CHANGE: We no longer initialize immediately. We wait for an explicit call. ---
             return True
         except ConnectionRefusedError:
             self.log("error", "LSP server connection refused. Is the server running?")
@@ -45,24 +44,34 @@ class LSPClientService:
     async def _listen_for_messages(self):
         """Continuously listens for and processes messages from the LSP server."""
         try:
-            while not self.reader.at_eof():
+            while self.reader and not self.reader.at_eof():
                 line = await self.reader.readline()
                 if not line:
                     continue
 
                 header = line.decode('utf-8').strip()
                 if header.startswith("Content-Length:"):
-                    length = int(header.split(":")[1].strip())
-                    await self.reader.read(2)  # Read the '\r\n' separator
-                    body = await self.reader.read(length)
-                    message = json.loads(body.decode('utf-8'))
-                    self._dispatch_message(message)
+                    try:
+                        length = int(header.split(":")[1].strip())
+                        await self.reader.read(2)  # Read the '\r\n' separator
+                        body = await self.reader.read(length)
+
+                        if not body:
+                            self.log("warning",
+                                     "LSP listener received an empty message body. Server connection may be unstable.")
+                            continue
+
+                        message = json.loads(body.decode('utf-8'))
+                        self._dispatch_message(message)
+                    except (ValueError, IndexError) as e:
+                        self.log("error", f"LSP listener failed to parse header '{header}': {e}")
+                    except json.JSONDecodeError as e:
+                        self.log("error", f"LSP listener failed to decode JSON body: {e}. Body head: {body[:100]}")
 
         except asyncio.CancelledError:
             self.log("info", "LSP message listener task cancelled.")
         except Exception as e:
             self.log("error", f"Error in LSP message listener: {e}")
-            self.is_connected = False
 
     def _dispatch_message(self, message: Dict[str, Any]):
         """Routes incoming messages to the appropriate handler."""
@@ -81,7 +90,6 @@ class LSPClientService:
             diagnostics = params.get("diagnostics", [])
             if uri:
                 self.event_bus.emit("lsp_diagnostics_received", uri, diagnostics)
-                self.log("info", f"Received {len(diagnostics)} diagnostics for {Path(uri).name}")
 
     async def _send_request(self, method: str, params: Dict[str, Any]) -> Any:
         # Not needed for diagnostics, but essential for future features
@@ -89,7 +97,8 @@ class LSPClientService:
 
     async def _send_notification(self, method: str, params: Dict[str, Any]):
         """Sends a JSON-RPC notification to the server."""
-        if not self.writer:
+        if not self.writer or self.writer.is_closing():
+            self.log("warning", f"LSP writer closed. Cannot send notification: {method}")
             return
 
         message = {
@@ -100,8 +109,11 @@ class LSPClientService:
         body = json.dumps(message).encode('utf-8')
         header = f"Content-Length: {len(body)}\r\n\r\n".encode('utf-8')
 
-        self.writer.write(header + body)
-        await self.writer.drain()
+        try:
+            self.writer.write(header + body)
+            await self.writer.drain()
+        except ConnectionResetError:
+            self.log("error", "LSP connection reset by peer while sending notification.")
 
     async def initialize_session(self) -> bool:
         """Performs the LSP initialization handshake."""
@@ -129,9 +141,6 @@ class LSPClientService:
             "workspaceFolders": [{"uri": root_uri, "name": self.project_manager.active_project_name}]
         }
 
-        # The 'initialize' request is special and requires a response.
-        # For simplicity in this phase, we'll send it as a notification and then send 'initialized'.
-        # A more robust implementation would use _send_request and wait for the response.
         await self._send_notification("initialize", params)
         await self._send_notification("initialized", {})
         self._is_initialized = True
@@ -163,11 +172,15 @@ class LSPClientService:
 
     async def shutdown(self):
         """Gracefully shuts down the LSP client and connection."""
+        self._is_initialized = False
         if self._listener_task:
             self._listener_task.cancel()
         if self.writer:
             self.writer.close()
-            await self.writer.wait_closed()
+            try:
+                await self.writer.wait_closed()
+            except ConnectionResetError:
+                pass
         self.log("info", "LSP client shut down.")
 
     def log(self, level: str, message: str):

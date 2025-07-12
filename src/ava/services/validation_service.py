@@ -101,10 +101,12 @@ class ValidationService:
             return None, -1
 
         traceback_pattern = re.compile(r'File "((?:[a-zA-Z]:)?[^"]+)", line (\d+)')
+        fallback_pattern = re.compile(r'((?:[a-zA-Z]:)?[^:]+\.py):(\d+):')
+
         matches = traceback_pattern.findall(error_str)
         if not matches:
-            fallback_pattern = re.compile(r'((?:[a-zA-Z]:)?[^:]+\.py):(\d+):')
             matches = [(m[0], m[1]) for m in fallback_pattern.findall(error_str)]
+
         if not matches:
             self.log("warning", "Could not find any file paths in the error report using known patterns.")
             return None, -1
@@ -113,8 +115,7 @@ class ValidationService:
             if not file_path_from_trace or not line_num_str: continue
             try:
                 path_obj = Path(file_path_from_trace)
-                path_to_check = (
-                            project_root / path_obj).resolve() if not path_obj.is_absolute() else path_obj.resolve()
+                path_to_check = (project_root / path_obj).resolve() if not path_obj.is_absolute() else path_obj.resolve()
                 if path_to_check.is_file() and project_root in path_to_check.parents:
                     if ".venv" in path_to_check.parts or "site-packages" in path_to_check.parts: continue
                     relative_path = path_to_check.relative_to(project_root)

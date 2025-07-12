@@ -34,15 +34,11 @@ class ContextManager:
 
         initial_project_index = {}
         if project_manager and project_manager.active_project_path and existing_files:
-            # Build index from existing files on disk at the start of the session
             for rel_path, content in existing_files.items():
                 if rel_path.endswith(".py"):
                     module_path_str = rel_path.replace('.py', '').replace('/', '.')
                     symbols_in_file = project_indexer.get_symbols_from_content(content, module_path_str)
                     initial_project_index.update(symbols_in_file)
-
-        # If it's a completely new project, the indexer might run on an empty dir
-        # or we can rely on the rolling update. Let's ensure indexer is called if path exists.
         elif project_manager and project_manager.active_project_path:
             initial_project_index = project_indexer.build_index(project_manager.active_project_path)
 
@@ -82,7 +78,7 @@ class ContextManager:
             # Update the generation session log with the completed file
             if filename in context.generation_session:
                 context.generation_session[filename]["status"] = "completed"
-                context.generation_session[filename]["generated_code"] = code  # Store full code here
+                context.generation_session[filename]["generated_code"] = code
 
             # Update the project_index with symbols from the new code
             project_indexer = self.service_manager.get_project_indexer_service()
@@ -95,25 +91,24 @@ class ContextManager:
                 print(
                     f"[ContextManager] Updated symbol index with {len(new_symbols)} symbols from new file: {filename}")
 
-            # Return a NEW GenerationContext object with the updated index and session
             return GenerationContext(
                 plan=context.plan,
                 project_index=updated_index,
                 living_design_context=context.living_design_context,
                 dependency_order=context.dependency_order,
-                generation_session=context.generation_session,  # This was already updated in-place
+                generation_session=context.generation_session,
                 rag_context=context.rag_context,
                 relevance_scores=context.relevance_scores,
                 existing_files=context.existing_files
             )
-
+        except (KeyError, IndexError) as e:
+            print(f"Error unpacking newly_generated_file in update_session_context: {e}. File dict: {newly_generated_file}")
+            return context
         except Exception as e:
-            print(f"Error updating session context for {list(newly_generated_file.keys())[0]}: {e}")
+            print(f"Error updating session context: {e}")
             import traceback
             traceback.print_exc()
-            return context  # Return original context on error
-
-    # ... (rest of the methods _extract_file_dependencies, _calculate_relevance_scores, etc. remain unchanged)
+            return context
 
     def _extract_file_dependencies(self, file_info: Dict[str, str]) -> List[str]:
         try:
@@ -186,17 +181,15 @@ class ContextManager:
             return 0.0
 
     def get_filtered_context_for_file(self, filename: str, context: GenerationContext) -> Dict[str, Any]:
-        # This method seems okay, its job is to select from already built context
-        # The key is that the `context.project_index` and `context.generation_session` are up-to-date
         try:
             filtered_context = {}
-            relevant_modules = self._get_relevant_modules(filename, context)  # Uses project_index
+            relevant_modules = self._get_relevant_modules(filename, context)
             filtered_context["relevant_modules"] = relevant_modules
             relevant_design = self._filter_design_context(filename, context.living_design_context)
             filtered_context["design_context"] = relevant_design
             relevant_rag = self._filter_rag_context(filename, context.rag_context)
             filtered_context["rag_context"] = relevant_rag
-            dependencies = self._get_file_dependencies(filename, context)  # Uses plan
+            dependencies = self._get_file_dependencies(filename, context)
             filtered_context["dependencies"] = dependencies
             return filtered_context
         except Exception as e:
@@ -205,60 +198,7 @@ class ContextManager:
 
     def _get_relevant_modules(self, filename: str, context: GenerationContext) -> Dict[str, str]:
         try:
-            relevant_modules = {}
-            file_stem = Path(filename).stem.lower()
-            # Use context.project_index which should be up-to-date
-            scored_modules = []
-            for module_name, module_summary_or_code in context.project_index.items():  # This now contains module_path -> symbols_string
-                # For relevance, we need content. The project_index now has symbol names.
-                # We need the actual code from generation_session for files generated *in this session*
-                # or from existing_files for files that were on disk.
-
-                module_content_for_relevance = ""
-                # Check if this module was generated in the current session
-                # The project_index keys are symbol names, values are module paths.
-                # We need to find the file that corresponds to this module_path
-                # This logic is getting complex. The project_index should probably map module_path to summary.
-                # For now, let's simplify: use the purpose from the plan for relevance scoring.
-
-                # Simplified relevance: Check if module_name (which is a symbol) is mentioned in the current file's purpose
-                current_file_purpose = ""
-                for f_info in context.plan.get("files", []):
-                    if f_info["filename"] == filename:
-                        current_file_purpose = f_info["purpose"].lower()
-                        break
-
-                score = 0
-                if module_name.lower() in current_file_purpose:  # if symbol is in purpose
-                    score += 0.5
-                if file_stem in module_name.lower():  # if symbol contains file stem
-                    score += 0.3
-
-                # Let's use the `generation_session` for full code of already generated files
-                # The `project_index` from `build_generation_context` should be the *initial* state from disk.
-                # The `generation_session` in the context holds the newly generated code.
-
-                # This part needs rethink: how to get content for relevance scoring of *other* modules.
-                # For now, let's assume relevance_scores are pre-calculated and we use those.
-                # The `_calculate_relevance_scores` uses the initial project_index.
-
-                score_key = f"project_index:{module_name}"  # This assumes module_name is the path
-                # But project_index maps symbol to path.
-                # This whole section needs to align with project_index structure.
-                # For now, this will likely not work well.
-
-                # Let's assume project_index maps module_path_str to summary string
-                # And that relevance_scores are correctly calculated based on that.
-
-                # This part of the code is likely not the primary cause of the pygame/ursina issue,
-                # which is more about the Coder not seeing the *full code* of main.py or other ursina files.
-                # The CODER_PROMPT uses `generated_files_code_json` for that.
-
-            # For now, let's just pass all known symbols to simplify and ensure maximum info,
-            # as the token count for just symbols is low.
-            # The `CODER_PROMPT` will get full code of generated files anyway.
-            # This `relevant_modules` is for the `symbol_index_json` part of the CODER_PROMPT.
-            return context.project_index.copy()  # Send all known symbols
+            return context.project_index.copy()
 
         except Exception:
             return {}
@@ -332,7 +272,3 @@ class ContextManager:
             return False
         except Exception:
             return False
-
-    def _extract_code_summary(self, code: str) -> str:  # This is not used anymore by project_index directly
-        # Project indexer now handles symbol extraction. This can be removed or repurposed if needed for other summaries.
-        return ""

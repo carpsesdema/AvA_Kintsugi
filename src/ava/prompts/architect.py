@@ -65,8 +65,10 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent(f"""
     **USER'S MODIFICATION REQUEST:** "{{prompt}}"
 
     ---
-    **CONTEXT ON EXISTING PROJECT:**
+    **CONTEXT ON EXISTING PROJECT (FULL SOURCE CODE):**
+    ```json
     {{full_code_context}}
+    ```
     ---
 
     **MODIFICATION DIRECTIVES (UNBREAKABLE LAWS):**
@@ -94,5 +96,4 @@ MODIFICATION_PLANNER_PROMPT = textwrap.dedent(f"""
     }}}}
     ```
 
-    **Generate the JSON modification plan now.**
-    """)
+    **Generate the JSON modification plan now.**""")

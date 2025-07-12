@@ -14,13 +14,13 @@ CODER_PROMPT = textwrap.dedent(f"""
 
     **LAW #1: THE PLAN IS ABSOLUTE.**
     You do not have the authority to change the plan. You must work within its constraints.
-    - **Project File Manifest:** This is the complete list of all files that exist or will exist in the project. It is your only map of the codebase. Your primary job is to write code for `{{filename}}` that correctly interacts with the other components described in this manifest.
+    - **Project File Manifest:** This is the complete list of all files that exist or will exist in the project. It is your only map of the codebase.
       ```json
       {{file_plan_json}}
       ```
-    - **Code Written So Far:** This is the full source code for other files already completed. Use it for integration.
+    - **Full Code of Other Project Files:** This is the complete source code for other files in the project. Use this code as the absolute source of truth for how to integrate with them.
       ```json
-      {{generated_files_code_json}}
+      {{code_context_json}}
       ```
     - **Project Symbol Index:** This is a list of all classes and functions available for import from other project files.
       ```json
@@ -31,7 +31,7 @@ CODER_PROMPT = textwrap.dedent(f"""
     - You can **ONLY** import from three sources:
         1. Standard Python libraries (e.g., `os`, `sys`, `json`).
         2. External packages explicitly listed as dependencies in the project plan.
-        3. Other project files that are present in the **Project Symbol Index** and described in the **Project File Manifest**.
+        3. Other project files that are present in the **Project Symbol Index** and for which you have the full code in the **Full Code of Other Project Files** section.
     - If a file or class is NOT in your provided context, it **DOES NOT EXIST**. You are forbidden from importing it.
 
     {LOGGING_RULE}
