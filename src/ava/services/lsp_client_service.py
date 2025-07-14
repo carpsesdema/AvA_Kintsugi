@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Optional, Any, Dict, List
 
@@ -42,36 +43,64 @@ class LSPClientService:
             return False
 
     async def _listen_for_messages(self):
-        """Continuously listens for and processes messages from the LSP server."""
+        """
+        Continuously listens for and processes messages from the LSP server
+        using a robust buffered approach to handle interleaved messages.
+        """
+        buffer = b""
+        content_length_pattern = re.compile(rb"Content-Length: (\d+)\r\n")
+
         try:
             while self.reader and not self.reader.at_eof():
-                line = await self.reader.readline()
-                if not line:
-                    continue
+                # Read data into the buffer
+                data = await self.reader.read(4096)
+                if not data:
+                    # Connection closed by server
+                    self.log("warning", "LSP server closed the connection.")
+                    break
+                buffer += data
 
-                header = line.decode('utf-8').strip()
-                if header.startswith("Content-Length:"):
+                # Process all complete messages in the buffer
+                while True:
+                    header_match = content_length_pattern.search(buffer)
+                    if not header_match:
+                        break  # Need more data to find a header
+
+                    content_length = int(header_match.group(1))
+                    header_end_pos = header_match.end()
+
+                    # The full JSON-RPC header is two line breaks
+                    message_start_pos = buffer.find(b'\r\n\r\n', header_end_pos)
+                    if message_start_pos == -1:
+                        break  # Incomplete header
+
+                    json_start_pos = message_start_pos + 4
+                    message_end_pos = json_start_pos + content_length
+
+                    if len(buffer) < message_end_pos:
+                        break  # Not enough data for the full message body yet
+
+                    # Extract and process the full message
+                    message_body_bytes = buffer[json_start_pos:message_end_pos]
+
                     try:
-                        length = int(header.split(":")[1].strip())
-                        await self.reader.read(2)  # Read the '\r\n' separator
-                        body = await self.reader.read(length)
-
-                        if not body:
-                            self.log("warning",
-                                     "LSP listener received an empty message body. Server connection may be unstable.")
-                            continue
-
-                        message = json.loads(body.decode('utf-8'))
+                        message = json.loads(message_body_bytes.decode('utf-8'))
                         self._dispatch_message(message)
-                    except (ValueError, IndexError) as e:
-                        self.log("error", f"LSP listener failed to parse header '{header}': {e}")
                     except json.JSONDecodeError as e:
-                        self.log("error", f"LSP listener failed to decode JSON body: {e}. Body head: {body[:100]}")
+                        self.log("error",
+                                 f"LSP listener failed to decode JSON body: {e}. Body head: {message_body_bytes[:100]}")
+
+                    # Remove the processed message from the buffer
+                    buffer = buffer[message_end_pos:]
 
         except asyncio.CancelledError:
             self.log("info", "LSP message listener task cancelled.")
+        except ConnectionResetError:
+            self.log("warning", "LSP connection was reset by the server.")
         except Exception as e:
-            self.log("error", f"Error in LSP message listener: {e}")
+            self.log("error", f"Critical error in LSP message listener: {e}")
+        finally:
+            self.log("info", "LSP message listener has stopped.")
 
     def _dispatch_message(self, message: Dict[str, Any]):
         """Routes incoming messages to the appropriate handler."""
@@ -114,6 +143,7 @@ class LSPClientService:
             await self.writer.drain()
         except ConnectionResetError:
             self.log("error", "LSP connection reset by peer while sending notification.")
+            # Handle reconnection logic if needed
 
     async def initialize_session(self) -> bool:
         """Performs the LSP initialization handshake."""
@@ -180,7 +210,7 @@ class LSPClientService:
             try:
                 await self.writer.wait_closed()
             except ConnectionResetError:
-                pass
+                pass  # The connection may already be gone
         self.log("info", "LSP client shut down.")
 
     def log(self, level: str, message: str):
