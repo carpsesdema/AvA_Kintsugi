@@ -1,5 +1,5 @@
 # src/ava/gui/enhanced_code_editor.py
-from PySide6.QtWidgets import QTextEdit, QPlainTextEdit, QWidget, QMessageBox
+from PySide6.QtWidgets import QWidget, QMessageBox, QPlainTextEdit, QTextEdit
 from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QKeySequence, QShortcut, QTextCharFormat
 from typing import Dict, List, Any
@@ -187,7 +187,7 @@ class EnhancedCodeEditor(QPlainTextEdit):
             selection = QTextEdit.ExtraSelection()
             selection.format.setUnderlineColor(color)
             selection.format.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SpellCheckUnderline)
-            selection.format.setProperty(QTextFormat.Property.ToolTip, diag.get('message', ''))
+            selection.format.setToolTip(diag.get('message', ''))
             selection.cursor = cursor
             self.diagnostic_selections.append(selection)
 

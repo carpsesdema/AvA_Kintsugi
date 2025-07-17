@@ -1,3 +1,4 @@
+# src/ava/services/dependency_planner.py
 from pathlib import Path
 from typing import Dict, List, Any, Set
 from dataclasses import dataclass
@@ -42,11 +43,13 @@ class DependencyPlanner:
         # Build generation specifications
         specs = []
         for i, filename in enumerate(generation_order):
-            file_info = next(f for f in files_to_generate if f["filename"] == filename)
+            file_info = next((f for f in files_to_generate if f["filename"] == filename), None)
+            if not file_info:
+                continue
 
             specs.append(FileGenerationSpec(
                 filename=filename,
-                purpose=file_info["purpose"],
+                purpose=file_info.get("purpose", ""),
                 dependencies=dependency_graph.get(filename, {}).get("dependencies", set()),
                 dependents=dependency_graph.get(filename, {}).get("dependents", set()),
                 priority=i,
@@ -59,11 +62,11 @@ class DependencyPlanner:
                                 context: GenerationContext) -> Dict[str, Dict[str, Set[str]]]:
         """Build dependency graph from file purposes and existing context."""
         graph = {}
-        file_purposes = {f["filename"]: f["purpose"] for f in files_to_generate}
+        file_purposes = {f["filename"]: f.get("purpose", "") for f in files_to_generate}
 
         for file_info in files_to_generate:
             filename = file_info["filename"]
-            purpose = file_info["purpose"]
+            purpose = file_info.get("purpose", "")
 
             dependencies = set()
             dependents = set()
@@ -149,7 +152,9 @@ class DependencyPlanner:
                         queue.append(dependent)
 
         # Handle cycles by adding remaining nodes
-        remaining = [node for node, degree in in_degree.items() if degree > 0]
-        result.extend(remaining)
+        if len(result) < len(graph):
+            remaining_nodes = sorted([node for node in graph if node not in result])
+            result.extend(remaining_nodes)
+
 
         return result

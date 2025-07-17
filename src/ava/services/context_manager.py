@@ -47,7 +47,7 @@ class ContextManager:
         generation_session = {}
         for file_info in plan.get("files", []):
             generation_session[file_info["filename"]] = {
-                "purpose": file_info["purpose"],
+                "purpose": file_info.get("purpose", "Modify file based on user request."),
                 "status": "planned",
                 "dependencies": self._extract_file_dependencies(file_info)
             }
@@ -263,9 +263,9 @@ class ContextManager:
             current_purpose, other_purpose = "", ""
             for file_info in context.plan.get("files", []):
                 if file_info["filename"] == current_file:
-                    current_purpose = file_info["purpose"].lower()
+                    current_purpose = file_info.get("purpose", "").lower()
                 elif file_info["filename"] == other_file:
-                    other_purpose = file_info["purpose"].lower()
+                    other_purpose = file_info.get("purpose", "").lower()
             current_words, other_words = set(current_purpose.split()), set(other_purpose.split())
             if len(current_words.intersection(other_words)) > 1: return True
             if "service" in current_file.lower() and "core" in other_file.lower(): return True

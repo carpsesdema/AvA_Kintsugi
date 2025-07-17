@@ -115,7 +115,7 @@ class GenerationCoordinator:
 
         return CODER_PROMPT.format(
             filename=filename,
-            purpose=file_info["purpose"],
+            purpose=file_info.get("purpose", "Modify this file based on the user's request."),
             original_code_section=original_code_section,
             file_plan_json=json.dumps(context.plan, indent=2),
             symbol_index_json=json.dumps(context.project_index, indent=2),
@@ -126,7 +126,7 @@ class GenerationCoordinator:
                                   generated_files_this_session: Dict[str, str]) -> str:
         return SIMPLE_FILE_PROMPT.format(
             filename=file_info["filename"],
-            purpose=file_info["purpose"],
+            purpose=file_info.get("purpose", "Generate content for this file based on the user's request."),
             file_plan_json=json.dumps(context.plan, indent=2),
             existing_files_json=json.dumps(generated_files_this_session, indent=2)
         )
